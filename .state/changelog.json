@@ -27,7 +27,9 @@
         {"type": "added", "description": "Voice-activity audio segmentation plan — silence-boundary chunking replaces fixed 10s splits, prevents cutting words mid-utterance", "date": "2026-02-27"},
         {"type": "added", "description": "Phase 11 implementation plan — inference stats dashboard with encoder/decoder timing, RTF, tokens/s, silence skip rate, frontend stats panel", "date": "2026-02-27"},
         {"type": "added", "description": "Phase 8 complete — SDR disconnect detection with auto-recovery on replug, process crash auto-restart (3 retries), /api/retry endpoint, error banner with retry button in UI", "date": "2026-02-27"},
-        {"type": "added", "description": "Phase 11 complete — inference stats dashboard with encoder/decoder timing, RTF, tokens/s, decoder steps, chunks processed, silence skip rate in UI. GET /api/stats endpoint, periodic 5s broadcast.", "date": "2026-02-27"}
+        {"type": "added", "description": "Phase 11 complete — inference stats dashboard with encoder/decoder timing, RTF, tokens/s, decoder steps, chunks processed, silence skip rate in UI. GET /api/stats endpoint, periodic 5s broadcast.", "date": "2026-02-27"},
+        {"type": "added", "description": "Phase 12 implementation plan — NOAA weather radio integration: continuous 162.550 MHz monitoring, NWS broadcast transcript parser (temperature, wind, visibility, alerts, marine forecasts), weather panel UI with priority alert banners, squelch-zero continuous capture mode", "date": "2026-02-28"},
+        {"type": "added", "description": "Phase 13 implementation plan — NOAA APT satellite imaging: auto-scheduled pass recording for NOAA-15/19 at 137 MHz using ephem + Celestrak TLEs, rtl_fm capture, noaa-apt CLI decoding, satellite panel UI with pass countdown, decoded image display, and image history", "date": "2026-02-28"}
       ]
     }
   ]

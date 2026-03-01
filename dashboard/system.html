@@ -126,6 +126,9 @@
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/status</code></td><td>Pipeline status</td></tr>
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/adsb/flights</code></td><td>Current ADS-B aircraft list</td></tr>
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/audio-stream</code></td><td>Chunked WAV audio stream</td></tr>
+                        <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/weather/current</code></td><td>Latest parsed NOAA weather conditions</td></tr>
+                        <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/satellite/passes</code></td><td>Next 24h predicted satellite passes</td></tr>
+                        <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/satellite/latest-image</code></td><td>Most recent decoded APT image + metadata</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -145,6 +148,10 @@
                         <tr><td><code>adsb_update</code></td><td>Server &rarr; Client</td><td>ADS-B flight list (every 2s)</td></tr>
                         <tr><td><code>callsign_match</code></td><td>Server &rarr; Client</td><td>Transcript-to-flight callsign match</td></tr>
                         <tr><td><code>inference_stats</code></td><td>Server &rarr; Client</td><td>Inference latency/RTF/tokens stats</td></tr>
+                        <tr><td><code>weather_update</code></td><td>Server &rarr; Client</td><td>Parsed NOAA weather conditions</td></tr>
+                        <tr><td><code>priority_alert</code></td><td>Server &rarr; Client</td><td>Weather warning/watch/advisory alert</td></tr>
+                        <tr><td><code>satellite_pass_upcoming</code></td><td>Server &rarr; Client</td><td>Satellite pass starting in 10 minutes</td></tr>
+                        <tr><td><code>apt_image_ready</code></td><td>Server &rarr; Client</td><td>Decoded APT satellite image available</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -172,7 +179,10 @@
                     frontend: 'Frontend',
                     realTimeComms: 'Real-Time Comms',
                     adsbDecoder: 'ADS-B Decoder',
-                    mapping: 'Mapping'
+                    mapping: 'Mapping',
+                    weatherParser: 'Weather Parser',
+                    passPredictor: 'Pass Predictor',
+                    aptDecoder: 'APT Decoder'
                 };
                 Object.entries(sys.stack).forEach(([key, val]) => {
                     const tr = document.createElement('tr');

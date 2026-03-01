@@ -16,7 +16,10 @@
     "frontend": "Vanilla JS + Web Audio API",
     "realTimeComms": "Socket.IO (WebSocket)",
     "adsbDecoder": "dump1090-mutability (ADS-B 1090 MHz)",
-    "mapping": "Leaflet.js + OpenStreetMap"
+    "mapping": "Leaflet.js + OpenStreetMap",
+    "weatherParser": "NOAA NWS broadcast regex parser",
+    "passPredictor": "ephem (PyEphem orbital mechanics)",
+    "aptDecoder": "noaa-apt CLI (APT image decoder)"
   },
   "targetHardware": {
     "sbc": "Raspberry Pi 5",
@@ -37,7 +40,9 @@
     "implementation-plans/phase-8-error-handling.md",
     "implementation-plans/phase-9-setup-script.md",
     "implementation-plans/phase-10-adsb-aviation-correlation.md",
-    "implementation-plans/phase-11-inference-stats.md"
+    "implementation-plans/phase-11-inference-stats.md",
+    "implementation-plans/phase-12-noaa-weather-radio.md",
+    "implementation-plans/phase-13-noaa-apt-satellite-imaging.md"
   ],
   "phases": {
     "1": {"name": "System Dependencies & Environment Setup", "status": "done"},
@@ -50,8 +55,10 @@
     "8": {"name": "Error Handling & Edge Cases", "status": "done"},
     "9": {"name": "Setup Script & Requirements", "status": "done"},
     "10": {"name": "ADS-B Aviation Correlation & Voice-Activity Segmentation", "status": "done"},
-    "11": {"name": "Inference Stats Dashboard", "status": "done"}
+    "11": {"name": "Inference Stats Dashboard", "status": "done"},
+    "12": {"name": "NOAA Weather Radio Integration", "status": "planned"},
+    "13": {"name": "NOAA APT Satellite Imaging", "status": "planned"}
   },
   "lastUpdated": "2026-02-28",
-  "notes": "All phases implemented. Phase 10 complete: ADS-B receiver (dump1090 process manager), voice-activity segmentation (replaces fixed 10s chunking), callsign correlator (regex extraction + flight matching), Leaflet.js map panel with aircraft markers and callsign highlighting. Single-dongle time-sharing and dual-dongle modes supported. ADS-B disabled by default (ADSB_ENABLED=true to activate)."
+  "notes": "Phases 1-11 implemented. Phase 12 planned: NOAA weather radio continuous monitoring on 162.550 MHz, NWS broadcast transcript parser, weather conditions panel, priority alert banners. Phase 13 planned: NOAA APT satellite imaging — auto-scheduled pass recording for NOAA-15/19 at 137 MHz, noaa-apt decoding, satellite image display panel."
 }
