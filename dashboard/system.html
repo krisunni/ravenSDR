@@ -43,7 +43,13 @@
 │  (ffmpeg)    │  HTTP   │              │         │  NPU         │         │  Feed        │
 └──────────────┘         └──────────────┘         └──────────────┘         └──────────────┘
 
-                         <span class="highlight">InputSource</span>                    <span class="highlight">Transcriber</span>               <span class="highlight">Flask App</span></div>
+                         <span class="highlight">InputSource</span>                    <span class="highlight">Transcriber</span>               <span class="highlight">Flask App</span>
+
+┌──────────────┐                                         ┌──────────────┐
+│  RTL-SDR #2  │─── 1090 MHz ──→ dump1090 ──→ JSON ────→│  ADS-B       │────────→ Leaflet.js Map
+│  (optional)  │                                         │  Correlator  │────────→ Callsign Match
+└──────────────┘                                         └──────────────┘
+                         <span class="highlight">Dual-dongle or time-share</span>       <span class="highlight">AdsbReceiver</span></div>
         </section>
 
         <section class="section">
@@ -87,6 +93,7 @@
                         <tr><td><span class="badge badge-changed">POST</span></td><td><code>/api/squelch</code></td><td>Set squelch level</td></tr>
                         <tr><td><span class="badge badge-changed">POST</span></td><td><code>/api/gain</code></td><td>Set tuner gain</td></tr>
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/status</code></td><td>Pipeline status</td></tr>
+                        <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/adsb/flights</code></td><td>Current ADS-B aircraft list</td></tr>
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/audio-stream</code></td><td>Chunked WAV audio stream</td></tr>
                     </tbody>
                 </table>
@@ -104,6 +111,9 @@
                         <tr><td><code>signal_level</code></td><td>Server &rarr; Client</td><td>Signal strength (RMS)</td></tr>
                         <tr><td><code>mode</code></td><td>Server &rarr; Client</td><td>SDR or WEBSTREAM mode</td></tr>
                         <tr><td><code>error</code></td><td>Server &rarr; Client</td><td>Error notification</td></tr>
+                        <tr><td><code>adsb_update</code></td><td>Server &rarr; Client</td><td>ADS-B flight list (every 2s)</td></tr>
+                        <tr><td><code>callsign_match</code></td><td>Server &rarr; Client</td><td>Transcript-to-flight callsign match</td></tr>
+                        <tr><td><code>inference_stats</code></td><td>Server &rarr; Client</td><td>Inference latency/RTF/tokens stats</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -129,7 +139,9 @@
                     cpuFallback: 'CPU Fallback',
                     audioRouting: 'Audio Routing',
                     frontend: 'Frontend',
-                    realTimeComms: 'Real-Time Comms'
+                    realTimeComms: 'Real-Time Comms',
+                    adsbDecoder: 'ADS-B Decoder',
+                    mapping: 'Mapping'
                 };
                 Object.entries(sys.stack).forEach(([key, val]) => {
                     const tr = document.createElement('tr');

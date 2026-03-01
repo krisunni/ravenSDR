@@ -14,7 +14,9 @@
     "cpuFallback": "faster-whisper",
     "audioRouting": "ALSA loopback (snd-aloop)",
     "frontend": "Vanilla JS + Web Audio API",
-    "realTimeComms": "Socket.IO (WebSocket)"
+    "realTimeComms": "Socket.IO (WebSocket)",
+    "adsbDecoder": "dump1090-mutability (ADS-B 1090 MHz)",
+    "mapping": "Leaflet.js + OpenStreetMap"
   },
   "targetHardware": {
     "sbc": "Raspberry Pi 5",
