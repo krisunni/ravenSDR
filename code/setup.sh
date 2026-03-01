@@ -90,9 +90,23 @@ pip install -r "$(dirname "$0")/requirements.txt"
 pip install -e "$(dirname "$0")" -q
 pass "Python packages installed"
 
-# ── Step 6: Test RTL-SDR ──
+# ── Step 6: dump1090 for ADS-B (optional) ──
 echo ""
-echo "── Step 6: RTL-SDR test ──"
+echo "── Step 6: dump1090 (ADS-B) ──"
+if command -v dump1090-mutability &>/dev/null; then
+    pass "dump1090-mutability already installed"
+else
+    if sudo apt-get install -y -qq dump1090-mutability 2>/dev/null; then
+        pass "dump1090-mutability installed from apt"
+    else
+        warn "dump1090 not in apt — ADS-B features will be unavailable"
+        warn "To install manually: git clone https://github.com/flightaware/dump1090.git && cd dump1090 && make"
+    fi
+fi
+
+# ── Step 7: Test RTL-SDR ──
+echo ""
+echo "── Step 7: RTL-SDR test ──"
 if command -v rtl_test &>/dev/null; then
     if timeout 5 rtl_test -t 2>&1 | grep -q "R828D"; then
         pass "RTL-SDR Blog V4 detected (R828D tuner)"
@@ -103,18 +117,18 @@ else
     warn "rtl_test not found — rtl-sdr package may not be installed"
 fi
 
-# ── Step 7: Bias tee ──
+# ── Step 8: Bias tee ──
 echo ""
-echo "── Step 7: Bias tee check ──"
+echo "── Step 8: Bias tee check ──"
 if command -v rtl_biast &>/dev/null; then
     rtl_biast -b 0 2>/dev/null && pass "Bias tee disabled" || warn "Bias tee command failed"
 else
     warn "rtl_biast not available — skipping"
 fi
 
-# ── Step 8: Hailo SDK + Models ──
+# ── Step 9: Hailo SDK + Models ──
 echo ""
-echo "── Step 8: Hailo SDK ──"
+echo "── Step 9: Hailo SDK ──"
 if command -v hailortcli &>/dev/null; then
     if hailortcli fw-control identify 2>/dev/null; then
         pass "Hailo NPU detected"
@@ -145,7 +159,7 @@ else
     warn "Hailo SDK not installed — CPU fallback will be used (faster-whisper)"
 fi
 
-# ── Step 9: Summary ──
+# ── Step 10: Summary ──
 echo ""
 echo "============================================"
 echo "  Setup Complete"

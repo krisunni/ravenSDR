@@ -1,7 +1,7 @@
 {
   "name": "ravenSDR",
   "description": "Real-time RF Signal Transcription Pipeline — RTL-SDR → Edge AI Inference (Hailo-8L NPU) → Live Web Interface",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "status": "in-progress",
   "license": "AGPL-3.0",
   "stack": {
@@ -47,9 +47,9 @@
     "7": {"name": "Frequency Presets", "status": "done"},
     "8": {"name": "Error Handling & Edge Cases", "status": "done"},
     "9": {"name": "Setup Script & Requirements", "status": "done"},
-    "10": {"name": "ADS-B Aviation Correlation & Voice-Activity Segmentation", "status": "planned"},
+    "10": {"name": "ADS-B Aviation Correlation & Voice-Activity Segmentation", "status": "done"},
     "11": {"name": "Inference Stats Dashboard", "status": "done"}
   },
-  "lastUpdated": "2026-02-27",
-  "notes": "Phases 1-7, 9 implemented and running on Pi 5. Hailo-8L NPU inference verified working with whisper-tiny encoder/decoder HEFs. Phase 8 in progress: graceful shutdown implemented (no orphaned rtl_fm/ffmpeg processes). Transcriber refactored to use Hailo context manager pattern (VDevice + configure inside inference loop). Critical fix: venv must use numpy<2 for Hailo C++ binding compatibility. Licensed under AGPL-3.0 with full attributions dashboard. GitHub Pages deployed with .nojekyll fix. Phase 10 planned: ADS-B flight tracking with callsign correlation + voice-activity audio segmentation. Phase 11 planned: inference stats dashboard (latency, RTF, tokens/s, silence rate)."
+  "lastUpdated": "2026-02-28",
+  "notes": "All phases implemented. Phase 10 complete: ADS-B receiver (dump1090 process manager), voice-activity segmentation (replaces fixed 10s chunking), callsign correlator (regex extraction + flight matching), Leaflet.js map panel with aircraft markers and callsign highlighting. Single-dongle time-sharing and dual-dongle modes supported. ADS-B disabled by default (ADSB_ENABLED=true to activate)."
 }

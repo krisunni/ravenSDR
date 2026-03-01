@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ravenSDR Console</title>
     <link rel="stylesheet" href="/static/ravensdr.css">
+    <link rel="stylesheet" href="/static/map.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css" />
 </head>
 <body>
     <header>
@@ -116,9 +118,22 @@
             </div>
             <div id="transcript-feed" class="transcript-feed"></div>
         </section>
+
+        <!-- ADS-B Map Panel -->
+        <div id="adsb-panel" class="hidden">
+            <div class="panel-header">
+                <label>ADS-B Aircraft Map</label>
+                <span id="flight-count" class="flight-count">0 aircraft</span>
+            </div>
+            <div id="adsb-scan-status">Scanning ADS-B...</div>
+            <div id="adsb-map"></div>
+        </div>
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-rotatedmarker@0.2.0/leaflet.rotatedMarker.js"></script>
+    <script src="/static/map.js"></script>
     <script src="/static/ravensdr.js"></script>
 </body>
 </html>

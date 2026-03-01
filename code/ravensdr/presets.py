@@ -90,6 +90,16 @@ PRESETS = [
         "squelch": 30,
         "note": "Paine Field / Snohomish County — SDR only",
     },
+    {
+        "id": "adsb-1090",
+        "label": "ADS-B 1090 MHz",
+        "freq": "1090M",
+        "mode": "adsb",
+        "category": "aviation",
+        "squelch": 0,
+        "note": "ADS-B aircraft tracking (dump1090) — map-only mode",
+        "device_index": 1,
+    },
     # ── Marine ──
     {
         "id": "marine-ch16",

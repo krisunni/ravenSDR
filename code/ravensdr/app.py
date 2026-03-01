@@ -15,6 +15,11 @@ from ravensdr.audio_router import audio_stream_generator
 from ravensdr.input_source import InputSource, detect_sdr
 from ravensdr.presets import get_presets, get_preset_by_id, CATEGORY_LABELS
 from ravensdr.transcriber import Transcriber
+from ravensdr.adsb_receiver import (
+    AdsbReceiver, AdsbScanScheduler,
+    ADSB_ENABLED, ADSB_DUAL_DONGLE,
+)
+from ravensdr.adsb_correlator import extract_callsigns, match_flights
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +44,38 @@ log.info("Mode: %s (SDR detected: %s)", mode, sdr_available)
 # ── Core components ──
 input_source = InputSource(mode)
 transcriber = Transcriber(input_source.pcm_queue, emit_fn=socketio.emit)
+
+# ── ADS-B Receiver ──
+adsb_receiver = None
+adsb_scheduler = None
+
+if ADSB_ENABLED:
+    device_idx = 1 if ADSB_DUAL_DONGLE else 0
+    adsb_receiver = AdsbReceiver(device_index=device_idx, dual_dongle=ADSB_DUAL_DONGLE)
+
+    if ADSB_DUAL_DONGLE:
+        # Dual-dongle: start immediately and run continuously
+        adsb_receiver.start()
+        log.info("ADS-B receiver started (dual-dongle mode, device %d)", device_idx)
+    else:
+        # Single-dongle: time-share with rtl_fm via scan scheduler
+        adsb_scheduler = AdsbScanScheduler(adsb_receiver, input_source)
+        log.info("ADS-B scan scheduler configured (single-dongle mode)")
+
+    # Wire transcript callback for callsign correlation
+    def _on_transcript(text):
+        if not adsb_receiver:
+            return
+        callsigns = extract_callsigns(text)
+        if callsigns:
+            matches = match_flights(callsigns, adsb_receiver.get_flights())
+            if matches:
+                socketio.emit("callsign_match", {
+                    "transcript": text,
+                    "matches": matches,
+                })
+
+    transcriber.set_transcript_callback(_on_transcript)
 
 
 def _input_error_callback(event, data):
@@ -152,6 +189,13 @@ def api_stats():
     return jsonify(transcriber.stats)
 
 
+@app.route("/api/adsb/flights")
+def api_adsb_flights():
+    if adsb_receiver:
+        return jsonify(adsb_receiver.get_flights())
+    return jsonify([])
+
+
 @app.route("/api/status")
 def api_status():
     return jsonify(_get_status())
@@ -180,6 +224,7 @@ def on_connect():
         "mode": mode,
         "sdr_available": sdr_available,
         "transcriber_backend": transcriber.backend,
+        "adsb_enabled": ADSB_ENABLED,
     })
     socketio.emit("status", _get_status())
 
@@ -198,6 +243,8 @@ def _get_status():
         "sdr_available": sdr_available,
         "sdr_connected": input_source.sdr_connected,
         "transcriber_backend": transcriber.backend,
+        "adsb_enabled": ADSB_ENABLED,
+        "adsb_scanning": adsb_scheduler.is_scanning if adsb_scheduler else False,
     }
 
 
@@ -212,6 +259,14 @@ def stats_broadcast_loop():
     while not _signal_stop.is_set():
         eventlet.sleep(5)
         socketio.emit("inference_stats", transcriber.stats)
+
+
+def adsb_broadcast_loop():
+    """Push ADS-B flight updates to clients every 2s."""
+    while not _signal_stop.is_set():
+        eventlet.sleep(2)
+        if adsb_receiver and adsb_receiver.is_running:
+            socketio.emit("adsb_update", adsb_receiver.get_flights())
 
 
 def sdr_health_loop():
@@ -282,6 +337,10 @@ def shutdown(signum=None, frame=None):
     _signal_stop.set()
     input_source.stop()
     transcriber.stop()
+    if adsb_receiver:
+        adsb_receiver.stop()
+    if adsb_scheduler:
+        adsb_scheduler.stop()
 
     if signum == signal.SIGTERM:
         socketio.stop()
@@ -304,4 +363,8 @@ if __name__ == "__main__":
     socketio.start_background_task(signal_meter_loop)
     socketio.start_background_task(sdr_health_loop)
     socketio.start_background_task(stats_broadcast_loop)
+    if ADSB_ENABLED:
+        socketio.start_background_task(adsb_broadcast_loop)
+        if adsb_scheduler:
+            adsb_scheduler.start()
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)

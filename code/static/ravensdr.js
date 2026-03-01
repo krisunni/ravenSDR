@@ -8,6 +8,8 @@
     let presets = [];
     let categories = {};
     let activeCategory = null;
+    let adsbEnabled = false;
+    let mapVisible = false;
 
     // ── DOM refs ──
     const modeBadge = document.getElementById("mode-badge");
@@ -50,6 +52,7 @@
         } else if (data.transcriber_backend === "none") {
             modeBadge.textContent += " (No Whisper)";
         }
+        adsbEnabled = !!data.adsb_enabled;
     });
 
     socket.on("status", function (data) {
@@ -155,6 +158,25 @@
                 }
                 currentPresetId = presetId;
                 renderPresetButtons(activeCategory);
+
+                // Manage ADS-B map panel based on preset + config
+                var preset = data.preset || {};
+                var isAviation = preset.category === "aviation";
+                var isAdsbOnly = preset.mode === "adsb";
+
+                if (!adsbEnabled || !isAviation) {
+                    hideMapPanel();
+                    document.getElementById("transcript-section").style.display = "";
+                    return;
+                }
+
+                if (isAdsbOnly) {
+                    showMapPanel(true);
+                    document.getElementById("transcript-section").style.display = "none";
+                } else {
+                    showMapPanel(false);
+                    document.getElementById("transcript-section").style.display = "";
+                }
             });
     }
 
@@ -272,6 +294,8 @@
                 audioPlayer.pause();
                 audioPlayer.removeAttribute("src");
                 audioToggle.textContent = "Play Audio";
+                hideMapPanel();
+                document.getElementById("transcript-section").style.display = "";
             });
     });
 
@@ -376,5 +400,54 @@
                 retryBtn.textContent = "Retry";
             });
     });
+
+    // ── ADS-B Map ──
+
+    socket.on("adsb_update", function (flights) {
+        if (mapVisible && window.ravenMap) {
+            window.ravenMap.updateAircraft(flights);
+        }
+    });
+
+    socket.on("callsign_match", function (data) {
+        if (mapVisible && window.ravenMap) {
+            window.ravenMap.highlightAircraft(data.matches);
+        }
+        // Highlight callsigns in the most recent transcript entry
+        highlightTranscriptCallsigns(data.matches);
+    });
+
+    function showMapPanel(fullWidth) {
+        if (!window.ravenMap) return;
+        window.ravenMap.init();
+        window.ravenMap.show();
+        window.ravenMap.setFullWidth(!!fullWidth);
+        mapVisible = true;
+    }
+
+    function hideMapPanel() {
+        if (window.ravenMap) {
+            window.ravenMap.hide();
+        }
+        mapVisible = false;
+    }
+
+    function highlightTranscriptCallsigns(matches) {
+        // Highlight callsigns in the last transcript entry
+        var entries = transcriptFeed.querySelectorAll(".transcript-entry:not(.error-entry)");
+        if (entries.length === 0) return;
+        var last = entries[entries.length - 1];
+        var textSpan = last.querySelector(".text");
+        if (!textSpan) return;
+
+        matches.forEach(function (m) {
+            var cs = m.matched_callsign || "";
+            if (!cs) return;
+            var html = textSpan.innerHTML;
+            var regex = new RegExp("(" + cs.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
+            textSpan.innerHTML = html.replace(regex,
+                '<span class="callsign-match">$1</span>');
+        });
+    }
 
 })();

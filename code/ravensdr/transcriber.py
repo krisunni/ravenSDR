@@ -14,6 +14,13 @@ SILENCE_THRESHOLD = 500    # RMS value — below this, skip inference
 CHUNK_SAMPLES = 160000     # 10 seconds at 16kHz (matches Hailo encoder input)
 SAMPLE_RATE = 16000
 
+# Voice-activity segmentation constants
+VAD_SILENCE_THRESHOLD = 400   # RMS below this = silence
+VAD_HOLDOFF_MS = 300          # silence must last this long to trigger a split
+VAD_MIN_SEGMENT_S = 1.0       # don't send segments shorter than this
+VAD_MAX_SEGMENT_S = 15.0      # force-split if speech runs longer than this
+VAD_FRAME_SIZE = 1600          # 100ms frames at 16kHz
+
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 DECODER_SEQUENCE_LENGTH = 32  # max tokens for whisper-tiny
 START_TOKEN_ID = 50258
@@ -62,6 +69,70 @@ def _apply_repetition_penalty(logits, generated_tokens, penalty=REPETITION_PENAL
     return logits
 
 
+class VoiceActivitySegmenter:
+    """Accumulates PCM and splits on silence boundaries instead of fixed time."""
+
+    def __init__(self):
+        self._pending = b""
+        self._silence_frames = 0
+        self._holdoff_frames = int(VAD_HOLDOFF_MS / 100)
+
+    def feed(self, pcm: bytes) -> list[bytes]:
+        """Feed PCM data, return list of complete segments (may be empty)."""
+        self._pending += pcm
+        segments = []
+        frame_bytes = VAD_FRAME_SIZE * 2  # 16-bit samples
+
+        while len(self._pending) >= frame_bytes:
+            # Peek at next frame for RMS check without consuming yet
+            frame_start = len(self._pending) - (len(self._pending) % frame_bytes)
+            # Process frames from the start
+            break
+
+        # Process all complete frames in pending buffer
+        pos = 0
+        new_pending = b""
+        # We need to track position through the buffer
+        buf = self._pending
+        self._pending = b""
+
+        while len(buf) >= frame_bytes:
+            frame = buf[:frame_bytes]
+            buf = buf[frame_bytes:]
+
+            rms = compute_rms(frame)
+            self._pending += frame
+            buf_seconds = len(self._pending) / (SAMPLE_RATE * 2)
+
+            if rms < VAD_SILENCE_THRESHOLD:
+                self._silence_frames += 1
+            else:
+                self._silence_frames = 0
+
+            # Split on silence boundary (if enough silence and min length met)
+            if (self._silence_frames >= self._holdoff_frames
+                    and buf_seconds >= VAD_MIN_SEGMENT_S):
+                segments.append(self._flush())
+
+            # Force-split at max duration to avoid unbounded buffers
+            elif buf_seconds >= VAD_MAX_SEGMENT_S:
+                segments.append(self._flush())
+
+        # Put remaining partial frame back
+        self._pending += buf
+        return segments
+
+    def _flush(self) -> bytes:
+        seg = self._pending
+        self._pending = b""
+        self._silence_frames = 0
+        return seg
+
+    def reset(self):
+        self._pending = b""
+        self._silence_frames = 0
+
+
 class Transcriber:
     """Accumulates PCM chunks, detects silence, runs Whisper inference."""
 
@@ -72,6 +143,7 @@ class Transcriber:
         self._thread = None
         self._current_preset = None
         self._whisper_model = None
+        self._transcript_callback = None  # called with text on each transcript
 
         # Inference stats
         self._stats = {
@@ -162,6 +234,10 @@ class Transcriber:
     def set_preset(self, preset):
         self._current_preset = preset
 
+    def set_transcript_callback(self, callback):
+        """Set callback(text) called on each non-empty transcript."""
+        self._transcript_callback = callback
+
     def start(self):
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._inference_loop, daemon=True)
@@ -193,9 +269,8 @@ class Transcriber:
                 continue
 
     def _inference_loop_cpu(self):
-        """CPU fallback inference loop using faster-whisper."""
-        buffer = b""
-        chunk_bytes = CHUNK_SAMPLES * 2
+        """CPU fallback inference loop using faster-whisper with VAD segmentation."""
+        vad = VoiceActivitySegmenter()
 
         while not self._stop_event.is_set():
             try:
@@ -203,20 +278,18 @@ class Transcriber:
             except Exception:
                 continue
 
-            buffer += data
-
-            if len(buffer) >= 4096:
-                rms = compute_rms(buffer[-4096:])
+            # Signal level from raw data
+            if len(data) >= 4096:
+                rms = compute_rms(data[-4096:])
                 preset = self._current_preset or {}
                 self.emit_fn("signal_level", {
                     "rms": round(rms, 1),
                     "freq": preset.get("freq", ""),
                 })
 
-            if len(buffer) >= chunk_bytes:
-                chunk = buffer[:chunk_bytes]
-                buffer = buffer[chunk_bytes:]
-
+            # Feed into VAD segmenter — get back silence-bounded segments
+            segments = vad.feed(data)
+            for chunk in segments:
                 if not is_signal_present(chunk):
                     self._stats["chunks_skipped_silence"] += 1
                     continue
@@ -251,6 +324,8 @@ class Transcriber:
                         "rms": round(compute_rms(chunk), 1),
                     }
                     self.emit_fn("transcript", segment)
+                    if self._transcript_callback:
+                        self._transcript_callback(text.strip())
 
     def _inference_loop_hailo(self):
         """Hailo NPU inference loop — VDevice and configure() scoped by context managers."""
@@ -282,8 +357,7 @@ class Transcriber:
 
                         log.info("Hailo NPU ready — entering inference loop")
 
-                        buffer = b""
-                        chunk_bytes = CHUNK_SAMPLES * 2
+                        vad = VoiceActivitySegmenter()
                         timeout_ms = 10000
 
                         while not self._stop_event.is_set():
@@ -292,27 +366,23 @@ class Transcriber:
                             except Exception:
                                 continue
 
-                            buffer += data
-
-                            if len(buffer) >= 4096:
-                                rms = compute_rms(buffer[-4096:])
+                            # Signal level from raw data
+                            if len(data) >= 4096:
+                                rms = compute_rms(data[-4096:])
                                 preset = self._current_preset or {}
                                 self.emit_fn("signal_level", {
                                     "rms": round(rms, 1),
                                     "freq": preset.get("freq", ""),
                                 })
 
-                            if len(buffer) < chunk_bytes:
-                                continue
+                            # Feed into VAD segmenter
+                            vad_segments = vad.feed(data)
+                            for chunk in vad_segments:
+                                if not is_signal_present(chunk):
+                                    self._stats["chunks_skipped_silence"] += 1
+                                    continue
 
-                            chunk = buffer[:chunk_bytes]
-                            buffer = buffer[chunk_bytes:]
-
-                            if not is_signal_present(chunk):
-                                self._stats["chunks_skipped_silence"] += 1
-                                continue
-
-                            audio_s = len(chunk) / (SAMPLE_RATE * 2)
+                                audio_s = len(chunk) / (SAMPLE_RATE * 2)
 
                             # --- Mel spectrogram ---
                             samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
@@ -411,6 +481,8 @@ class Transcriber:
                                         "rms": round(compute_rms(chunk), 1),
                                     }
                                     self.emit_fn("transcript", segment)
+                                    if self._transcript_callback:
+                                        self._transcript_callback(text.strip())
 
                             except Exception as e:
                                 log.error("Hailo inference error: %s", e)
