@@ -20,6 +20,7 @@ from ravensdr.adsb_receiver import (
     ADSB_ENABLED, ADSB_DUAL_DONGLE,
 )
 from ravensdr.adsb_correlator import extract_callsigns, match_flights
+from ravensdr.noaa_parser import detect_priority_alert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,6 +77,42 @@ if ADSB_ENABLED:
                 })
 
     transcriber.set_transcript_callback(_on_transcript)
+
+# ── Weather state ──
+_latest_weather = None
+
+
+def _on_weather_update(parsed_data):
+    """Handle parsed NOAA weather data from the transcriber post-processor."""
+    global _latest_weather
+    _latest_weather = parsed_data
+    socketio.emit("weather_update", parsed_data)
+
+    if detect_priority_alert(parsed_data.get("raw_transcript", "")):
+        preset = input_source.current_preset or {}
+        alert_payload = {
+            "alerts": parsed_data.get("alerts", []),
+            "raw_snippet": parsed_data.get("raw_transcript", "")[:200],
+            "timestamp": parsed_data.get("parsed_at", ""),
+            "freq": preset.get("freq", ""),
+            "source": mode,
+        }
+        socketio.emit("priority_alert", alert_payload)
+        # Structured intelligence log entry for each alert
+        for alert in parsed_data.get("alerts", []):
+            log.warning(
+                "INTEL WEATHER_ALERT | ts=%s | freq=%s | type=%s | name=%s | area=%s | source=%s | snippet=%.200s",
+                parsed_data.get("parsed_at", ""),
+                preset.get("freq", ""),
+                alert.get("type", ""),
+                alert.get("name", ""),
+                alert.get("area", ""),
+                mode,
+                parsed_data.get("raw_transcript", "")[:200],
+            )
+
+
+transcriber.set_weather_callback(_on_weather_update)
 
 
 def _input_error_callback(event, data):
@@ -194,6 +231,13 @@ def api_adsb_flights():
     if adsb_receiver:
         return jsonify(adsb_receiver.get_flights())
     return jsonify([])
+
+
+@app.route("/api/weather/current")
+def api_weather_current():
+    if _latest_weather is None:
+        return jsonify({"error": "No weather data received yet"}), 404
+    return jsonify(_latest_weather)
 
 
 @app.route("/api/status")

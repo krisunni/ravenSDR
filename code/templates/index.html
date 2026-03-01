@@ -119,6 +119,15 @@
             <div id="transcript-feed" class="transcript-feed"></div>
         </section>
 
+        <!-- Weather Panel -->
+        <div id="weather-panel" class="hidden">
+            <div class="panel-header">
+                <label>Weather</label>
+                <button id="weather-toggle-btn" class="btn btn-sm">Hide</button>
+            </div>
+            <div class="weather-content"></div>
+        </div>
+
         <!-- ADS-B Map Panel -->
         <div id="adsb-panel" class="hidden">
             <div class="panel-header">
@@ -134,6 +143,7 @@
     <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-rotatedmarker@0.2.0/leaflet.rotatedMarker.js"></script>
     <script src="/static/map.js"></script>
+    <script src="/static/weather.js"></script>
     <script src="/static/ravensdr.js"></script>
 </body>
 </html>

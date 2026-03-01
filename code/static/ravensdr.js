@@ -10,6 +10,7 @@
     let activeCategory = null;
     let adsbEnabled = false;
     let mapVisible = false;
+    let weatherPanel = null;
 
     // ── DOM refs ──
     const modeBadge = document.getElementById("mode-badge");
@@ -37,6 +38,9 @@
     socket.on("connect", function () {
         connectionBanner.classList.add("hidden");
         fetchPresets();
+        if (window.WeatherPanel && !weatherPanel) {
+            weatherPanel = new window.WeatherPanel(socket);
+        }
     });
 
     socket.on("disconnect", function () {
@@ -159,8 +163,18 @@
                 currentPresetId = presetId;
                 renderPresetButtons(activeCategory);
 
-                // Manage ADS-B map panel based on preset + config
+                // Manage weather panel based on preset category
                 var preset = data.preset || {};
+                var isWeather = preset.category === "weather";
+                if (weatherPanel) {
+                    if (isWeather) {
+                        weatherPanel.show();
+                    } else {
+                        weatherPanel.hide();
+                    }
+                }
+
+                // Manage ADS-B map panel based on preset + config
                 var isAviation = preset.category === "aviation";
                 var isAdsbOnly = preset.mode === "adsb";
 
@@ -295,6 +309,7 @@
                 audioPlayer.removeAttribute("src");
                 audioToggle.textContent = "Play Audio";
                 hideMapPanel();
+                if (weatherPanel) weatherPanel.hide();
                 document.getElementById("transcript-section").style.display = "";
             });
     });

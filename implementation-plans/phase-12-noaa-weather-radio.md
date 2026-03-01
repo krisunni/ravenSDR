@@ -37,7 +37,7 @@ Continuous monitoring of NOAA weather radio on 162.550 MHz (KHB60 Seattle primar
 
 ### T064 — Create NOAA broadcast transcript parser
 **File:** `code/ravensdr/noaa_parser.py`
-**Status:** Not Started
+**Status:** Done
 
 Create `noaa_parser.py` with a `parse_weather_transcript()` function that accepts raw Whisper transcript text and returns a structured dict of parsed weather fields.
 
@@ -73,7 +73,7 @@ Include a `detect_priority_alert()` function that returns `True` when transcript
 
 ### T065 — Add weather category parser flag to presets
 **File:** `code/ravensdr/presets.py`
-**Status:** Not Started
+**Status:** Done
 
 NOAA presets already exist in the weather category. Add a `parser` field to weather category presets indicating that transcripts from these frequencies should be routed through `noaa_parser`.
 
@@ -93,7 +93,7 @@ Ensure all three NOAA frequencies (162.550, 162.400, 162.475) have the `parser: 
 
 ### T066 — Route transcripts to category-specific post-processors
 **File:** `code/ravensdr/transcriber.py`
-**Status:** Not Started
+**Status:** Done
 
 After Whisper produces a transcript, check whether the current preset has a `parser` field. If `parser == "noaa"`, pass the transcript through `noaa_parser.parse_weather_transcript()` before emitting.
 
@@ -109,7 +109,7 @@ This keeps the transcriber generic — future parsers (ATC, marine VHF) can be a
 
 ### T067 — Add weather API route and Socket.IO event
 **File:** `code/ravensdr/app.py`
-**Status:** Not Started
+**Status:** Done
 
 Add to Flask app:
 
@@ -126,7 +126,7 @@ Wire up the transcriber's post-processor output: when a NOAA transcript is parse
 
 ### T068 — Create weather panel UI component
 **File:** `code/static/weather.js`
-**Status:** Not Started
+**Status:** Done
 
 Create `weather.js` with a `WeatherPanel` class that:
 
@@ -148,7 +148,7 @@ On page load, fetch `/api/weather/current` to populate initial state.
 
 ### T069 — Integrate weather panel into main layout
 **Files:** `code/templates/index.html`, `code/static/ravensdr.js`
-**Status:** Not Started
+**Status:** Done
 
 **index.html:**
 - Add a weather panel section to the dashboard layout. Place it as a collapsible sidebar panel or a tab alongside existing panels.
@@ -164,7 +164,7 @@ On page load, fetch `/api/weather/current` to populate initial state.
 
 ### T070 — Add structured weather logging
 **File:** `code/ravensdr/app.py`
-**Status:** Not Started
+**Status:** Done
 
 When a `priority_alert` is detected, log to the structured intelligence log with:
 - Timestamp (ISO 8601)
@@ -181,7 +181,7 @@ Use the existing logging pattern from ADS-B correlation (Phase 10). Weather aler
 
 ### T071 — Create NWS broadcast test fixtures
 **File:** `code/tests/fixtures/noaa_transcripts.py`
-**Status:** Not Started
+**Status:** Done
 
 Create test fixture file with 4 sample NOAA broadcast transcripts (realistic text matching what Whisper would output from synthesized TTS):
 
@@ -196,7 +196,7 @@ Each fixture should be a raw string that looks like Whisper output — no punctu
 
 ### T072 — Unit tests for noaa_parser
 **File:** `code/tests/unit/test_noaa_parser.py`
-**Status:** Not Started
+**Status:** Done
 
 Unit tests covering:
 - `parse_weather_transcript()` extracts temperature from clear conditions fixture
@@ -214,7 +214,7 @@ Unit tests covering:
 
 ### T073 — Integration test with web stream source
 **File:** `code/tests/integration/test_noaa_stream.py`
-**Status:** Not Started
+**Status:** Done
 
 Integration test that:
 1. Configures a web stream source pointing to `https://wxradio.org/CA-Monterey-KEC49`
@@ -229,7 +229,7 @@ Mark test with `@pytest.mark.integration` and `@pytest.mark.network` — require
 
 ### T074 — NOAA squelch-zero continuous capture mode
 **File:** `code/ravensdr/tuner.py`
-**Status:** Not Started
+**Status:** Done
 
 NOAA weather radio broadcasts continuously with no squelch gaps. The existing voice-activity detection (VAD) segmentation from Phase 10 may not segment well on continuous synthesized speech.
 

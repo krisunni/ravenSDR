@@ -21,6 +21,10 @@ VAD_MIN_SEGMENT_S = 1.0       # don't send segments shorter than this
 VAD_MAX_SEGMENT_S = 15.0      # force-split if speech runs longer than this
 VAD_FRAME_SIZE = 1600          # 100ms frames at 16kHz
 
+# Continuous capture constants (NOAA weather radio)
+CONTINUOUS_SEGMENT_S = 30.0    # fixed segment duration for continuous broadcasts
+CONTINUOUS_OVERLAP_S = 2.0     # overlap between segments to avoid cutting words
+
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 DECODER_SEQUENCE_LENGTH = 32  # max tokens for whisper-tiny
 START_TOKEN_ID = 50258
@@ -133,6 +137,34 @@ class VoiceActivitySegmenter:
         self._silence_frames = 0
 
 
+class ContinuousSegmenter:
+    """Time-based segmentation for continuous broadcasts (e.g. NOAA weather radio).
+
+    Splits audio into fixed-duration chunks with overlap to avoid cutting words.
+    Used instead of VAD when the broadcast has no silence gaps.
+    """
+
+    def __init__(self, segment_s=CONTINUOUS_SEGMENT_S, overlap_s=CONTINUOUS_OVERLAP_S):
+        self._segment_bytes = int(segment_s * SAMPLE_RATE * 2)  # 16-bit PCM
+        self._overlap_bytes = int(overlap_s * SAMPLE_RATE * 2)
+        self._pending = b""
+
+    def feed(self, pcm: bytes) -> list[bytes]:
+        """Feed PCM data, return list of complete segments."""
+        self._pending += pcm
+        segments = []
+        while len(self._pending) >= self._segment_bytes:
+            seg = self._pending[:self._segment_bytes]
+            segments.append(seg)
+            # Advance by segment minus overlap
+            advance = self._segment_bytes - self._overlap_bytes
+            self._pending = self._pending[advance:]
+        return segments
+
+    def reset(self):
+        self._pending = b""
+
+
 class Transcriber:
     """Accumulates PCM chunks, detects silence, runs Whisper inference."""
 
@@ -144,6 +176,7 @@ class Transcriber:
         self._current_preset = None
         self._whisper_model = None
         self._transcript_callback = None  # called with text on each transcript
+        self._weather_callback = None     # called with parsed NOAA data
 
         # Inference stats
         self._stats = {
@@ -238,6 +271,25 @@ class Transcriber:
         """Set callback(text) called on each non-empty transcript."""
         self._transcript_callback = callback
 
+    def set_weather_callback(self, callback):
+        """Set callback(parsed_data) called when NOAA parser produces results."""
+        self._weather_callback = callback
+
+    def _post_process(self, text):
+        """Route transcript through category-specific post-processors.
+
+        Returns (text, parsed_data) where parsed_data is None if no parser applies.
+        """
+        preset = self._current_preset or {}
+        parser_type = preset.get("parser")
+
+        if parser_type == "noaa":
+            from ravensdr.noaa_parser import parse_weather_transcript
+            parsed = parse_weather_transcript(text)
+            return text, parsed
+
+        return text, None
+
     def start(self):
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._inference_loop, daemon=True)
@@ -268,9 +320,18 @@ class Transcriber:
             except Exception:
                 continue
 
+    def _make_segmenter(self):
+        """Choose segmenter based on current preset configuration."""
+        preset = self._current_preset or {}
+        if preset.get("parser") == "noaa" and preset.get("squelch", -1) == 0:
+            log.info("Using continuous segmenter (%.0fs chunks) for NOAA broadcast",
+                     CONTINUOUS_SEGMENT_S)
+            return ContinuousSegmenter()
+        return VoiceActivitySegmenter()
+
     def _inference_loop_cpu(self):
-        """CPU fallback inference loop using faster-whisper with VAD segmentation."""
-        vad = VoiceActivitySegmenter()
+        """CPU fallback inference loop using faster-whisper with VAD/continuous segmentation."""
+        segmenter = self._make_segmenter()
 
         while not self._stop_event.is_set():
             try:
@@ -287,8 +348,8 @@ class Transcriber:
                     "freq": preset.get("freq", ""),
                 })
 
-            # Feed into VAD segmenter — get back silence-bounded segments
-            segments = vad.feed(data)
+            # Feed into segmenter — get back segments (VAD or time-based)
+            segments = segmenter.feed(data)
             for chunk in segments:
                 if not is_signal_present(chunk):
                     self._stats["chunks_skipped_silence"] += 1
@@ -316,16 +377,20 @@ class Transcriber:
 
                 if text and text.strip():
                     preset = self._current_preset or {}
+                    text_clean = text.strip()
+                    text_clean, parsed_data = self._post_process(text_clean)
                     segment = {
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
                         "freq": preset.get("freq", ""),
                         "label": preset.get("label", ""),
-                        "text": text.strip(),
+                        "text": text_clean,
                         "rms": round(compute_rms(chunk), 1),
                     }
                     self.emit_fn("transcript", segment)
+                    if parsed_data and self._weather_callback:
+                        self._weather_callback(parsed_data)
                     if self._transcript_callback:
-                        self._transcript_callback(text.strip())
+                        self._transcript_callback(text_clean)
 
     def _inference_loop_hailo(self):
         """Hailo NPU inference loop — VDevice and configure() scoped by context managers."""
@@ -357,7 +422,7 @@ class Transcriber:
 
                         log.info("Hailo NPU ready — entering inference loop")
 
-                        vad = VoiceActivitySegmenter()
+                        segmenter = self._make_segmenter()
                         timeout_ms = 10000
 
                         while not self._stop_event.is_set():
@@ -375,8 +440,8 @@ class Transcriber:
                                     "freq": preset.get("freq", ""),
                                 })
 
-                            # Feed into VAD segmenter
-                            vad_segments = vad.feed(data)
+                            # Feed into segmenter (VAD or continuous)
+                            vad_segments = segmenter.feed(data)
                             for chunk in vad_segments:
                                 if not is_signal_present(chunk):
                                     self._stats["chunks_skipped_silence"] += 1
@@ -473,16 +538,20 @@ class Transcriber:
                                 text = self._tokenizer.decode(generated_tokens, skip_special_tokens=True)
                                 if text and text.strip():
                                     preset = self._current_preset or {}
+                                    text_clean = text.strip()
+                                    text_clean, parsed_data = self._post_process(text_clean)
                                     segment = {
                                         "timestamp": datetime.now().strftime("%H:%M:%S"),
                                         "freq": preset.get("freq", ""),
                                         "label": preset.get("label", ""),
-                                        "text": text.strip(),
+                                        "text": text_clean,
                                         "rms": round(compute_rms(chunk), 1),
                                     }
                                     self.emit_fn("transcript", segment)
+                                    if parsed_data and self._weather_callback:
+                                        self._weather_callback(parsed_data)
                                     if self._transcript_callback:
-                                        self._transcript_callback(text.strip())
+                                        self._transcript_callback(text_clean)
 
                             except Exception as e:
                                 log.error("Hailo inference error: %s", e)
