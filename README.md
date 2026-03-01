@@ -52,7 +52,7 @@ Python 3.11+ / Flask / Flask-SocketIO / Hailo SDK / faster-whisper / rtl-sdr / f
 
 ## Project Dashboard
 
-[View project status dashboard](https://kris.github.io/ravenSDR/dashboard/) — components, features, tasks, and changelog.
+[View project status dashboard](https://krisunni.github.io/ravenSDR/dashboard/) — components, features, tasks, and changelog.
 
 ## License
 
@@ -62,7 +62,7 @@ If you modify and deploy this software — including running it as a network ser
 
 ## Attributions
 
-ravenSDR is built on the work of many open-source projects. Full attributions, copyright notices, and license details for all dependencies are available in the [Attributions dashboard](https://kris.github.io/ravenSDR/dashboard/attributions.html).
+ravenSDR is built on the work of many open-source projects. Full attributions, copyright notices, and license details for all dependencies are available in the [Attributions dashboard](https://krisunni.github.io/ravenSDR/dashboard/attributions.html).
 
 Key dependencies and their licenses:
 
