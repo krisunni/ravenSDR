@@ -73,12 +73,12 @@
         <!-- Controls -->
         <section id="control-section">
             <div class="control-group">
-                <label for="squelch-slider">Squelch</label>
+                <label for="squelch-slider">Squelch <span class="info-icon" title="Mutes audio below this signal level. Increase to filter out static and noise when no one is transmitting.">i</span></label>
                 <input type="range" id="squelch-slider" min="0" max="100" value="0">
                 <span id="squelch-value">0</span>
             </div>
             <div class="control-group">
-                <label for="gain-select">Gain</label>
+                <label for="gain-select">Gain <span class="info-icon" title="Controls SDR receiver amplification. Auto adjusts dynamically. Increase manually for weak signals, decrease if audio is distorted.">i</span></label>
                 <select id="gain-select">
                     <option value="auto" selected>Auto</option>
                     <option value="0">0 dB</option>
@@ -130,7 +130,7 @@
         </div>
 
         <!-- Satellite Panel -->
-        <div id="satellite-panel">
+        <div id="satellite-panel" class="hidden">
             <div class="panel-header">
                 <label>Satellite Passes</label>
             </div>

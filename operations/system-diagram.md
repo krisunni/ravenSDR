@@ -1,0 +1,221 @@
+# ravenSDR — System Diagram
+
+## Physical Setup
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │           ANTENNA (Dipole V)             │
+                    │                                         │
+                    │        \              /                  │
+                    │    L    \            /    L              │
+                    │          \          /                    │
+                    │           \        /                     │
+                    │            [V-mount]                     │
+                    │               |                          │
+                    │          [SMA cable]                     │
+                    └───────────────┬─────────────────────────┘
+                                    │
+                    ┌───────────────▼─────────────────────────┐
+                    │        RTL-SDR Blog V4                   │
+                    │   ┌─────────────────────────┐           │
+                    │   │ RTL2832U + R828D tuner   │           │
+                    │   │ Freq: 24 MHz – 1766 MHz  │           │
+                    │   │ ADC: 8-bit               │           │
+                    │   └─────────────────────────┘           │
+                    │         USB 2.0 output                   │
+                    └───────────────┬─────────────────────────┘
+                                    │
+                    ┌───────────────▼─────────────────────────┐
+                    │         RASPBERRY PI 5                   │
+                    │                                         │
+                    │   ┌─────────┐    ┌──────────────────┐   │
+                    │   │ rtl_fm  │───▶│ PCM audio (16kHz) │   │
+                    │   │ process │    │ 16-bit signed LE  │   │
+                    │   └─────────┘    └────────┬─────────┘   │
+                    │                           │              │
+                    │              ┌────────────┼──────────┐   │
+                    │              │            │          │   │
+                    │              ▼            ▼          │   │
+                    │   ┌──────────────┐ ┌───────────┐    │   │
+                    │   │  Hailo-8L    │ │  Audio    │    │   │
+                    │   │  NPU         │ │  Router   │    │   │
+                    │   │  (Whisper)   │ │  (HTTP)   │    │   │
+                    │   └──────┬───────┘ └─────┬─────┘    │   │
+                    │          │               │          │   │
+                    │          ▼               ▼          │   │
+                    │   ┌──────────────┐ ┌───────────┐    │   │
+                    │   │  Transcript  │ │  Browser  │    │   │
+                    │   │  (text)      │ │  audio    │    │   │
+                    │   └──────┬───────┘ └─────┬─────┘    │   │
+                    │          │               │          │   │
+                    │          ▼               ▼          │   │
+                    │   ┌─────────────────────────────┐   │   │
+                    │   │     Flask + Socket.IO        │   │   │
+                    │   │     (port 5000)              │   │   │
+                    │   └──────────────┬──────────────┘   │   │
+                    │                  │                   │   │
+                    └──────────────────┼───────────────────┘   │
+                                       │                       │
+                    ┌──────────────────▼───────────────────────┘
+                    │
+          ┌─────────▼──────────┐
+          │   WEB BROWSER      │
+          │   (any device)     │
+          │                    │
+          │  ┌──────────────┐  │
+          │  │ Preset Tabs  │  │
+          │  │ Signal Meter │  │
+          │  │ Transcript   │  │
+          │  │ Audio Player │  │
+          │  │ ADS-B Map    │  │
+          │  │ Weather      │  │
+          │  │ Satellite    │  │
+          │  └──────────────┘  │
+          └────────────────────┘
+```
+
+## Software Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         ravenSDR                                 │
+│                                                                  │
+│  ┌─────────────┐     ┌──────────────┐     ┌──────────────────┐  │
+│  │ InputSource  │     │  Transcriber │     │   Flask App      │  │
+│  │             │     │              │     │                  │  │
+│  │ ┌─────────┐ │     │  pcm_queue   │     │  REST API        │  │
+│  │ │ Tuner   │─┼────▶│  ──────▶     │     │  /api/tune       │  │
+│  │ │ (SDR)   │ │     │  Hailo NPU   │────▶│  /api/stop       │  │
+│  │ └─────────┘ │     │  or CPU      │     │  /api/presets     │  │
+│  │ ┌─────────┐ │     │  (Whisper)   │     │  /api/squelch     │  │
+│  │ │ Stream  │ │     │              │     │  /api/gain        │  │
+│  │ │ Source  │ │     └──────────────┘     │  /api/adsb/flights│  │
+│  │ │ (Web)   │ │                          │  /audio-stream    │  │
+│  │ └─────────┘ │     ┌──────────────┐     │                  │  │
+│  └─────────────┘     │ ADS-B        │     │  Socket.IO       │  │
+│                      │              │     │  ├ transcript     │  │
+│  ┌─────────────┐     │ ┌──────────┐ │     │  ├ signal_level   │  │
+│  │ Presets     │     │ │dump1090  │ │     │  ├ inference_stats│  │
+│  │             │     │ │(process) │ │     │  ├ adsb_update    │  │
+│  │ Aviation    │     │ └──────────┘ │     │  ├ callsign_match │  │
+│  │ Broadcast   │     │ ┌──────────┐ │     │  ├ status         │  │
+│  │ Marine      │     │ │Correlator│ │────▶│  └ error          │  │
+│  │ Public Safety│    │ │(callsign)│ │     │                  │  │
+│  │ Weather     │     │ └──────────┘ │     └──────────────────┘  │
+│  └─────────────┘     │ ┌──────────┐ │                           │
+│                      │ │Scheduler │ │     ┌──────────────────┐  │
+│  ┌─────────────┐     │ │(time-    │ │     │   Frontend       │  │
+│  │ APT Satellite│    │ │ share)   │ │     │                  │  │
+│  │             │     │ └──────────┘ │     │  ravensdr.js     │  │
+│  │ ┌─────────┐ │     └──────────────┘     │  map.js (Leaflet)│  │
+│  │ │Scheduler│ │                          │  weather.js      │  │
+│  │ │(ephem)  │ │     ┌──────────────┐     │  satellite.js    │  │
+│  │ └─────────┘ │     │ Audio Router │     │                  │  │
+│  │ ┌─────────┐ │     │              │     │  Web Audio API   │  │
+│  │ │Recorder │ │     │ audio_queue  │     │  Socket.IO       │  │
+│  │ │(WAV)    │ │     │ ──────▶      │     │                  │  │
+│  │ └─────────┘ │     │ HTTP stream  │────▶│                  │  │
+│  │ ┌─────────┐ │     │ /audio-stream│     └──────────────────┘  │
+│  │ │Decoder  │ │     └──────────────┘                           │
+│  │ │(noaa-apt│ │                                                │
+│  │ └─────────┘ │                                                │
+│  └─────────────┘                                                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Data Flow
+
+```
+RF Signal ──▶ RTL-SDR V4 ──▶ rtl_fm (demodulate) ──▶ PCM 16kHz
+                                                        │
+                                    ┌───────────────────┴───────────────────┐
+                                    │                                       │
+                                    ▼                                       ▼
+                             pcm_queue                               audio_queue
+                                    │                                       │
+                                    ▼                                       ▼
+                          ┌──────────────────┐                    ┌─────────────────┐
+                          │ VAD Segmenter    │                    │ Audio Router     │
+                          │ (silence detect) │                    │ (HTTP chunked)   │
+                          └────────┬─────────┘                    └────────┬────────┘
+                                   │                                       │
+                                   ▼                                       ▼
+                          ┌──────────────────┐                    Browser <audio>
+                          │ Whisper Inference │                    element plays
+                          │ (Hailo NPU)      │                    live audio
+                          │                  │
+                          │ 1. Mel spectro   │
+                          │ 2. Encoder HEF   │
+                          │ 3. Decoder HEF   │
+                          │ 4. Token decode  │
+                          └────────┬─────────┘
+                                   │
+                                   ▼
+                          ┌──────────────────┐
+                          │ Post-processing  │
+                          │ • NOAA parsing   │
+                          │ • Callsign match │
+                          └────────┬─────────┘
+                                   │
+                                   ▼
+                          Socket.IO emit
+                          "transcript" event
+                                   │
+                                   ▼
+                          Browser renders
+                          in transcript feed
+```
+
+## ADS-B Time-Sharing (Single Dongle)
+
+```
+Time ──▶
+
+├──── 60s voice ────┤── 30s ADS-B ──├──── 60s voice ────┤── 30s ADS-B ──┤
+│                   │               │                   │               │
+│  rtl_fm running   │  dump1090     │  rtl_fm running   │  dump1090     │
+│  tuned to preset  │  scanning     │  tuned to preset  │  scanning     │
+│  transcribing     │  1090 MHz     │  transcribing     │  1090 MHz     │
+│                   │               │                   │               │
+│  [audio + text]   │  [map update] │  [audio + text]   │  [map update] │
+│                   │               │                   │               │
+
+Only active when tuned to an Aviation preset.
+Weather, Broadcast, Marine presets are not interrupted.
+```
+
+## Hardware Stack
+
+```
+┌─────────────────────────────────────┐
+│           Raspberry Pi 5            │
+│                                     │
+│  CPU: Cortex-A76 (4 cores)         │
+│  RAM: 4/8 GB                       │
+│  OS:  Raspberry Pi OS (Bookworm)   │
+│                                     │
+│  ┌──────────────────────────────┐   │
+│  │     Hailo AI Hat (8L)        │   │
+│  │     13 TOPS NPU              │   │
+│  │     Whisper-tiny inference    │   │
+│  │     ~180ms/chunk              │   │
+│  └──────────────────────────────┘   │
+│                                     │
+│  USB Ports:                         │
+│  ├── RTL-SDR Blog V4 (dongle 0)    │
+│  ├── RTL-SDR Blog V4 (dongle 1)*   │  * optional, for dedicated ADS-B
+│  └── GPS module (future)*          │
+│                                     │
+│  Network:                           │
+│  ├── WiFi or Ethernet              │
+│  └── Web UI on port 5000           │
+└─────────────────────────────────────┘
+```
+
+## Driver Requirements
+
+| Component | Driver | Notes |
+|-----------|--------|-------|
+| RTL-SDR Blog V4 | **rtl-sdr-blog** (patched) | Stock Debian `librtlsdr` causes PLL errors |
+| Hailo-8L NPU | HailoRT + hailortcli | System-wide install, symlinked into venv |
+| Audio | ALSA (snd-aloop) | Loopback for internal routing |

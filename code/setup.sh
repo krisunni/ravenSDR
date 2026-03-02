@@ -31,19 +31,15 @@ echo "── Step 2: System packages ──"
 sudo apt-get update -qq
 sudo apt-get install -y -qq \
     rtl-sdr \
-    librtlsdr-dev \
     sox \
     alsa-utils \
     ffmpeg \
     python3-venv \
-    python3-pip
-
-# Try rtl-biast (may not be in default repos)
-if sudo apt-get install -y -qq rtl-biast 2>/dev/null; then
-    pass "rtl-biast installed"
-else
-    warn "rtl-biast not available in repos — bias tee control unavailable"
-fi
+    python3-pip \
+    cmake \
+    build-essential \
+    libusb-1.0-0-dev \
+    pkg-config
 
 pass "System packages installed"
 
@@ -98,6 +94,9 @@ if command -v dump1090-mutability &>/dev/null; then
 else
     if sudo apt-get install -y -qq dump1090-mutability 2>/dev/null; then
         pass "dump1090-mutability installed from apt"
+        # Disable dump1090 service — ravenSDR manages it
+        sudo systemctl stop dump1090-mutability 2>/dev/null || true
+        sudo systemctl disable dump1090-mutability 2>/dev/null || true
     else
         warn "dump1090 not in apt — ADS-B features will be unavailable"
         warn "To install manually: git clone https://github.com/flightaware/dump1090.git && cd dump1090 && make"
@@ -135,9 +134,35 @@ else
     fi
 fi
 
-# ── Step 7: Test RTL-SDR ──
+# ── Step 7: RTL-SDR Blog V4 driver ──
+# MUST run after dump1090 install — dump1090-mutability pulls in stock librtlsdr0
+# which does NOT support the V4 (R828D tuner) and causes "PLL not locked" errors.
+# The Blog driver installs to /usr/local/lib and /usr/local/bin, overriding the
+# stock /usr/lib binaries while keeping dump1090's apt dependency satisfied.
 echo ""
-echo "── Step 7: RTL-SDR test ──"
+echo "── Step 7: RTL-SDR Blog V4 driver ──"
+if rtl_test -t 2>&1 | grep -q "Blog V4 Detected"; then
+    pass "RTL-SDR Blog V4 driver already installed"
+else
+    echo "Building RTL-SDR Blog driver from source..."
+    RTLSDR_BUILD_DIR="/tmp/rtl-sdr-blog-build"
+    rm -rf "$RTLSDR_BUILD_DIR"
+    git clone https://github.com/rtlsdrblog/rtl-sdr-blog.git "$RTLSDR_BUILD_DIR"
+    cd "$RTLSDR_BUILD_DIR"
+    mkdir build && cd build
+    cmake ../ -DINSTALL_UDEV_RULES=ON
+    make -j"$(nproc)"
+    sudo make install
+    sudo ldconfig
+    sudo cp ../rtl-sdr.rules /etc/udev/rules.d/
+    cd "$OLDPWD"
+    rm -rf "$RTLSDR_BUILD_DIR"
+    pass "RTL-SDR Blog V4 driver installed"
+fi
+
+# ── Step 7b: Test RTL-SDR ──
+echo ""
+echo "── Step 7b: RTL-SDR test ──"
 if command -v rtl_test &>/dev/null; then
     # Stop dump1090 temporarily if running — it holds exclusive access to the SDR
     dump1090_was_running=false
@@ -177,7 +202,7 @@ fi
 echo ""
 echo "── Step 9: Hailo SDK ──"
 if command -v hailortcli &>/dev/null; then
-    if hailortcli fw-control identify 2>/dev/null; then
+    if hailortcli fw-control identify 2>/dev/null || hailortcli fw-control identify 2>&1 | grep -q "Hailo-8"; then
         pass "Hailo NPU detected"
 
         # Symlink hailo_platform into venv (installed system-wide by hailort deb)

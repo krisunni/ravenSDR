@@ -1,13 +1,13 @@
 {
   "name": "ravenSDR",
   "description": "Real-time RF Signal Transcription Pipeline — RTL-SDR → Edge AI Inference (Hailo-8L NPU) → Live Web Interface",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "status": "running",
   "license": "AGPL-3.0",
   "stack": {
     "language": "Python",
     "framework": "Flask + Flask-SocketIO",
-    "sdrDemodulation": "rtl_fm (rtl-sdr package)",
+    "sdrDemodulation": "rtl_fm (rtl-sdr-blog patched driver)",
     "webStreamIngest": "ffmpeg subprocess",
     "npuInference": "Hailo-8L via hailo-apps Python SDK",
     "speechToText": "Whisper (tiny/base .hef for Hailo)",
@@ -60,5 +60,5 @@
     "13": {"name": "NOAA APT Satellite Imaging", "status": "done"}
   },
   "lastUpdated": "2026-03-02",
-  "notes": "Phases 1-13 implemented. All core features complete: RF reception, Whisper transcription (Hailo NPU + CPU fallback), web UI, frequency presets, error recovery, inference stats, NOAA weather radio, APT satellite imaging. Hotfix applied: eventlet subprocess isolation, NPU indentation, Celestrak TLE URL, shutdown crash, SDR detection, setup.sh rtl_test zombie."
+  "notes": "Phases 1-13 implemented. v0.5.0: RTL-SDR Blog V4 driver fix (PLL not locked), Whisper decode prefix fix (Hailo NPU producing transcripts), signal meter stabilization, ADS-B scan scheduler eventlet fix, UI improvements (satellite panel visibility, Squelch/Gain tooltips, audio auto-stop). Operations guides: antenna setup, system diagram."
 }

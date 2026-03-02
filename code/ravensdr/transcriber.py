@@ -27,7 +27,11 @@ CONTINUOUS_OVERLAP_S = 2.0     # overlap between segments to avoid cutting words
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 DECODER_SEQUENCE_LENGTH = 32  # max tokens for whisper-tiny
-START_TOKEN_ID = 50258
+START_TOKEN_ID = 50258        # <|startoftranscript|>
+LANG_TOKEN_ID = 50259         # <|en|>
+TRANSCRIBE_TOKEN_ID = 50359   # <|transcribe|>
+NO_TIMESTAMPS_TOKEN_ID = 50363  # <|notimestamps|>
+DECODE_PREFIX = [START_TOKEN_ID, LANG_TOKEN_ID, TRANSCRIBE_TOKEN_ID, NO_TIMESTAMPS_TOKEN_ID]
 REPETITION_PENALTY = 1.5
 REPETITION_WINDOW = 8
 EXCLUDED_TOKENS = {11, 13}  # punctuation tokens excluded from penalty
@@ -479,10 +483,14 @@ class Transcriber:
                                     # --- Decoder (iterative) ---
                                     t_dec_start = time.monotonic()
                                     decoder_input_ids = np.zeros((1, DECODER_SEQUENCE_LENGTH), dtype=np.int64)
-                                    decoder_input_ids[0][0] = START_TOKEN_ID
+                                    # Seed with Whisper decode prefix:
+                                    # <|startoftranscript|> <|en|> <|transcribe|> <|notimestamps|>
+                                    prefix_len = len(DECODE_PREFIX)
+                                    for pi, tok in enumerate(DECODE_PREFIX):
+                                        decoder_input_ids[0][pi] = tok
                                     generated_tokens = []
 
-                                    for i in range(DECODER_SEQUENCE_LENGTH - 1):
+                                    for i in range(prefix_len, DECODER_SEQUENCE_LENGTH):
                                         tokenized_ids = self._tokenization(decoder_input_ids)
 
                                         decoder_bindings.input(f"{decoder_model_name}/input_layer1").set_buffer(encoded_features)
@@ -503,11 +511,11 @@ class Transcriber:
                                         )
 
                                         logits = _apply_repetition_penalty(
-                                            decoder_outputs[:, i], generated_tokens
+                                            decoder_outputs[:, i - 1], generated_tokens
                                         )
                                         next_token = int(np.argmax(logits))
                                         generated_tokens.append(next_token)
-                                        decoder_input_ids[0][i + 1] = next_token
+                                        decoder_input_ids[0][i] = next_token
 
                                         if next_token == self._tokenizer.eos_token_id:
                                             break

@@ -167,7 +167,7 @@
                 currentPresetId = presetId;
                 renderPresetButtons(activeCategory);
 
-                // Manage weather panel based on preset category
+                // Manage weather & satellite panels based on preset category
                 var preset = data.preset || {};
                 var isWeather = preset.category === "weather";
                 if (weatherPanel) {
@@ -175,6 +175,13 @@
                         weatherPanel.show();
                     } else {
                         weatherPanel.hide();
+                    }
+                }
+                if (satellitePanel) {
+                    if (isWeather) {
+                        satellitePanel.show();
+                    } else {
+                        satellitePanel.hide();
                     }
                 }
 
@@ -212,6 +219,13 @@
             tunedLabel.textContent = "Not tuned";
             tunedFreq.textContent = "";
             audioStatus.textContent = "No source";
+            // Stop audio playback when source stops
+            if (audioPlaying) {
+                audioPlayer.pause();
+                audioPlayer.removeAttribute("src");
+                audioToggle.textContent = "Play Audio";
+                audioPlaying = false;
+            }
         }
 
         squelchSlider.value = data.squelch || 0;
@@ -314,6 +328,7 @@
                 audioToggle.textContent = "Play Audio";
                 hideMapPanel();
                 if (weatherPanel) weatherPanel.hide();
+                if (satellitePanel) satellitePanel.hide();
                 document.getElementById("transcript-section").style.display = "";
             });
     });

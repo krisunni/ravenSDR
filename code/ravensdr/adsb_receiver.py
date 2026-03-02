@@ -2,9 +2,20 @@
 
 import logging
 import os
-import subprocess
 import threading
 import time
+
+try:
+    from eventlet.patcher import original
+    subprocess = original("subprocess")
+except ImportError:
+    import subprocess
+
+try:
+    import eventlet
+    _HAS_EVENTLET = True
+except ImportError:
+    _HAS_EVENTLET = False
 
 import requests
 
@@ -113,12 +124,22 @@ class AdsbScanScheduler:
         """Set callback(scanning: bool) for UI status updates."""
         self._status_callback = callback
 
+    def _sleep(self, seconds):
+        """Sleep using eventlet if available, else time.sleep."""
+        if _HAS_EVENTLET:
+            eventlet.sleep(seconds)
+        else:
+            time.sleep(seconds)
+
     def start(self):
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._scan_loop, daemon=True)
-        self._thread.start()
+        if _HAS_EVENTLET:
+            self._thread = eventlet.spawn(self._scan_loop)
+        else:
+            self._thread = threading.Thread(target=self._scan_loop, daemon=True)
+            self._thread.start()
         log.info("ADS-B scan scheduler started (interval=%ds, duration=%ds)",
                  self.scan_interval, self.scan_duration)
 
@@ -128,7 +149,13 @@ class AdsbScanScheduler:
             self.receiver.stop()
             self._scanning = False
         if self._thread is not None:
-            self._thread.join(timeout=5)
+            if _HAS_EVENTLET and hasattr(self._thread, 'wait'):
+                try:
+                    self._thread.wait()
+                except Exception:
+                    pass
+            elif hasattr(self._thread, 'join'):
+                self._thread.join(timeout=5)
             self._thread = None
 
     def _scan_loop(self):
@@ -137,10 +164,15 @@ class AdsbScanScheduler:
             for _ in range(self.scan_interval):
                 if not self._running:
                     return
-                time.sleep(1)
+                self._sleep(1)
 
             if not self._running:
                 return
+
+            # Only scan when tuned to an aviation preset
+            preset = self.input_source.current_preset
+            if not preset or preset.get("category") != "aviation":
+                continue
 
             # Pause rtl_fm, start ADS-B scan
             log.info("ADS-B scan window starting — pausing rtl_fm")
@@ -162,7 +194,7 @@ class AdsbScanScheduler:
                 if not self._running:
                     self.receiver.stop()
                     return
-                time.sleep(1)
+                self._sleep(1)
 
             # Stop ADS-B, resume rtl_fm
             self.receiver.stop()

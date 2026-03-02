@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0] — 2026-03-02
+
+### Fixed — RTL-SDR Blog V4 driver & Hailo NPU transcription
+
+- **RTL-SDR Blog V4 driver**: stock Debian `librtlsdr` does NOT support the V4's R828D tuner, causing "PLL not locked" errors on every frequency. Setup script now builds the patched driver from `rtlsdrblog/rtl-sdr-blog` and reinstalls it after dump1090 (which pulls in the stock lib as a dependency)
+- **Whisper decode prefix**: Hailo NPU decoder was seeded with only `<|startoftranscript|>`, causing immediate EOS (2/32 tokens). Now seeds with full Whisper prefix: `<|startoftranscript|> <|en|> <|transcribe|> <|notimestamps|>` — decoder now produces 28/32 tokens of real transcription
+- **Signal meter flickering**: heartbeat loop emitted `rms: 0` every 500ms, overriding real signal values from the transcriber. Now only emits 0 on stop transition
+- **ADS-B scan scheduler eventlet crash**: scheduler used `threading.Thread` causing "Cannot switch to a different thread" greenlet errors. Now uses `eventlet.spawn` and `eventlet.sleep`
+- **ADS-B scans interrupting non-aviation presets**: scan scheduler now only activates when tuned to an Aviation preset
+- **NOAA Weather presets**: changed from `wbfm` (wideband FM) to `fm` (narrowband) — NOAA Weather Radio is narrowband FM
+- **Hailo detection in setup.sh**: `hailortcli fw-control identify` returns non-zero even on success; now also checks output text
+
+### Added — Operations guides & UI improvements
+
+- **Antenna guide** (`operations/antenna-guide.md`): element lengths per band, V-dipole orientation diagrams (vertical/horizontal/flat), positioning guidelines, troubleshooting (PLL fix, weak signal, USB power)
+- **System diagram** (`operations/system-diagram.md`): physical setup, software architecture, data flow, ADS-B time-sharing, hardware stack, driver requirements
+- **Squelch & Gain tooltips**: info icons with hover descriptions explaining what each control does
+- **Satellite panel visibility**: now hidden by default, only shown on Weather tab
+- **Audio auto-stop**: playback stops automatically when source stops
+- **Setup script**: RTL-SDR Blog V4 driver build from source, dump1090 systemd service disabled (ravenSDR manages it), correct install order (dump1090 before Blog driver)
+
 ## [0.4.1] — 2026-03-02
 
 ### Fixed — Eventlet subprocess isolation & hardware integration bugs

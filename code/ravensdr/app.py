@@ -163,19 +163,20 @@ _signal_stop = threading.Event()
 
 
 def signal_meter_loop():
-    """Sample RMS from the audio queue every 500ms and emit signal_level."""
-    import numpy as np
+    """Reset signal meter to 0 when input source stops."""
+    _was_running = False
     while not _signal_stop.is_set():
         eventlet.sleep(0.5)
-        if not input_source.is_running:
-            continue
-        # Signal level is emitted from the transcriber's inference loop
-        # This thread exists as a fallback / heartbeat
-        preset = input_source.current_preset or {}
-        socketio.emit("signal_level", {
-            "rms": 0,
-            "freq": preset.get("freq", ""),
-        })
+        running = input_source.is_running
+        # Only emit 0 on the transition from running → stopped
+        # (real signal levels are emitted by the transcriber inference loop)
+        if _was_running and not running:
+            preset = input_source.current_preset or {}
+            socketio.emit("signal_level", {
+                "rms": 0,
+                "freq": preset.get("freq", ""),
+            })
+        _was_running = running
 
 
 # ── REST Routes ──

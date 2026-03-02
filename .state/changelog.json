@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "0.5.0",
+      "date": "2026-03-02",
+      "status": "running",
+      "changes": [
+        {"type": "fixed", "description": "RTL-SDR Blog V4 driver — stock Debian librtlsdr causes PLL not locked on R828D tuner. Setup now builds patched driver from rtlsdrblog/rtl-sdr-blog, reinstalls after dump1090", "date": "2026-03-02"},
+        {"type": "fixed", "description": "Whisper decode prefix — Hailo NPU decoder seeded with full prefix (<|startoftranscript|> <|en|> <|transcribe|> <|notimestamps|>) instead of just start token. Decoder now produces real transcriptions (28/32 tokens)", "date": "2026-03-02"},
+        {"type": "fixed", "description": "Signal meter flickering — heartbeat loop no longer emits rms:0 every 500ms, only resets on stop transition", "date": "2026-03-02"},
+        {"type": "fixed", "description": "ADS-B scan scheduler — uses eventlet.spawn instead of threading.Thread to avoid greenlet cross-thread errors", "date": "2026-03-02"},
+        {"type": "fixed", "description": "ADS-B scans only activate on Aviation presets, no longer interrupt Weather/Broadcast/Marine", "date": "2026-03-02"},
+        {"type": "fixed", "description": "NOAA Weather presets changed from wbfm to fm (narrowband FM)", "date": "2026-03-02"},
+        {"type": "added", "description": "Antenna guide (operations/antenna-guide.md) — element lengths, orientation diagrams, positioning, PLL troubleshooting", "date": "2026-03-02"},
+        {"type": "added", "description": "System diagram (operations/system-diagram.md) — physical setup, software architecture, data flow, hardware stack", "date": "2026-03-02"},
+        {"type": "added", "description": "Squelch & Gain tooltip info icons, satellite panel Weather-only visibility, audio auto-stop on source stop", "date": "2026-03-02"}
+      ]
+    },
+    {
       "version": "0.4.0",
       "date": "2026-03-01",
       "status": "running",
