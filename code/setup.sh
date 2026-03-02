@@ -155,6 +155,12 @@ else
     sudo make install
     sudo ldconfig
     sudo cp ../rtl-sdr.rules /etc/udev/rules.d/
+    # Ensure the Blog library overrides the stock one in the system lib path
+    # (stock librtlsdr from dump1090 dep lives in /lib/aarch64-linux-gnu/)
+    if [ -d /lib/aarch64-linux-gnu ]; then
+        sudo cp /usr/local/lib/librtlsdr.so.0* /lib/aarch64-linux-gnu/
+        sudo ldconfig
+    fi
     cd "$OLDPWD"
     rm -rf "$RTLSDR_BUILD_DIR"
     pass "RTL-SDR Blog V4 driver installed"
