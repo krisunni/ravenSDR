@@ -33,6 +33,9 @@ ravenSDR tunes into radio frequencies using a software-defined radio dongle, run
 - **Live audio streaming** — HTTP chunked WAV to browser via Web Audio API
 - **Real-time transcripts** — Socket.IO push to browser as speech is decoded
 - **Frequency presets** — Weather, aviation, marine, public safety, broadcast (Seattle/Redmond area)
+- **Hallucination filtering** — Two-tier filter drops Whisper noise artifacts (bracketed sounds, known phrases, short fragments)
+- **ADS-B aircraft tracking** — Live flight map with callsign correlation from ATC transcripts
+- **NOAA weather parsing** — Structured extraction of temperature, wind, visibility, and priority alerts
 - **Console UI** — Dark-themed single-page web app with signal meter, preset selector, transcript feed
 
 ## Quick Start

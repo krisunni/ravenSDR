@@ -123,6 +123,8 @@
                         <tr><td><span class="badge badge-changed">POST</span></td><td><code>/api/stop</code></td><td>Stop reception</td></tr>
                         <tr><td><span class="badge badge-changed">POST</span></td><td><code>/api/squelch</code></td><td>Set squelch level</td></tr>
                         <tr><td><span class="badge badge-changed">POST</span></td><td><code>/api/gain</code></td><td>Set tuner gain</td></tr>
+                        <tr><td><span class="badge badge-changed">POST</span></td><td><code>/api/retry</code></td><td>Restart current source after crash</td></tr>
+                        <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/stats</code></td><td>Inference stats (latency, RTF, tokens)</td></tr>
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/status</code></td><td>Pipeline status</td></tr>
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/api/adsb/flights</code></td><td>Current ADS-B aircraft list</td></tr>
                         <tr><td><span class="badge badge-done">GET</span></td><td><code>/audio-stream</code></td><td>Chunked WAV audio stream</td></tr>
@@ -182,7 +184,8 @@
                     mapping: 'Mapping',
                     weatherParser: 'Weather Parser',
                     passPredictor: 'Pass Predictor',
-                    aptDecoder: 'APT Decoder'
+                    aptDecoder: 'APT Decoder',
+                    hallucinationFilter: 'Hallucination Filter'
                 };
                 Object.entries(sys.stack).forEach(([key, val]) => {
                     const tr = document.createElement('tr');

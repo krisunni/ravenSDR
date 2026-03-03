@@ -80,9 +80,13 @@ class InputSource:
                 return False
             self._source.connect(stream_url)
         else:
-            # Apply preset squelch before tuning (tune restarts rtl_fm)
+            # Apply preset-level settings before tuning (tune restarts rtl_fm)
             if "squelch" in preset:
                 self._source.squelch = preset["squelch"]
+            if "sample_rate" in preset:
+                self._source.sample_rate = preset["sample_rate"]
+            if "deemp" in preset:
+                self._source.deemp = preset["deemp"]
             self._source.tune(preset["freq"], preset.get("mode", "fm"))
         return True
 
@@ -135,6 +139,22 @@ class InputSource:
         if self.mode == "SDR":
             self._source.set_gain(value)
 
+    def set_sample_rate(self, value):
+        if self.mode == "SDR":
+            self._source.set_sample_rate(value)
+
+    def set_deemp(self, value):
+        if self.mode == "SDR":
+            self._source.set_deemp(value)
+
+    def set_ppm(self, value):
+        if self.mode == "SDR":
+            self._source.set_ppm(value)
+
+    def set_direct_sampling(self, value):
+        if self.mode == "SDR":
+            self._source.set_direct_sampling(value)
+
     @property
     def squelch(self):
         if self.mode == "SDR":
@@ -146,6 +166,42 @@ class InputSource:
         if self.mode == "SDR":
             return self._source.gain
         return "N/A"
+
+    @property
+    def sample_rate(self):
+        if self.mode == "SDR":
+            return self._source.sample_rate
+        return None
+
+    @property
+    def effective_sample_rate(self):
+        if self.mode == "SDR":
+            return self._source.effective_sample_rate
+        return "N/A"
+
+    @property
+    def deemp(self):
+        if self.mode == "SDR":
+            return self._source.deemp
+        return None
+
+    @property
+    def effective_deemp(self):
+        if self.mode == "SDR":
+            return self._source.effective_deemp
+        return False
+
+    @property
+    def ppm(self):
+        if self.mode == "SDR":
+            return self._source.ppm
+        return 0
+
+    @property
+    def direct_sampling(self):
+        if self.mode == "SDR":
+            return self._source.direct_sampling
+        return 0
 
     @property
     def apt_mode(self):

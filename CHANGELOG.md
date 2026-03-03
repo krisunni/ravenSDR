@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.1] — 2026-03-03
+
+### Fixed — Audio pipeline & transcription quality
+
+- **Preset squelch not applied**: tuning to a preset ignored its squelch value (always defaulted to 0). Now applies preset squelch before starting rtl_fm
+- **Transcription required audio playback**: audio queue `put(timeout=0.5)` blocked the read loop when nobody was listening, starving the transcriber. Changed to non-blocking `put_nowait()` so audio chunks are dropped silently when browser audio isn't playing
+- **Audio stream breaks on squelch/gain change**: changing squelch or gain restarts rtl_fm, killing the HTTP audio stream. Frontend now auto-reconnects the stream if audio was playing
+- **Whisper hallucination spam**: Whisper produced garbage transcripts on noise/static — `(roaring)`, `[Music]`, `[Groans]`, `[Birds]`, etc. Added two-tier hallucination filter: known phrases + structural pattern matching (bracketed sound descriptions, short fragments, repetitive syllables). All filtered transcripts logged at DEBUG level
+
+### Added
+
+- **Per-mode sample rate config**: `MODE_SAMPLE_RATES` dict in Tuner for mode-specific rtl_fm bandwidth (extensible for AM tuning)
+- **Default startup preset**: UI now defaults to Weather tab and auto-tunes NOAA Seattle on page load
+- **Cleanup script** (`scripts/cleanup.sh`): kills orphaned rtl_fm, dump1090, and ffmpeg processes
+
 ## [0.5.0] — 2026-03-02
 
 ### Fixed — RTL-SDR Blog V4 driver & Hailo NPU transcription

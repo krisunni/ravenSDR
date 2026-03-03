@@ -32,6 +32,13 @@
     const transcriptFeed = document.getElementById("transcript-feed");
     const clearBtn = document.getElementById("clear-btn");
     const copyBtn = document.getElementById("copy-btn");
+    const advancedToggle = document.getElementById("advanced-toggle");
+    const advancedPanel = document.getElementById("advanced-panel");
+    const sampleRateSelect = document.getElementById("sample-rate-select");
+    const deempToggle = document.getElementById("deemp-toggle");
+    const deempLabel = document.getElementById("deemp-label");
+    const ppmInput = document.getElementById("ppm-input");
+    const directSamplingSelect = document.getElementById("direct-sampling-select");
 
     // ── Socket.IO ──
     const socket = io();
@@ -99,7 +106,13 @@
                 categories = data.categories;
                 renderCategoryTabs();
                 if (Object.keys(categories).length > 0) {
-                    selectCategory(Object.keys(categories)[0]);
+                    // Default to Weather tab and auto-tune NOAA Seattle
+                    var defaultCat = categories["weather"] ? "weather" : Object.keys(categories)[0];
+                    selectCategory(defaultCat);
+                    var noaa = presets.find(function (p) { return p.id === "noaa-seattle"; });
+                    if (noaa) {
+                        tunePreset(noaa.id);
+                    }
                 }
             });
     }
@@ -230,6 +243,21 @@
 
         squelchSlider.value = data.squelch || 0;
         squelchValue.textContent = data.squelch || 0;
+
+        // Sync advanced controls
+        sampleRateSelect.value = data.sample_rate || "";
+        ppmInput.value = data.ppm || 0;
+        directSamplingSelect.value = data.direct_sampling || 0;
+
+        // De-emphasis: reflect effective state
+        deempToggle.checked = !!data.effective_deemp;
+        if (data.deemp === null || data.deemp === undefined) {
+            deempIsAuto = true;
+            deempLabel.textContent = "Auto";
+        } else {
+            deempIsAuto = false;
+            deempLabel.textContent = data.effective_deemp ? "ON" : "OFF";
+        }
     }
 
     // ── Signal Meter ──
@@ -340,13 +368,7 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ level: parseInt(level) }),
-        }).then(function () {
-            // Squelch change restarts rtl_fm — reconnect audio if it was playing
-            if (audioPlaying) {
-                audioPlayer.src = "/audio-stream?" + Date.now();
-                audioPlayer.play().catch(function () {});
-            }
-        });
+        }).then(reconnectAudio);
     });
 
     gainSelect.addEventListener("change", function () {
@@ -355,12 +377,66 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ value: value === "auto" ? "auto" : parseInt(value) }),
-        }).then(function () {
-            if (audioPlaying) {
-                audioPlayer.src = "/audio-stream?" + Date.now();
-                audioPlayer.play().catch(function () {});
-            }
-        });
+        }).then(reconnectAudio);
+    });
+
+    // ── Advanced Panel Toggle ──
+
+    var advancedOpen = false;
+    var deempIsAuto = true;
+
+    advancedToggle.addEventListener("click", function () {
+        advancedOpen = !advancedOpen;
+        advancedPanel.classList.toggle("hidden", !advancedOpen);
+        advancedToggle.textContent = advancedOpen ? "Advanced" : "Advanced";
+        advancedToggle.classList.toggle("active", advancedOpen);
+    });
+
+    function reconnectAudio() {
+        if (audioPlaying) {
+            audioPlayer.src = "/audio-stream?" + Date.now();
+            audioPlayer.play().catch(function () {});
+        }
+    }
+
+    sampleRateSelect.addEventListener("change", function () {
+        var value = sampleRateSelect.value || null;
+        fetch("/api/sample_rate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: value }),
+        }).then(reconnectAudio);
+    });
+
+    deempToggle.addEventListener("change", function () {
+        // Once user touches the toggle, switch from auto to manual
+        deempIsAuto = false;
+        var value = deempToggle.checked;
+        deempLabel.textContent = value ? "ON" : "OFF";
+        fetch("/api/deemp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: value }),
+        }).then(reconnectAudio);
+    });
+
+    ppmInput.addEventListener("change", function () {
+        var value = parseInt(ppmInput.value) || 0;
+        ppmInput.value = value;
+        fetch("/api/ppm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: value }),
+        }).then(reconnectAudio);
+    });
+
+    directSamplingSelect.addEventListener("change", function () {
+        var value = parseInt(directSamplingSelect.value);
+        fetch("/api/direct_sampling", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: value }),
+        }).then(reconnectAudio);
     });
 
     // ── Audio Player ──

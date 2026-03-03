@@ -51,6 +51,10 @@ class Tuner:
         self.current_mode = "fm"
         self.squelch = 0
         self.gain = "auto"
+        self.sample_rate = None         # None = auto (use MODE_SAMPLE_RATES)
+        self.deemp = None               # None = auto (ON for fm/wbfm)
+        self.ppm = 0                    # crystal frequency correction
+        self.direct_sampling = 0        # 0=off, 1=I-branch, 2=Q-branch
         self.is_running = False
         self._process = None
         self._pid = None
@@ -64,22 +68,63 @@ class Tuner:
         "wbfm": "200k",     # wideband FM broadcast
     }
 
+    @property
+    def effective_sample_rate(self):
+        """Actual sample rate: explicit setting or auto from mode."""
+        if self.sample_rate:
+            return self.sample_rate
+        return self.MODE_SAMPLE_RATES.get(self.current_mode or "fm", "200k")
+
+    @property
+    def effective_deemp(self):
+        """Actual de-emphasis: explicit setting or auto (ON for FM modes)."""
+        if self.deemp is not None:
+            return self.deemp
+        return self.current_mode in ("fm", "wbfm")
+
+    def set_sample_rate(self, value):
+        """Set capture sample rate. None = auto. Restarts rtl_fm if running."""
+        self.sample_rate = value
+        if self.is_running:
+            self.tune(self.current_freq, self.current_mode)
+
+    def set_deemp(self, value):
+        """Set de-emphasis. None = auto, True = on, False = off. Restarts if running."""
+        self.deemp = value
+        if self.is_running:
+            self.tune(self.current_freq, self.current_mode)
+
+    def set_ppm(self, value):
+        """Set PPM crystal correction. Restarts if running."""
+        self.ppm = int(value)
+        if self.is_running:
+            self.tune(self.current_freq, self.current_mode)
+
+    def set_direct_sampling(self, value):
+        """Set direct sampling mode (0=off, 1=I, 2=Q). Restarts if running."""
+        self.direct_sampling = int(value)
+        if self.is_running:
+            self.tune(self.current_freq, self.current_mode)
+
     def tune(self, freq, mode="fm"):
         self.stop()
         self.current_freq = freq
         self.current_mode = mode
         self._stop_event.clear()
 
-        sample_rate = self.MODE_SAMPLE_RATES.get(mode, "200k")
+        sr = self.effective_sample_rate
         gain_arg = [] if self.gain == "auto" else ["-g", str(self.gain)]
+        deemp_arg = ["-E", "deemp"] if self.effective_deemp else []
+        ppm_arg = ["-p", str(self.ppm)] if self.ppm != 0 else []
+        ds_arg = ["-D", str(self.direct_sampling)] if self.direct_sampling != 0 else []
         cmd = [
             "rtl_fm",
             "-f", freq,
             "-M", mode,
-            "-s", sample_rate,
+            "-s", sr,
             "-r", "16k",
             "-l", str(self.squelch),
-        ] + gain_arg + ["-"]
+        ] + gain_arg + deemp_arg + ppm_arg + ds_arg + ["-"]
 
         log.info("Starting rtl_fm: %s", " ".join(cmd))
         try:

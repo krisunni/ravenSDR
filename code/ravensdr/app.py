@@ -241,6 +241,44 @@ def api_gain():
     return jsonify({"status": "ok", "gain": input_source.gain})
 
 
+@app.route("/api/sample_rate", methods=["POST"])
+def api_sample_rate():
+    data = request.get_json(force=True)
+    value = data.get("value")  # None = auto
+    input_source.set_sample_rate(value)
+    _broadcast_status()
+    return jsonify({"status": "ok", "sample_rate": input_source.sample_rate,
+                     "effective_sample_rate": input_source.effective_sample_rate})
+
+
+@app.route("/api/deemp", methods=["POST"])
+def api_deemp():
+    data = request.get_json(force=True)
+    value = data.get("value")  # None = auto, true/false = explicit
+    input_source.set_deemp(value)
+    _broadcast_status()
+    return jsonify({"status": "ok", "deemp": input_source.deemp,
+                     "effective_deemp": input_source.effective_deemp})
+
+
+@app.route("/api/ppm", methods=["POST"])
+def api_ppm():
+    data = request.get_json(force=True)
+    value = data.get("value", 0)
+    input_source.set_ppm(int(value))
+    _broadcast_status()
+    return jsonify({"status": "ok", "ppm": input_source.ppm})
+
+
+@app.route("/api/direct_sampling", methods=["POST"])
+def api_direct_sampling():
+    data = request.get_json(force=True)
+    value = data.get("value", 0)
+    input_source.set_direct_sampling(int(value))
+    _broadcast_status()
+    return jsonify({"status": "ok", "direct_sampling": input_source.direct_sampling})
+
+
 @app.route("/api/retry", methods=["POST"])
 def api_retry():
     if not input_source.current_preset:
@@ -329,6 +367,13 @@ def _get_status():
         "mode": mode,
         "squelch": input_source.squelch,
         "gain": input_source.gain,
+        "sample_rate": input_source.sample_rate,
+        "effective_sample_rate": input_source.effective_sample_rate,
+        "deemp": input_source.deemp,
+        "effective_deemp": input_source.effective_deemp,
+        "ppm": input_source.ppm,
+        "direct_sampling": input_source.direct_sampling,
+        "resample_rate": "16k",
         "sdr_available": sdr_available,
         "sdr_connected": input_source.sdr_connected,
         "transcriber_backend": transcriber.backend,
