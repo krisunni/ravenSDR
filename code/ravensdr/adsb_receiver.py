@@ -1,7 +1,8 @@
-# ADS-B receiver — dump1090 process manager + JSON flight poller
+# ADS-B receiver — dump1090 process manager + SBS BaseStation TCP reader
 
 import logging
 import os
+import socket
 import threading
 import time
 
@@ -17,11 +18,10 @@ try:
 except ImportError:
     _HAS_EVENTLET = False
 
-import requests
-
 log = logging.getLogger(__name__)
 
-ADSB_DECODER_JSON = "http://localhost:8080/data/aircraft.json"
+SBS_HOST = "localhost"
+SBS_PORT = 30003  # dump1090 SBS BaseStation output
 
 # Config from environment
 ADSB_ENABLED = os.environ.get("ADSB_ENABLED", "true").lower() == "true"
@@ -29,15 +29,18 @@ ADSB_DUAL_DONGLE = os.environ.get("ADSB_DUAL_DONGLE", "false").lower() == "true"
 ADSB_SCAN_INTERVAL = int(os.environ.get("ADSB_SCAN_INTERVAL", "60"))
 ADSB_SCAN_DURATION = int(os.environ.get("ADSB_SCAN_DURATION", "30"))
 
+# How long before an aircraft is considered stale (seconds)
+AIRCRAFT_TTL = 600  # 10 minutes
+
 
 class AdsbReceiver:
-    """Manages dump1090 process and polls aircraft JSON."""
+    """Manages dump1090 process and reads SBS TCP stream."""
 
     def __init__(self, device_index=0, dual_dongle=False):
         self.device_index = device_index
         self.dual_dongle = dual_dongle
         self.process = None
-        self.flights = []
+        self._aircraft = {}  # hex -> aircraft dict
         self._poll_thread = None
         self._running = False
 
@@ -49,6 +52,14 @@ class AdsbReceiver:
         """Start dump1090 subprocess on configured device index."""
         if self._running:
             return
+
+        # Kill any lingering dump1090 and allow USB device to be released
+        try:
+            subprocess.run(["killall", "-q", "dump1090-mutability"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+        time.sleep(2)
 
         cmd = [
             "dump1090-mutability",
@@ -64,13 +75,21 @@ class AdsbReceiver:
             log.error("dump1090-mutability not found — is it installed?")
             return
 
+        # Wait for dump1090 to start and check it didn't crash
+        time.sleep(3)
+        if self.process is None or self.process.poll() is not None:
+            rc = self.process.returncode if self.process else "?"
+            log.error("dump1090 exited immediately (code %s)", rc)
+            self.process = None
+            return
+
         self._running = True
-        self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._poll_thread = threading.Thread(target=self._sbs_reader, daemon=True)
         self._poll_thread.start()
         log.info("dump1090 started on device %d", self.device_index)
 
     def stop(self):
-        """Stop dump1090 and polling."""
+        """Stop dump1090 and SBS reader."""
         self._running = False
         if self.process and self.process.poll() is None:
             self.process.terminate()
@@ -85,20 +104,109 @@ class AdsbReceiver:
             self._poll_thread = None
         log.info("dump1090 stopped")
 
-    def _poll_loop(self):
-        """Poll dump1090 JSON endpoint every 2 seconds."""
+    def _sbs_reader(self):
+        """Connect to dump1090 SBS port and parse BaseStation messages."""
         while self._running:
             try:
-                resp = requests.get(ADSB_DECODER_JSON, timeout=2)
-                data = resp.json()
-                self.flights = data.get("aircraft", [])
-            except Exception as e:
-                log.debug("dump1090 poll error: %s", e)
-            time.sleep(2)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(5)
+                sock.connect((SBS_HOST, SBS_PORT))
+                log.info("Connected to dump1090 SBS stream on port %d", SBS_PORT)
+                buf = ""
+                while self._running:
+                    try:
+                        data = sock.recv(4096)
+                    except socket.timeout:
+                        self._expire_stale()
+                        continue
+                    if not data:
+                        break  # connection closed
+                    buf += data.decode("ascii", errors="replace")
+                    while "\n" in buf:
+                        line, buf = buf.split("\n", 1)
+                        line = line.strip()
+                        if line:
+                            self._parse_sbs(line)
+                    self._expire_stale()
+            except (ConnectionRefusedError, OSError) as e:
+                if self._running:
+                    log.debug("SBS connect failed: %s — retrying in 2s", e)
+                    time.sleep(2)
+            finally:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _parse_sbs(self, line):
+        """Parse a single SBS BaseStation format line.
+
+        Format: MSG,type,session,aircraft,hex,flight,date,time,date,time,
+                callsign,altitude,speed,track,lat,lon,vertrate,squawk,...
+        """
+        fields = line.split(",")
+        if len(fields) < 11 or fields[0] != "MSG":
+            return
+
+        hex_id = fields[4].strip().upper()
+        if not hex_id:
+            return
+
+        ac = self._aircraft.get(hex_id, {"hex": hex_id})
+        ac["seen"] = time.time()
+
+        callsign = fields[10].strip()
+        if callsign:
+            ac["flight"] = callsign
+
+        # MSG types 1-8 have different field positions
+        try:
+            if fields[11].strip():
+                ac["altitude"] = int(fields[11].strip())
+        except (IndexError, ValueError):
+            pass
+        try:
+            if fields[12].strip():
+                ac["speed"] = float(fields[12].strip())
+        except (IndexError, ValueError):
+            pass
+        try:
+            if fields[13].strip():
+                ac["track"] = float(fields[13].strip())
+        except (IndexError, ValueError):
+            pass
+        try:
+            lat = fields[14].strip()
+            lon = fields[15].strip()
+            if lat and lon:
+                ac["lat"] = float(lat)
+                ac["lon"] = float(lon)
+        except (IndexError, ValueError):
+            pass
+        try:
+            if fields[16].strip():
+                ac["vert_rate"] = int(fields[16].strip())
+        except (IndexError, ValueError):
+            pass
+        try:
+            if fields[17].strip():
+                ac["squawk"] = fields[17].strip()
+        except (IndexError, ValueError):
+            pass
+
+        self._aircraft[hex_id] = ac
+
+    def _expire_stale(self):
+        """Remove aircraft not seen for AIRCRAFT_TTL seconds."""
+        now = time.time()
+        stale = [k for k, v in self._aircraft.items()
+                 if now - v.get("seen", 0) > AIRCRAFT_TTL]
+        for k in stale:
+            del self._aircraft[k]
 
     def get_flights(self):
-        """Return current flight list."""
-        return list(self.flights)
+        """Return current aircraft list."""
+        return list(self._aircraft.values())
 
 
 class AdsbScanScheduler:

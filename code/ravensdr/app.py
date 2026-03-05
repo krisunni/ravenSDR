@@ -206,6 +206,28 @@ def api_tune():
     if mode == "WEBSTREAM" and not preset.get("stream_url"):
         return jsonify({"error": "No web stream available for this preset (SDR only)"}), 400
 
+    is_adsb = preset.get("mode") == "adsb"
+
+    if is_adsb and adsb_receiver:
+        # ADS-B dedicated mode: stop audio pipeline, run dump1090 continuously
+        input_source.stop()
+        input_source.current_preset = preset
+        if adsb_scheduler:
+            adsb_scheduler.stop()
+        adsb_receiver.start()
+        if not adsb_receiver.is_running:
+            log.error("Failed to start dump1090")
+            return jsonify({"error": "Failed to start dump1090"}), 500
+        log.info("ADS-B dedicated mode — dump1090 running continuously")
+        _broadcast_status()
+        return jsonify({"status": "tuned", "preset": preset})
+
+    # Switching away from ADS-B: stop dedicated dump1090, restart scheduler
+    if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+        adsb_receiver.stop()
+        if adsb_scheduler:
+            adsb_scheduler.start()
+
     success = input_source.tune(preset)
     if not success:
         return jsonify({"error": "Failed to tune"}), 500
@@ -219,6 +241,11 @@ def api_tune():
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
     input_source.stop()
+    # Stop dedicated ADS-B mode if active
+    if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+        adsb_receiver.stop()
+        if adsb_scheduler:
+            adsb_scheduler.start()
     _broadcast_status()
     return jsonify({"status": "stopped"})
 
@@ -379,6 +406,7 @@ def _get_status():
         "transcriber_backend": transcriber.backend,
         "adsb_enabled": ADSB_ENABLED,
         "adsb_scanning": adsb_scheduler.is_scanning if adsb_scheduler else False,
+        "adsb_dedicated": adsb_receiver.is_running if adsb_receiver else False,
         "apt_mode": input_source.apt_mode,
         "apt_recording": apt_decoder.is_recording,
     }
@@ -401,8 +429,10 @@ def adsb_broadcast_loop():
     """Push ADS-B flight updates to clients every 2s."""
     while not _signal_stop.is_set():
         eventlet.sleep(2)
-        if adsb_receiver and adsb_receiver.is_running:
-            socketio.emit("adsb_update", adsb_receiver.get_flights())
+        if adsb_receiver:
+            flights = adsb_receiver.get_flights()
+            if flights:
+                socketio.emit("adsb_update", flights)
 
 
 def sdr_health_loop():
