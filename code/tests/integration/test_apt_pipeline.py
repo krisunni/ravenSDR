@@ -67,6 +67,10 @@ class TestAptPipelineEndToEnd:
             source._error_callback = None
             source._apt_mode = False
             source._apt_saved_preset = None
+            source._wefax_mode = False
+            source._wefax_saved_preset = None
+            source._meteor_mode = False
+            source._meteor_saved_preset = None
             source._source = MagicMock()
             source._source.is_running = True
 
@@ -93,7 +97,7 @@ class TestAptPipelineEndToEnd:
             "-s", "60k", "-r", "11025", "-g", "40", "-",
         ]
 
-        noaa_cmd = AptDecoder.build_noaa_apt_cmd("/tmp/test.wav", "/tmp/out.png")
+        noaa_cmd = AptDecoder.build_decode_cmd("noaa-apt", "/tmp/test.wav", "/tmp/out.png", "NOAA 19")
         assert noaa_cmd == [
             "noaa-apt", "/tmp/test.wav", "-o", "/tmp/out.png",
             "--rotate", "auto",

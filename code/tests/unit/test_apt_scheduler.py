@@ -100,6 +100,10 @@ class TestPassPrediction:
 
     def test_no_passes_without_tle(self):
         scheduler = AptScheduler()
+        # Mark TLEs as freshly fetched but empty, so get_next_passes doesn't hit
+        # the network — with no TLE data it must return no passes.
+        scheduler._tle_last_fetch = datetime.datetime.utcnow()
+        scheduler._tle_data = {}
         passes = scheduler.get_next_passes(hours=24)
         assert passes == []
 

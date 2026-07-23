@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ravensdr"
-version = "1.1.0"
+version = "1.1.1"
 requires-python = ">=3.11"
 # Keep in sync with requirements.txt (that file is the source of truth).
 # numpy is pinned <2 because pyhailort's C++ bindings need the numpy 1.x ABI.

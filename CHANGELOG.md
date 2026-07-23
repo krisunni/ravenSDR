@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.1] — 2026-07-23
+
+NOAA APT satellite imagery — made it actually work end-to-end on the current
+VHF dipole (137 MHz).
+
+### Fixed
+
+- **No passes predicted**: Celestrak's `weather` TLE group no longer carries the POES APT birds (it's JPSS/NOAA-20/21 now, which don't transmit APT). Switched the TLE source to `NAME=NOAA`, so NOAA 15/19 load and passes are predicted again.
+- **APT recording** used the same fragile `rtl_fm | sox` pipe that failed for WEFAX (silent death → empty WAV). Replaced with a direct Python WAV writer that fails fast.
+
+### Added
+
+- **APT decoder** support via **aptdec** (lightweight C decoder; `setup.sh` builds it from source — noaa-apt needs Rust+GTK). `apt_decoder` auto-detects `aptdec`/`noaa-apt` and builds the right command, normalizing the output filename.
+
 ## [1.1.0] — 2026-07-23
 
 Fresh Raspberry Pi 5 bring-up (Debian Trixie, kernel 6.18): repaired the Hailo NPU

@@ -11,8 +11,10 @@ import requests
 
 log = logging.getLogger(__name__)
 
-# Celestrak TLE source
-TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle"
+# Celestrak TLE source. The 'weather' group no longer carries the POES APT birds
+# (it's JPSS/NOAA-20/21 now, which don't transmit 137 MHz APT); query by name so
+# we get NOAA 15 / 18 / 19.
+TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?NAME=NOAA&FORMAT=tle"
 TLE_CACHE_FILE = "/tmp/ravensdr/apt/tle_cache.txt"
 TLE_REFRESH_HOURS = 24
 

@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from ravensdr.apt_decoder import AptDecoder, DEFAULT_GAIN, SAMPLE_RATE, OUTPUT_RATE
+from ravensdr.apt_decoder import AptDecoder, DEFAULT_GAIN, SAMPLE_RATE, CAPTURE_RATE_HZ
 
 
 class TestRtlFmCommand:
@@ -20,7 +20,7 @@ class TestRtlFmCommand:
         assert "-s" in cmd
         assert SAMPLE_RATE in cmd
         assert "-r" in cmd
-        assert OUTPUT_RATE in cmd
+        assert str(CAPTURE_RATE_HZ) in cmd
 
     def test_custom_gain(self):
         cmd = AptDecoder.build_rtl_fm_cmd("137.9125M", gain=50)
@@ -47,16 +47,21 @@ class TestRtlFmCommand:
         assert cmd[-1] == "-"
 
 
-class TestNoaaAptCommand:
+class TestDecodeCommand:
 
-    def test_decode_command(self):
-        cmd = AptDecoder.build_noaa_apt_cmd("/tmp/test.wav", "/tmp/test.png")
+    def test_aptdec_command(self):
+        cmd = AptDecoder.build_decode_cmd("aptdec", "/tmp/t.wav", "/img/NOAA-15_x.png", "NOAA 15")
+        assert cmd[0] == "aptdec"
+        assert "/tmp/t.wav" in cmd
+        assert "-o" in cmd and "NOAA-15_x.png" in cmd
+        assert "-d" in cmd and "/img" in cmd
+        assert "-s" in cmd and "15" in cmd
+
+    def test_noaa_apt_command(self):
+        cmd = AptDecoder.build_decode_cmd("noaa-apt", "/tmp/t.wav", "/tmp/t.png", "NOAA 19")
         assert cmd[0] == "noaa-apt"
-        assert "/tmp/test.wav" in cmd
-        assert "-o" in cmd
-        assert "/tmp/test.png" in cmd
-        assert "--rotate" in cmd
-        assert "auto" in cmd
+        assert "/tmp/t.wav" in cmd
+        assert "-o" in cmd and "/tmp/t.png" in cmd
 
 
 class TestOutputFilenames:

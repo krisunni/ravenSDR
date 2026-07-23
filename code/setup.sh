@@ -150,23 +150,26 @@ mkdir -p /tmp/ravensdr/apt
 mkdir -p "$(dirname "$0")/static/images/apt"
 pass "APT directories created"
 
-# Install noaa-apt decoder
-if command -v noaa-apt &>/dev/null; then
-    pass "noaa-apt already installed"
+# Install an APT image decoder. noaa-apt needs Rust+GTK (heavy on a Pi); aptdec
+# is a lightweight C decoder that builds fast — prefer it.
+if command -v aptdec &>/dev/null || command -v noaa-apt &>/dev/null; then
+    pass "APT decoder already installed"
 else
-    # Try pre-built binary from apt
-    if sudo apt-get install -y -qq noaa-apt 2>/dev/null; then
-        pass "noaa-apt installed from apt"
+    echo "Building aptdec from source (NOAA APT image decoder)..."
+    sudo apt-get install -y -qq libsndfile1-dev libpng-dev cmake 2>/dev/null || true
+    APTDEC_BUILD="/tmp/aptdec-build"
+    rm -rf "$APTDEC_BUILD"
+    if git clone --depth 1 --recurse-submodules https://github.com/Xerbo/aptdec "$APTDEC_BUILD" 2>/dev/null \
+            && cmake -S "$APTDEC_BUILD" -B "$APTDEC_BUILD/build" -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 \
+            && cmake --build "$APTDEC_BUILD/build" -j"$(nproc)" >/dev/null 2>&1; then
+        sudo cp "$APTDEC_BUILD/build/aptdec" /usr/local/bin/
+        sudo mkdir -p /usr/local/share/aptdec
+        sudo cp -r "$APTDEC_BUILD/palettes" /usr/local/share/aptdec/ 2>/dev/null || true
+        pass "aptdec built and installed"
     else
-        warn "noaa-apt not in apt repos — attempting build from source (requires Rust)"
-        if command -v cargo &>/dev/null; then
-            cargo install noaa-apt 2>/dev/null && pass "noaa-apt built from source" || warn "noaa-apt build failed"
-        else
-            warn "Rust toolchain not found. Install with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-            warn "Then run: cargo install noaa-apt"
-            warn "Note: building on Raspberry Pi may take several minutes"
-        fi
+        warn "aptdec build failed — APT decoding will be unavailable"
     fi
+    rm -rf "$APTDEC_BUILD"
 fi
 
 # ── Step 6c: WEFAX Weather Fax dependencies ──
