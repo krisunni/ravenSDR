@@ -1,15 +1,60 @@
 #!/usr/bin/env bash
-# Download Hailo-8L Whisper model files for ravenSDR
+# Download model files for ravenSDR.
+#   (no args)     download Hailo HEFs + decoder assets from Hailo's S3
+#   --hf-cache    pre-cache HuggingFace models (whisper-tiny tokenizer +
+#                 faster-whisper tiny) for offline operation, then exit
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODELS_DIR="$SCRIPT_DIR/../ravensdr/models"
+VENV_PY="$SCRIPT_DIR/../../.venv/bin/python3"
+[ -x "$VENV_PY" ] || VENV_PY="python3"
 
 S3_BASE="https://hailo-csdata.s3.eu-west-2.amazonaws.com/resources"
 
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 pass() { echo -e "${GREEN}[OK]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+
+# --- HuggingFace pre-cache (offline mode) ---------------------------------
+# Pre-fetch the whisper-tiny tokenizer (Hailo decoder path) and the faster-whisper
+# tiny model (CPU fallback) into the default HF cache so the node runs air-gapped
+# after first setup. Honors $HF_TOKEN from the environment (never hard-coded) and
+# uses hf_transfer for speed when available.
+hf_cache() {
+    echo "ravenSDR — Pre-caching Whisper models from HuggingFace"
+    # Enable hf_transfer only if it is importable, else it would hard-error.
+    if "$VENV_PY" -c "import hf_transfer" 2>/dev/null; then
+        export HF_HUB_ENABLE_HF_TRANSFER=1
+        export HF_XET_HIGH_PERFORMANCE=1
+    else
+        warn "hf_transfer not installed — downloading at normal speed"
+    fi
+    [ -n "${HF_TOKEN:-}" ] && echo "Using HF_TOKEN from environment" || warn "No HF_TOKEN set (public models still work, just slower)"
+
+    "$VENV_PY" - <<'PYEOF'
+import sys
+try:
+    from transformers import AutoTokenizer
+    AutoTokenizer.from_pretrained("openai/whisper-tiny")
+    print("[OK] whisper-tiny tokenizer cached")
+except Exception as e:
+    print("[WARN] tokenizer cache failed:", e); sys.exit(1)
+try:
+    from faster_whisper import WhisperModel
+    WhisperModel("tiny", device="cpu", compute_type="int8")
+    print("[OK] faster-whisper tiny model cached")
+except Exception as e:
+    print("[WARN] faster-whisper cache failed:", e); sys.exit(1)
+PYEOF
+}
+
+if [ "${1:-}" = "--hf-cache" ]; then
+    hf_cache
+    exit $?
+fi
 
 echo "ravenSDR — Downloading Hailo-8L Whisper models"
 echo ""

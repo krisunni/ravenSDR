@@ -4,14 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ravensdr"
-version = "1.0.0"
+version = "1.1.0"
 requires-python = ">=3.11"
+# Keep in sync with requirements.txt (that file is the source of truth).
+# numpy is pinned <2 because pyhailort's C++ bindings need the numpy 1.x ABI.
+# torch is intentionally absent — the mel spectrogram is pure numpy (see ravensdr/mel.py).
 dependencies = [
     "flask>=3.0.0",
     "flask-socketio>=5.3.6",
-    "numpy>=1.26.0",
+    "numpy>=1.26.0,<2",
     "faster-whisper>=1.0.0",
     "eventlet>=0.35.0",
+    "transformers>=4.36.0",
+    "huggingface_hub>=0.20.0",
+    "hf_transfer>=0.1.6",
+    "requests>=2.31.0",
+    "ephem>=4.1.0",
+    "pyais>=2.6.0",
+    "Pillow>=10.0.0",
 ]
 
 [tool.setuptools.packages.find]

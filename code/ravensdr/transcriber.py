@@ -249,16 +249,35 @@ class Transcriber:
         self._onnx_add_input = None
         self._tokenizer = None
 
-        # Initialize inference backend
-        if HAILO_AVAILABLE:
+        # Initialize inference backend. RAVENSDR_FORCE_BACKEND (hailo|cpu|none) pins
+        # the backend and turns a silent downgrade into a hard error — useful during
+        # bring-up/debugging so a broken Hailo env fails loudly instead of quietly
+        # running on CPU.
+        forced = (os.environ.get("RAVENSDR_FORCE_BACKEND") or "").strip().lower() or None
+        if forced not in (None, "hailo", "cpu", "none"):
+            log.warning("Ignoring invalid RAVENSDR_FORCE_BACKEND=%r (expected hailo|cpu|none)", forced)
+            forced = None
+        self._forced_backend = forced
+
+        if forced == "hailo" or (forced is None and HAILO_AVAILABLE):
+            if forced == "hailo" and not HAILO_AVAILABLE:
+                raise RuntimeError(
+                    "RAVENSDR_FORCE_BACKEND=hailo but hailo_platform is not importable — "
+                    "check the venv provides hailo_platform (see: python3 code/scripts/debug.py)"
+                )
             self._backend = "hailo"
             self._init_hailo()
-        elif FASTER_WHISPER_AVAILABLE:
+        elif forced == "cpu" or (forced is None and FASTER_WHISPER_AVAILABLE):
+            if forced == "cpu" and not FASTER_WHISPER_AVAILABLE:
+                raise RuntimeError("RAVENSDR_FORCE_BACKEND=cpu but faster-whisper is not installed")
             self._backend = "cpu"
             self._init_faster_whisper()
         else:
             self._backend = "none"
             log.warning("No Whisper backend available — transcription disabled")
+
+        log.info("Transcriber backend resolved: %s%s",
+                 self._backend, " (forced)" if forced else "")
 
     @property
     def backend(self):
@@ -294,12 +313,28 @@ class Transcriber:
             log.info("Hailo model files validated, decoder assets loaded")
 
         except Exception as e:
-            log.warning("Hailo init failed (%s), falling back to CPU", e)
+            reason = self._hailo_failure_reason(e)
+            if self._forced_backend == "hailo":
+                log.error("Hailo init failed [%s]: %s (%s) — backend forced to hailo, not degrading",
+                          reason, e, type(e).__name__)
+                raise
+            log.warning("Hailo init failed [%s]: %s (%s) — falling back to CPU",
+                        reason, e, type(e).__name__)
             if FASTER_WHISPER_AVAILABLE:
                 self._backend = "cpu"
                 self._init_faster_whisper()
             else:
                 self._backend = "none"
+                log.warning("faster-whisper unavailable too — transcription disabled")
+
+    @staticmethod
+    def _hailo_failure_reason(exc):
+        """Map an init exception to a short, actionable reason string."""
+        if isinstance(exc, FileNotFoundError):
+            return "model file missing — run scripts/download_models.sh"
+        if type(exc).__name__ == "ModuleNotFoundError":
+            return "missing python dependency (e.g. transformers)"
+        return type(exc).__name__
 
     def _init_faster_whisper(self):
         try:
@@ -499,10 +534,9 @@ class Transcriber:
                                 # --- Mel spectrogram ---
                                 samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
                                 samples = pad_or_trim(samples, CHUNK_SAMPLES)
-                                mel = log_mel_spectrogram(samples)
+                                mel = log_mel_spectrogram(samples)  # numpy (n_mels, n_frames)
 
-                                mel_np = mel.cpu().numpy()
-                                mel_np = np.expand_dims(mel_np, axis=0)
+                                mel_np = np.expand_dims(mel, axis=0)
                                 mel_np = np.expand_dims(mel_np, axis=2)
                                 mel_np = np.transpose(mel_np, (0, 2, 3, 1))  # NHWC
                                 input_mel = np.ascontiguousarray(mel_np)
@@ -608,8 +642,11 @@ class Transcriber:
                                     log.error("Hailo inference error: %s", e)
 
         except Exception as e:
-            log.error("Hailo device/configure failed: %s", e)
-            log.info("Falling back to CPU for this session")
+            log.error("Hailo device/configure failed (%s): %s", type(e).__name__, e, exc_info=True)
+            if self._forced_backend == "hailo":
+                log.error("Backend forced to hailo — not falling back; transcription halted")
+                return
+            log.warning("Falling back to CPU for this session")
             if FASTER_WHISPER_AVAILABLE:
                 self._backend = "cpu"
                 self._init_faster_whisper()
