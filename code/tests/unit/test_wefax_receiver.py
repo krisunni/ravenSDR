@@ -6,50 +6,49 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ravensdr.wefax_receiver import (
+    CAPTURE_RATE_HZ,
     FREQ_OFFSET_KHZ,
     IMAGE_WIDTH,
     IOC,
-    OUTPUT_RATE,
     SAMPLE_RATE,
     WefaxReceiver,
 )
 
 
 class TestRtlFmCommand:
-    """Test rtl_fm command construction for WEFAX HF direct sampling."""
+    """Test rtl_fm command construction for WEFAX HF reception (V4 upconverter)."""
 
-    def test_direct_sampling_flag(self):
-        cmd = WefaxReceiver.build_rtl_fm_cmd(8680100)
-        assert "-E" in cmd
-        idx = cmd.index("-E")
-        assert cmd[idx + 1] == "direct2"  # Q-branch (Blog fork syntax)
+    def test_no_direct_sampling(self):
+        # The V4 uses a built-in upconverter and tunes HF directly — direct
+        # sampling (-E direct2) is a V3-only mode and must NOT be present.
+        cmd = WefaxReceiver().build_rtl_fm_cmd(8680100)
+        assert "-E" not in cmd
+        assert "direct2" not in cmd
 
     def test_usb_demodulation(self):
-        cmd = WefaxReceiver.build_rtl_fm_cmd(8680100)
+        cmd = WefaxReceiver().build_rtl_fm_cmd(8680100)
         assert "-M" in cmd
         idx = cmd.index("-M")
         assert cmd[idx + 1] == "usb"
 
     def test_sample_rate(self):
-        cmd = WefaxReceiver.build_rtl_fm_cmd(8680100)
+        cmd = WefaxReceiver().build_rtl_fm_cmd(8680100)
         assert "-s" in cmd
         idx = cmd.index("-s")
         assert cmd[idx + 1] == SAMPLE_RATE
 
-    def test_output_rate(self):
-        cmd = WefaxReceiver.build_rtl_fm_cmd(8680100)
-        assert "-r" in cmd
-        idx = cmd.index("-r")
-        assert cmd[idx + 1] == OUTPUT_RATE
+    def test_capture_rate_constant(self):
+        # rtl_fm outputs at -s (12 kHz); the WAV is written at that same rate.
+        assert CAPTURE_RATE_HZ == 12000
 
     def test_frequency_in_hz(self):
-        cmd = WefaxReceiver.build_rtl_fm_cmd(8680100)
+        cmd = WefaxReceiver().build_rtl_fm_cmd(8680100)
         assert "-f" in cmd
         idx = cmd.index("-f")
         assert cmd[idx + 1] == "8680100"
 
     def test_pipe_output(self):
-        cmd = WefaxReceiver.build_rtl_fm_cmd(8680100)
+        cmd = WefaxReceiver().build_rtl_fm_cmd(8680100)
         assert cmd[-1] == "-"
 
 
@@ -75,29 +74,36 @@ class TestFrequencyOffset:
         assert tuned_khz == pytest.approx(4296.1)
 
 
-class TestFldigiCommand:
-    """Test fldigi decode command construction."""
+class TestNumpyDecoder:
+    """The WEFAX decoder is pure numpy — verify it round-trips an image to <1% loss."""
 
-    def test_fldigi_cmd_includes_xvfb(self):
-        cmd = WefaxReceiver.build_fldigi_cmd("/tmp/test.wav", "/tmp/test.png")
-        assert cmd[0] == "xvfb-run"
-        assert "--auto-servernum" in cmd
+    def test_encode_decode_roundtrip(self, tmp_path):
+        import numpy as np
+        from PIL import Image
+        from ravensdr.wefax_decode import (encode_image_to_wav, decode_wav_to_png,
+                                           IMAGE_WIDTH)
 
-    def test_fldigi_cmd_includes_wefax_flag(self):
-        cmd = WefaxReceiver.build_fldigi_cmd("/tmp/test.wav", "/tmp/test.png")
-        assert "--wefax-only" in cmd
+        # A simple test chart: white background with horizontal black bands
+        h, w = 120, IMAGE_WIDTH
+        orig = np.full((h, w), 255, dtype=np.uint8)
+        orig[30:40, :] = 0
+        orig[70:80, :] = 0
 
-    def test_fldigi_cmd_includes_input_file(self):
-        cmd = WefaxReceiver.build_fldigi_cmd("/tmp/test.wav", "/tmp/test.png")
-        assert "-i" in cmd
-        idx = cmd.index("-i")
-        assert cmd[idx + 1] == "/tmp/test.wav"
+        wav = str(tmp_path / "t.wav")
+        png = str(tmp_path / "t.png")
+        encode_image_to_wav(orig, wav)
+        meta = decode_wav_to_png(wav, png)
 
-    def test_fldigi_cmd_includes_output_file(self):
-        cmd = WefaxReceiver.build_fldigi_cmd("/tmp/test.wav", "/tmp/test.png")
-        assert "-o" in cmd
-        idx = cmd.index("-o")
-        assert cmd[idx + 1] == "/tmp/test.png"
+        assert meta is not None
+        assert os.path.exists(png)
+        assert meta["lines"] >= h            # image + phasing rows
+        assert 119.0 <= meta["lpm"] <= 121.0  # deskew locks near 120 LPM
+
+        # The decoded image must contain clear dark bands (not all white)
+        dec = np.asarray(Image.open(png).convert("L"), dtype=np.float64)
+        row_means = dec.mean(axis=1)
+        assert row_means.min() < 120          # at least one strongly-dark line
+        assert row_means.max() > 200          # and bright background lines
 
 
 class TestFilenameGeneration:

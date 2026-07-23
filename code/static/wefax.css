@@ -330,3 +330,46 @@
     text-align: center;
     padding: 1px 0;
 }
+
+/* Manual WEFAX capture control */
+.wefax-manual-capture {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+}
+.wefax-manual-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.7;
+}
+.wefax-manual-capture select {
+    background: rgba(0, 0, 0, 0.3);
+    color: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+}
+.wefax-record-btn {
+    background: #b3402e;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.wefax-record-btn:hover { background: #c9482f; }
+.wefax-record-btn:disabled { opacity: 0.5; cursor: default; }
+#wefax-manual-status {
+    font-size: 0.8rem;
+    opacity: 0.85;
+    flex-basis: 100%;
+}

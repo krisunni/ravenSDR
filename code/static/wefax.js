@@ -31,6 +31,14 @@
             self._updateRecordingStatus(data);
         });
 
+        // Manual "Receive Now" capture
+        var recordBtn = document.getElementById("wefax-record-btn");
+        if (recordBtn) {
+            recordBtn.addEventListener("click", function () {
+                self._triggerManualCapture();
+            });
+        }
+
         // Filter buttons
         var filterBtns = document.querySelectorAll(".wefax-filter-btn");
         filterBtns.forEach(function (btn) {
@@ -43,6 +51,30 @@
                 self._fetchHistory();
             });
         });
+    };
+
+    WefaxPanel.prototype._triggerManualCapture = function () {
+        var btn = document.getElementById("wefax-record-btn");
+        var status = document.getElementById("wefax-manual-status");
+        var freq = parseFloat(document.getElementById("wefax-manual-freq").value);
+        var dur = parseInt(document.getElementById("wefax-manual-dur").value, 10);
+        if (btn) { btn.disabled = true; }
+        if (status) { status.textContent = "Starting capture…"; }
+        fetch("/api/wefax/record", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ frequency_khz: freq, duration_minutes: dur })
+        })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+                if (status) {
+                    status.textContent = res.ok
+                        ? ("Receiving " + freq + " kHz for " + dur + " min — chart will appear below when decoded.")
+                        : ("Error: " + (res.j.error || "could not start"));
+                }
+            })
+            .catch(function () { if (status) { status.textContent = "Request failed."; } })
+            .finally(function () { if (btn) { btn.disabled = false; } });
     };
 
     WefaxPanel.prototype._fetchSchedule = function () {

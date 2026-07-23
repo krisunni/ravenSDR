@@ -1,12 +1,14 @@
-# WEFAX receiver — rtl_fm HF direct sampling + fldigi WEFAX decode
+# WEFAX receiver — rtl_fm HF direct sampling + numpy WEFAX decode
 
 import datetime
 import glob
 import logging
 import os
+import select
 import subprocess
 import threading
 import time
+import wave
 
 import numpy as np
 
@@ -22,13 +24,14 @@ IMAGE_WIDTH = 1809  # pixels
 # Frequency offset — WEFAX convention: tune 1.9 kHz below listed frequency
 FREQ_OFFSET_KHZ = -1.9
 
-# Recording parameters
+# Recording parameters. rtl_fm is told -s 12k and outputs mono 16-bit PCM at
+# 12000 Hz; we write that straight to a WAV (the decoder reads the rate back).
 SAMPLE_RATE = "12k"
-OUTPUT_RATE = "11025"
+CAPTURE_RATE_HZ = 12000
 
 
 class WefaxReceiver:
-    """Records HF WEFAX broadcasts via rtl_fm direct sampling and decodes with fldigi."""
+    """Records HF WEFAX broadcasts via rtl_fm direct sampling and decodes with numpy."""
 
     def __init__(self, emit_fn=None, device_index=0):
         self.emit_fn = emit_fn or (lambda *a, **kw: None)
@@ -109,7 +112,7 @@ class WefaxReceiver:
         return history
 
     def _record_and_decode(self, broadcast_info):
-        """Record rtl_fm audio, then decode WEFAX with fldigi."""
+        """Record rtl_fm audio, then decode WEFAX with the numpy decoder."""
         station = broadcast_info.get("station", "NMC")
         freq_khz = broadcast_info.get("frequency_khz", 8682.0)
         chart_type = broadcast_info.get("chart_type", "surface_analysis")
@@ -134,28 +137,13 @@ class WefaxReceiver:
         duration_sec = duration_min * 60
 
         try:
-            # rtl_fm with HF direct sampling (Q-branch for V4)
+            # rtl_fm tuned directly to the HF frequency (V4 has an internal upconverter).
+            # Read its raw PCM straight into a WAV in Python — no sox middleman (the
+            # old rtl_fm | sox pipe died silently and produced 44-byte empty files).
             rtl_cmd = self.build_rtl_fm_cmd(tuned_hz)
-
-            sox_cmd = [
-                "sox",
-                "-t", "raw",
-                "-r", OUTPUT_RATE,
-                "-e", "signed",
-                "-b", "16",
-                "-c", "1",
-                "-",
-                wav_file,
-            ]
-
             rtl_proc = subprocess.Popen(
                 rtl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
-            sox_proc = subprocess.Popen(
-                sox_cmd, stdin=rtl_proc.stdout, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-
             self._process = rtl_proc
             log.info("WEFAX rtl_fm started (pid %d): %s", rtl_proc.pid, " ".join(rtl_cmd))
 
@@ -165,35 +153,12 @@ class WefaxReceiver:
             )
             stderr_thread.start()
 
-            # Check if rtl_fm died immediately (device busy, not found, etc.)
-            time.sleep(2)
-            if rtl_proc.poll() is not None:
-                log.error("WEFAX rtl_fm died immediately (exit code %d) — "
-                          "device may be busy or direct sampling failed",
-                          rtl_proc.returncode)
-                sox_proc.terminate()
-                self._recording = False
-                self._current_broadcast = None
-                return
-
-            # rtl_fm runs forever — wait for recording duration then kill it
-            try:
-                rtl_proc.wait(timeout=duration_sec)
-                log.info("WEFAX rtl_fm exited on its own (exit code %d)", rtl_proc.returncode)
-            except subprocess.TimeoutExpired:
-                rtl_proc.terminate()
-                try:
-                    rtl_proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    rtl_proc.kill()
-                    rtl_proc.wait()
-                log.info("WEFAX rtl_fm stopped after %d sec recording", duration_sec)
-
-            # Wait for sox to finish writing the WAV
-            try:
-                sox_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                sox_proc.kill()
+            bytes_written = self._capture_to_wav(rtl_proc, wav_file, duration_sec)
+            log.info("WEFAX capture finished: %.1f MB over ~%d s (rtl_fm exit=%s)",
+                     bytes_written / 1e6, duration_sec, rtl_proc.poll())
+            if bytes_written == 0:
+                log.error("WEFAX rtl_fm produced NO audio — device busy, tuning failed, "
+                          "or nothing on frequency. Check the rtl_fm log lines above.")
 
         except FileNotFoundError as e:
             log.error("WEFAX recording failed — command not found: %s", e)
@@ -242,7 +207,7 @@ class WefaxReceiver:
         # Analyze signal level from the recorded WAV
         self._analyze_wav_signal(wav_file, station, freq_khz)
 
-        # Decode with fldigi
+        # Decode with the built-in numpy WEFAX decoder
         decode_ok = self._decode_wefax(wav_file, png_file)
         self._recording = False
         self._current_broadcast = None
@@ -270,34 +235,57 @@ class WefaxReceiver:
         })
         log.info("WEFAX image decoded: %s", png_file)
 
+    def _capture_to_wav(self, rtl_proc, wav_file, duration_sec):
+        """Stream rtl_fm's raw PCM stdout into a mono 16-bit WAV for `duration_sec`.
+
+        Returns total PCM bytes written. Uses select() so a stalled/dead rtl_fm
+        can't block the loop, and aborts early if no audio arrives at all.
+        """
+        fd = rtl_proc.stdout.fileno()
+        deadline = time.monotonic() + duration_sec
+        bytes_written = 0
+        started = time.monotonic()
+
+        with wave.open(wav_file, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(CAPTURE_RATE_HZ)
+            while self._recording and time.monotonic() < deadline:
+                ready, _, _ = select.select([fd], [], [], 1.0)
+                if ready:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:            # rtl_fm closed stdout / exited
+                        break
+                    wf.writeframes(chunk)
+                    bytes_written += len(chunk)
+                else:
+                    # No data this second — bail if rtl_fm died or never produced audio
+                    if rtl_proc.poll() is not None:
+                        break
+                    if bytes_written == 0 and time.monotonic() - started > 4:
+                        log.error("WEFAX: no audio from rtl_fm after 4 s — aborting capture")
+                        break
+        return bytes_written
+
     def _decode_wefax(self, wav_file, png_file):
-        """Decode WEFAX audio to PNG using fldigi in headless mode."""
+        """Decode WEFAX audio to PNG using the built-in numpy decoder.
+
+        Replaces the old fldigi path (fldigi has no headless WAV->PNG mode).
+        See ravensdr/wefax_decode.py for the FM-demodulation pipeline.
+        """
         try:
-            # Use fldigi with Xvfb for headless WEFAX decoding
-            # fldigi --wefax-only decodes WEFAX from audio file to image
-            decode_cmd = self.build_fldigi_cmd(wav_file, png_file)
-
-            result = subprocess.run(
-                decode_cmd, capture_output=True, text=True, timeout=180
-            )
-            if result.returncode != 0:
-                log.error("fldigi WEFAX decode failed: %s", result.stderr)
-                return False
-
-        except FileNotFoundError:
-            log.error("fldigi not found — is it installed? (sudo apt install fldigi)")
-            return False
-        except subprocess.TimeoutExpired:
-            log.error("fldigi decode timed out")
-            return False
+            from ravensdr.wefax_decode import decode_wav_to_png
+            meta = decode_wav_to_png(wav_file, png_file)
         except Exception as e:
-            log.error("WEFAX decode error: %s", e)
+            log.error("WEFAX decode error: %s", e, exc_info=True)
             return False
 
-        if not os.path.exists(png_file):
-            log.error("Decoded WEFAX PNG not created: %s", png_file)
+        if not meta or not os.path.exists(png_file):
+            log.error("WEFAX decode produced no image from %s", wav_file)
             return False
 
+        log.info("WEFAX decoded: %d lines, lpm=%.2f, mean=%.2f",
+                 meta["lines"], meta["lpm"], meta["mean_brightness"])
         return True
 
     @staticmethod
@@ -354,36 +342,23 @@ class WefaxReceiver:
             log.warning("WEFAX signal analysis failed: %s", e)
 
     def build_rtl_fm_cmd(self, tuned_hz):
-        """Build rtl_fm command for WEFAX HF direct sampling.
+        """Build rtl_fm command for WEFAX HF reception on the RTL-SDR Blog V4.
 
-        Blog fork of rtl_fm uses -E direct2 for Q-branch direct sampling
-        (not -D 2 which is the stock rtl-sdr flag). USB demodulation is
-        supported via -M usb.
+        The V4 has a built-in HF upconverter, so HF is received by tuning the
+        tuner DIRECTLY to the frequency. It does NOT use direct sampling — that
+        was the V3 method; forcing `-E direct2` on a V4 mistunes the front end
+        and yields no usable audio. USB demodulation via -M usb.
         """
         cmd = [
             "rtl_fm",
-            "-E", "direct2",     # Q-branch direct sampling (Blog fork syntax)
             "-f", str(tuned_hz),
             "-M", "usb",         # Upper sideband demodulation
-            "-s", SAMPLE_RATE,
-            "-r", OUTPUT_RATE,
+            "-s", SAMPLE_RATE,   # rtl_fm outputs mono 16-bit PCM at this rate (12 kHz)
         ]
         if self.device_index > 0:
             cmd.extend(["-d", str(self.device_index)])
         cmd.append("-")
         return cmd
-
-    @staticmethod
-    def build_fldigi_cmd(wav_file, png_file):
-        """Build fldigi command for WEFAX decoding."""
-        # Run fldigi under Xvfb for headless operation
-        return [
-            "xvfb-run", "--auto-servernum",
-            "fldigi",
-            "--wefax-only",
-            "-i", wav_file,
-            "-o", png_file,
-        ]
 
     @staticmethod
     def _parse_filename(filename):
