@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import socket
 import threading
 import time
@@ -22,6 +23,20 @@ log = logging.getLogger(__name__)
 
 SBS_HOST = "localhost"
 SBS_PORT = 30003  # dump1090 SBS BaseStation output
+
+# dump1090 forks in preference order. FlightAware's `dump1090`/`dump1090-fa`
+# (built from source by setup.sh) is the modern one; `dump1090-mutability` is the
+# old Debian package name. All accept `--device-index --net --quiet` and expose
+# SBS BaseStation output on port 30003 with `--net`.
+DUMP1090_BINARIES = ("dump1090-fa", "dump1090", "dump1090-mutability")
+
+
+def find_dump1090():
+    """Return the first installed dump1090 binary name, or None."""
+    for name in DUMP1090_BINARIES:
+        if shutil.which(name):
+            return name
+    return None
 
 # Config from environment
 ADSB_ENABLED = os.environ.get("ADSB_ENABLED", "true").lower() == "true"
@@ -53,35 +68,60 @@ class AdsbReceiver:
         if self._running:
             return
 
+        binary = find_dump1090()
+        if not binary:
+            log.error("No dump1090 binary found (looked for: %s). Build it via "
+                      "code/setup.sh, or: git clone https://github.com/flightaware/dump1090 "
+                      "&& make RTLSDR=yes && sudo cp dump1090 /usr/local/bin/",
+                      ", ".join(DUMP1090_BINARIES))
+            return
+
         # Kill any lingering dump1090 and allow USB device to be released
         try:
-            subprocess.run(["killall", "-q", "dump1090-mutability"],
+            subprocess.run(["killall", "-q", binary],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
         time.sleep(2)
 
         cmd = [
-            "dump1090-mutability",
+            binary,
             "--device-index", str(self.device_index),
             "--net",
             "--quiet",
         ]
-        try:
-            self.process = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-        except FileNotFoundError:
-            log.error("dump1090-mutability not found — is it installed?")
-            return
 
-        # Wait for dump1090 to start and check it didn't crash
-        time.sleep(3)
-        if self.process is None or self.process.poll() is not None:
-            rc = self.process.returncode if self.process else "?"
-            log.error("dump1090 exited immediately (code %s)", rc)
+        # Retry with backoff: when switching from audio → ADS-B the RTL-SDR may not
+        # have been released by rtl_fm yet, so dump1090 exits immediately (code 0)
+        # on the first try. Retry a few times so this transient race self-heals
+        # instead of surfacing as a user-visible error.
+        attempts = 4
+        for attempt in range(1, attempts + 1):
+            try:
+                self.process = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+            except FileNotFoundError:
+                log.error("%s not found — is it installed?", binary)
+                return
+            log.info("Starting %s on device %d (attempt %d/%d)",
+                     binary, self.device_index, attempt, attempts)
+
+            # Wait for dump1090 to start and check it didn't crash
+            time.sleep(3)
+            if self.process.poll() is None:
+                break  # still alive → started successfully
+
+            rc = self.process.returncode
             self.process = None
-            return
+            if attempt < attempts:
+                log.warning("dump1090 exited immediately (code %s) — USB device likely "
+                            "still releasing; retrying in 2s", rc)
+                time.sleep(2)
+            else:
+                log.error("dump1090 failed to start after %d attempts (last exit code %s) "
+                          "— is the SDR busy or disconnected?", attempts, rc)
+                return
 
         self._running = True
         self._poll_thread = threading.Thread(target=self._sbs_reader, daemon=True)
