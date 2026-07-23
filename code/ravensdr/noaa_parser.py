@@ -2,6 +2,8 @@
 # Extracts structured weather fields from raw Whisper transcript text
 
 import re
+import time
+from collections import Counter, deque
 from datetime import datetime, timezone
 
 
@@ -44,6 +46,52 @@ _MARINE_ZONES = [
     "admiralty inlet",
 ]
 
+# Sky/condition phrases, most-specific first so "mostly cloudy" wins over "cloudy".
+_CONDITION_PATTERNS = [
+    (r"partly sunny", "Partly Sunny"),
+    (r"mostly sunny", "Mostly Sunny"),
+    (r"partly cloudy", "Partly Cloudy"),
+    (r"mostly cloudy", "Mostly Cloudy"),
+    (r"mostly clear", "Mostly Clear"),
+    (r"freezing rain", "Freezing Rain"),
+    (r"thunderstorms?", "Thunderstorms"),
+    (r"scattered showers?", "Scattered Showers"),
+    (r"showers?", "Showers"),
+    (r"drizzle", "Drizzle"),
+    (r"overcast", "Overcast"),
+    (r"sunny", "Sunny"),
+    (r"clear", "Clear"),
+    (r"cloudy", "Cloudy"),
+    (r"rain", "Rain"),
+    (r"snow", "Snow"),
+    (r"sleet", "Sleet"),
+    (r"\bfog", "Fog"),
+    (r"haze", "Haze"),
+    (r"windy", "Windy"),
+    (r"breezy", "Breezy"),
+]
+
+# Words that look like place-name candidates but aren't — filtered out of the
+# location vote (whisper capitalizes these too).
+_LOCATION_STOPWORDS = {
+    "noaa", "weather", "radio", "forecast", "warning", "watch", "advisory",
+    "north", "south", "east", "west", "northwest", "northeast", "southwest",
+    "southeast", "monday", "tuesday", "wednesday", "thursday", "friday",
+    "saturday", "sunday", "tonight", "today", "tomorrow", "morning", "afternoon",
+    "evening", "night", "degrees", "sunny", "cloudy", "clear", "rain", "wind",
+    "winds", "the", "and", "for", "high", "low", "highs", "lows", "mostly",
+    "partly", "point", "county", "national", "service", "zone", "coast",
+    "coastal", "waters", "sound", "bay", "pass", "area", "mph", "knots",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    # common Whisper garble / filler that gets capitalized mid-sentence
+    "loves", "love", "lows", "well", "yeah", "okay", "thanks", "sea", "seas",
+    "there", "here", "then", "this", "that", "when", "with", "from", "will",
+    "they", "them", "their", "these", "those", "your", "ours", "hers", "into",
+    "been", "have", "were", "what", "which", "some", "more", "over", "rest",
+    "root", "roost", "even", "like", "just", "much", "next", "past", "chance",
+}
+
 
 def parse_weather_transcript(text):
     """Parse raw Whisper transcript of NOAA weather broadcast into structured data.
@@ -66,7 +114,11 @@ def parse_weather_transcript(text):
 
     lower = text.lower()
     fields_parsed = 0
-    total_fields = 3  # temperature, wind, visibility
+    total_fields = 4  # conditions, temperature, wind, visibility
+
+    conditions = _parse_conditions(lower)
+    if conditions:
+        fields_parsed += 1
 
     temperature = _parse_temperature(lower)
     if temperature:
@@ -84,7 +136,7 @@ def parse_weather_transcript(text):
     marine = _parse_marine(lower)
     forecast = _parse_forecast(lower)
 
-    if fields_parsed == total_fields:
+    if fields_parsed >= 3:
         confidence = "full"
     elif fields_parsed >= 1:
         confidence = "partial"
@@ -92,6 +144,7 @@ def parse_weather_transcript(text):
         confidence = "low"
 
     return {
+        "conditions": conditions,
         "temperature": temperature,
         "wind": wind,
         "visibility": visibility,
@@ -119,20 +172,106 @@ def detect_priority_alert(text):
     return False
 
 
+def _valid_temp(n):
+    return isinstance(n, int) and -30 <= n <= 130
+
+
+def _parse_conditions(text):
+    """Return the sky/condition phrase (e.g. 'Mostly Cloudy'), or None."""
+    for pattern, label in _CONDITION_PATTERNS:
+        if re.search(pattern, text):
+            return label
+    return None
+
+
 def _parse_temperature(text):
-    """Extract temperature in degrees F."""
-    # "temperature 45 degrees" / "currently 52" / "temperature is 34 degrees"
+    """Extract a current temperature in degrees F."""
+    # "temperature 45 degrees" / "currently 52" / "52 degrees"
     patterns = [
         r"temperature\s+(?:is\s+)?(\d+)\s*degrees",
         r"currently\s+(\d+)\s*degrees",
         r"currently\s+(\d+)",
-        r"temperature\s+(\d+)",
+        r"temperature\s+(?:is\s+)?(\d+)",
+        r"(\d+)\s*degrees",
     ]
     for pat in patterns:
         m = re.search(pat, text)
-        if m:
+        if m and _valid_temp(int(m.group(1))):
             return {"value": int(m.group(1)), "unit": "F"}
     return None
+
+
+_WORD_TENS = {
+    "thirties": 30, "forties": 40, "fifties": 50, "sixties": 60,
+    "seventies": 70, "eighties": 80, "nineties": 90,
+}
+
+
+def _vote_temperature(texts):
+    """Median of all plausible temperature mentions across the window.
+
+    Robust to single garbled readings — e.g. Whisper splitting "72 degrees" into
+    "temperature 7, degrees" can't drag the current temp down to 7 when other
+    samples report 65-73.
+    """
+    vals = []
+    for t in texts:
+        low = t.lower()
+        for pat in (r"temperature\s+(?:is\s+)?(\d+)", r"currently\s+(\d+)", r"(\d+)\s*degrees"):
+            for m in re.finditer(pat, low):
+                n = int(m.group(1))
+                if _valid_temp(n):
+                    vals.append(n)
+    if not vals:
+        return None
+    vals.sort()
+    return {"value": vals[len(vals) // 2], "unit": "F"}
+
+
+def _parse_temp_extremes(text):
+    """Extract forecast high/low temps. Handles 'high near 89', 'highs in the
+    upper 80s', 'lows in the lower sixties', etc. Returns (high, low) or None."""
+    adj = {"mid": 5, "middle": 5, "upper": 7, "lower": 2, "low": 2}
+    tens_re = "|".join(_WORD_TENS)
+
+    def find(kind):  # kind = "high" or "low"
+        # "high near/around/of 89"
+        m = re.search(kind + r"s?\s+(?:near|around|of|is|about)\s+(\d+)", text)
+        if m and _valid_temp(int(m.group(1))):
+            return int(m.group(1))
+        # "highs in the upper 80s" / "lows in the 60s"
+        m = re.search(kind + r"s?\s+(?:in the\s+)?(mid|middle|upper|lower|low)?\s*(\d0)s", text)
+        if m and _valid_temp(int(m.group(2))):
+            return int(m.group(2)) + adj.get(m.group(1), 0)
+        # word form: "lows in the lower sixties" / "highs in the eighties"
+        m = re.search(kind + r"s?\s+(?:in the\s+)?(mid|middle|upper|lower|low)?\s*(" + tens_re + r")", text)
+        if m:
+            return _WORD_TENS[m.group(2)] + adj.get(m.group(1), 0)
+        # bare "high 72"
+        m = re.search(kind + r"s?\s+(\d+)\b", text)
+        if m and _valid_temp(int(m.group(1))):
+            return int(m.group(1))
+        return None
+
+    return find("high"), find("low")
+
+
+def _extract_location(texts):
+    """Vote for the most-mentioned place name across accumulated segments.
+
+    Counts each candidate once PER SEGMENT and requires it to appear in at
+    least two distinct segments, so one-off Whisper garble (e.g. "Loves" for
+    "lows") can never surface as a location — only names that actually recur
+    across NOAA's broadcast loop do. Needs a few samples before voting.
+    """
+    if len(texts) < 3:
+        return []
+    seg_counts = Counter()
+    for text in texts:
+        names = {tok for tok in re.findall(r"\b([A-Z][a-z]{3,})\b", text)
+                 if tok.lower() not in _LOCATION_STOPWORDS}
+        seg_counts.update(names)
+    return [name for name, n in seg_counts.most_common(8) if n >= 2][:3]
 
 
 def _parse_wind(text):
@@ -170,6 +309,20 @@ def _parse_wind(text):
     # "winds light and variable"
     if re.search(r"winds?\s+light\s+and\s+variable", text):
         return {"speed": 0, "direction": "variable", "unit": "mph"}
+
+    # "winds 10 to 15 mph" / "10 to 15 miles per hour" (no direction stated)
+    m = re.search(
+        r"winds?\s+(\d+)(?:\s+to\s+(\d+))?\s*(miles per hour|mph|knots|knts)",
+        text,
+    ) or re.search(
+        r"(\d+)\s+to\s+(\d+)\s*(miles per hour|mph|knots|knts)",
+        text,
+    )
+    if m:
+        speed = int(m.group(2)) if m.group(2) else int(m.group(1))
+        unit = "knots" if "knot" in m.group(3) else "mph"
+        if 0 < speed <= 150:
+            return {"speed": speed, "direction": None, "unit": unit}
 
     return None
 
@@ -297,7 +450,98 @@ def _parse_forecast(text):
         if len(forecast_text) > len(keyword) + 3:
             periods.append({
                 "period": keyword.title(),
-                "forecast": forecast_text,
+                "forecast": forecast_text[:200],
             })
 
     return periods
+
+
+def build_summary(texts):
+    """Build a voted weather summary from a list of recent transcript strings.
+
+    Votes conditions across segments and extracts location/temp/high/low/wind
+    from the combined text, so a garbled single chunk doesn't dominate.
+    """
+    if not texts:
+        return {
+            "location": [], "conditions": None, "temperature": None,
+            "high": None, "low": None, "wind": None, "visibility": None,
+            "alerts": [], "forecast": [], "raw_transcript": "",
+            "sample_count": 0, "parsed_at": datetime.now(timezone.utc).isoformat(),
+            "confidence": "low",
+        }
+
+    combined = " . ".join(texts)
+    lower = combined.lower()
+
+    # Vote conditions across segments — the real sky state recurs on the loop.
+    cond_votes = Counter()
+    for t in texts:
+        c = _parse_conditions(t.lower())
+        if c:
+            cond_votes[c] += 1
+    conditions = cond_votes.most_common(1)[0][0] if cond_votes else None
+
+    temperature = _vote_temperature(texts)
+    high, low = _parse_temp_extremes(lower)
+    location = _extract_location(texts)
+    wind = _parse_wind(lower)
+    visibility = _parse_visibility(lower)
+    alerts = _parse_alerts(lower)
+    forecast = _parse_forecast(lower)
+
+    filled = sum(bool(x) for x in
+                 (conditions, temperature, high, low, wind, visibility, location))
+    confidence = "full" if filled >= 3 else "partial" if filled >= 1 else "low"
+
+    return {
+        "location": location,
+        "conditions": conditions,
+        "temperature": temperature,
+        "high": high,
+        "low": low,
+        "wind": wind,
+        "visibility": visibility,
+        "alerts": alerts,
+        "forecast": forecast,
+        "raw_transcript": texts[-1],
+        "sample_count": len(texts),
+        "parsed_at": datetime.now(timezone.utc).isoformat(),
+        "confidence": confidence,
+    }
+
+
+class WeatherAccumulator:
+    """Rolling window of NOAA transcripts → a voted, richer weather summary.
+
+    NOAA weather radio repeats on a few-minute loop; each Whisper chunk is
+    garbled, but across many chunks the true content recurs. Accumulate a
+    time+count-bounded window and re-summarize on every new segment.
+    """
+
+    def __init__(self, window_secs=900, max_segments=40):
+        self.window_secs = window_secs
+        self.max_segments = max_segments
+        self._segments = deque()  # (timestamp, text)
+
+    def _evict(self, now):
+        while self._segments and (
+            now - self._segments[0][0] > self.window_secs
+            or len(self._segments) > self.max_segments
+        ):
+            self._segments.popleft()
+
+    def add(self, text):
+        """Add a transcript segment; returns the updated summary."""
+        if text and text.strip():
+            now = time.time()
+            self._segments.append((now, text.strip()))
+            self._evict(now)
+        return self.summary()
+
+    def summary(self):
+        self._evict(time.time())
+        return build_summary([t for _, t in self._segments])
+
+    def reset(self):
+        self._segments.clear()

@@ -731,3 +731,25 @@ select {
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* Weather — accumulated summary (location, conditions, high/low, forecast) */
+.weather-samples { opacity: 0.6; font-size: 0.85em; }
+.weather-location {
+    font-size: 0.85rem;
+    letter-spacing: 0.03em;
+    opacity: 0.85;
+    margin: 6px 0 2px;
+}
+.weather-headline {
+    font-size: 1.35rem;
+    font-weight: 600;
+    margin: 2px 0 8px;
+}
+.weather-forecast { margin-top: 10px; }
+.forecast-period {
+    font-size: 0.85rem;
+    padding: 4px 0;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    line-height: 1.4;
+}
+.forecast-period strong { text-transform: capitalize; }

@@ -21,7 +21,7 @@ from ravensdr.adsb_receiver import (
 )
 from ravensdr.ais_receiver import AisReceiver
 from ravensdr.adsb_correlator import extract_callsigns, match_flights
-from ravensdr.noaa_parser import detect_priority_alert
+from ravensdr.noaa_parser import WeatherAccumulator, detect_priority_alert
 from ravensdr.apt_scheduler import AptScheduler
 from ravensdr.apt_decoder import AptDecoder
 from ravensdr.wefax_scheduler import WefaxScheduler
@@ -39,7 +39,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # ── Flask + Socket.IO ──
 app = Flask(
@@ -102,16 +102,21 @@ if ADSB_ENABLED:
 ais_receiver = AisReceiver(device_index=0)
 
 # ── Weather state ──
+# Accumulate transcripts across NOAA's broadcast loop and re-summarize; a single
+# garbled Whisper chunk can't carry city/temp/forecast, but voting over a window can.
+_weather_accumulator = WeatherAccumulator()
 _latest_weather = None
 
 
 def _on_weather_update(parsed_data):
-    """Handle parsed NOAA weather data from the transcriber post-processor."""
+    """Feed the raw transcript into the accumulator and emit the voted summary."""
     global _latest_weather
-    _latest_weather = parsed_data
-    socketio.emit("weather_update", parsed_data)
+    raw = parsed_data.get("raw_transcript", "")
+    summary = _weather_accumulator.add(raw)
+    _latest_weather = summary
+    socketio.emit("weather_update", summary)
 
-    if detect_priority_alert(parsed_data.get("raw_transcript", "")):
+    if detect_priority_alert(raw):
         preset = input_source.current_preset or {}
         alert_payload = {
             "alerts": parsed_data.get("alerts", []),
@@ -199,9 +204,11 @@ def _on_wefax_broadcast_start(broadcast_info):
                 socketio.emit("status", _get_status())
 
         socketio.start_background_task(_exit_wefax)
-    else:
-        log.warning("Could not enter WEFAX mode for %s %s",
-                     broadcast_info.get("station"), broadcast_info.get("chart_type"))
+        return True
+
+    log.warning("Could not enter WEFAX mode for %s %s",
+                broadcast_info.get("station"), broadcast_info.get("chart_type"))
+    return False
 
 
 wefax_scheduler = WefaxScheduler(emit_fn=socketio.emit, on_broadcast_start=_on_wefax_broadcast_start)
@@ -362,6 +369,11 @@ def api_tune():
     preset = get_preset_by_id(preset_id)
     if not preset:
         return jsonify({"error": "Unknown preset"}), 400
+
+    # Start weather accumulation fresh when the station changes
+    if input_source.current_preset is None or \
+            input_source.current_preset.get("id") != preset.get("id"):
+        _weather_accumulator.reset()
 
     # Check if web stream mode and no stream_url
     if mode == "WEBSTREAM" and not preset.get("stream_url"):
@@ -596,6 +608,35 @@ def api_wefax_history():
     chart_type = request.args.get("chart_type")
     history = wefax_receiver.get_image_history(count=10, chart_type=chart_type)
     return jsonify(history)
+
+
+@app.route("/api/wefax/record", methods=["POST"])
+def api_wefax_record():
+    """Manually trigger an on-demand WEFAX capture (doesn't wait for the schedule).
+
+    Body (JSON, all optional): frequency_khz, station, chart_type, duration_minutes.
+    """
+    if wefax_receiver.is_recording:
+        return jsonify({"error": "WEFAX capture already in progress"}), 409
+
+    data = request.get_json(silent=True) or {}
+    try:
+        freq_khz = float(data.get("frequency_khz", 8682.0))
+        duration = max(1, min(15, int(data.get("duration_minutes", 8))))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid frequency_khz or duration_minutes"}), 400
+
+    broadcast = {
+        "station": data.get("station", "MANUAL"),
+        "frequency_khz": freq_khz,
+        "chart_type": data.get("chart_type", "manual_capture"),
+        "duration_minutes": duration,
+        "description": "Manual WEFAX capture",
+    }
+    if _on_wefax_broadcast_start(broadcast):
+        log.info("Manual WEFAX capture started: %.1f kHz for %d min", freq_khz, duration)
+        return jsonify({"status": "recording", "broadcast": broadcast})
+    return jsonify({"error": "Could not start WEFAX capture — SDR busy or not in SDR mode"}), 409
 
 
 @app.route("/api/meteor/events")

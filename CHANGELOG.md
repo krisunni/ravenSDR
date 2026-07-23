@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.1.0] — 2026-07-23
+
+Fresh Raspberry Pi 5 bring-up (Debian Trixie, kernel 6.18): repaired the Hailo NPU
+backend, rebuilt WEFAX decoding, fixed ADS-B, and made NOAA weather parsing
+accumulate across the broadcast loop.
+
+### Fixed
+
+- **Hailo NPU backend on 16 KB-page kernels** (Debian Trixie): the driver set the DMA descriptor page size to `PAGE_SIZE` (16384), over the Hailo-8 hardware max of 4096, so `InferModel.configure()` failed and Whisper silently fell back to CPU. Fixed with `/etc/modprobe.d/hailo_pci.conf` (`force_desc_page_size=4096 force_allocation_from_driver=1`), which also silences the `hailo_vdma_buffer_map` → `find_vma` kernel WARNING. Baked into `setup.sh`.
+- **WEFAX produced no images**: the decode step invoked `fldigi --wefax-only` — not a real fldigi mode (fldigi has no headless WAV→PNG path). Replaced with a self-contained numpy decoder.
+- **WEFAX HF reception (RTL-SDR Blog V4)**: dropped V3-style direct sampling (`-E direct2`) — the V4 has a built-in HF upconverter and tunes HF directly. Replaced the fragile `rtl_fm | sox` pipe (which died silently, writing empty files) with a direct Python WAV writer that fails fast.
+- **ADS-B "Failed to start dump1090"**: no dump1090 was installed (Trixie ships none; apt `readsb` is built without RTL-SDR support). `setup.sh` now builds FlightAware dump1090 from source; `adsb_receiver` auto-detects the binary and retries startup to survive the USB-release race when switching audio↔ADS-B.
+- **Weather panel "-1s ago"** clock-skew display bug (now clamps to "just now").
+
+### Added
+
+- **numpy WEFAX decoder** (`wefax_decode.py`): FM-demodulates the 1500/2300 Hz FSK, two-stage LPM deskew, phasing edge-align, grayscale PNG out — no fldigi/Xvfb/loopback. Verified by an encode→decode round-trip.
+- **Manual WEFAX capture**: `POST /api/wefax/record` + a "Receive Now" button in the WEFAX tab (previously scheduler-only).
+- **NOAA weather accumulator** (`WeatherAccumulator`): keeps a rolling window of transcripts and votes across NOAA's loop to extract **location (city)**, **current temperature** (median), **high/low**, **conditions**, **wind**, and **forecast** — robust to whisper-tiny garble that no single-chunk parse could handle.
+- **Offline model pre-cache**: `download_models.sh --hf-cache` fetches the Whisper tokenizer + faster-whisper model for air-gapped operation.
+- **Doctor script** (`scripts/debug.py`): end-to-end Hailo health check with an on-device inference smoke test.
+- **`RAVENSDR_FORCE_BACKEND`** env var to pin the Whisper backend (`hailo`/`cpu`/`none`) and fail loudly instead of silently degrading.
+
+### Changed
+
+- **Removed PyTorch**: the mel spectrogram is now pure numpy (`mel.py`), numerically matched to the old torch implementation. Eliminates a large, wrong CUDA torch wheel from the Pi environment.
+- **Dependencies aligned**: `pyproject.toml` now matches `requirements.txt` (transformers, huggingface_hub + hf_transfer, Pillow, ephem, pyais); numpy pinned `<2` for the pyhailort ABI.
+
 ## [1.0.0] — 2026-03-21
 
 All 17 implementation phases complete. Full end-to-end IQ pipeline integrated.

@@ -297,7 +297,7 @@
         <div id="wefax-panel" class="hidden">
             <div class="panel-header">
                 <label>WEFAX Weather Charts</label>
-                <span class="wefax-freq-info">HF Direct Sampling (Q-branch) &mdash; Auto-scheduled</span>
+                <span class="wefax-freq-info">HF shortwave (needs HF antenna) &mdash; Auto-scheduled + manual</span>
             </div>
 
             <div class="wefax-station-info">
@@ -322,6 +322,23 @@
             <div id="wefax-recording-indicator" class="hidden">
                 <span class="wefax-rec-dot"></span>
                 <span class="wefax-rec-text">Receiving WEFAX broadcast...</span>
+            </div>
+
+            <div class="wefax-manual-capture">
+                <label class="wefax-manual-label">Manual capture</label>
+                <select id="wefax-manual-freq">
+                    <option value="8682">NMC 8682 kHz</option>
+                    <option value="4346">NMC 4346 kHz</option>
+                    <option value="12786">NMC 12786 kHz</option>
+                    <option value="4298">NOJ 4298 kHz</option>
+                    <option value="8459">NOJ 8459 kHz</option>
+                </select>
+                <select id="wefax-manual-dur">
+                    <option value="8">8 min (full chart)</option>
+                    <option value="2">2 min (test)</option>
+                </select>
+                <button id="wefax-record-btn" class="wefax-record-btn">Receive Now</button>
+                <span id="wefax-manual-status"></span>
             </div>
 
             <div class="wefax-section-label">Upcoming Broadcasts</div>

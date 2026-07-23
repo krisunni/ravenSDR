@@ -74,34 +74,58 @@
         // Alert banner area
         html += '<div id="weather-alert-banner" class="weather-alert hidden"></div>';
 
-        // Last updated
+        // Last updated + how many transcript samples the summary is voted from
+        var samples = data.sample_count ? ' &middot; ' + data.sample_count +
+            (data.sample_count === 1 ? ' sample' : ' samples') : '';
         html += '<div class="weather-updated">Last updated: ' +
             this._relativeTime(data.parsed_at) +
-            ' <span class="weather-confidence">' + data.confidence + '</span></div>';
+            ' <span class="weather-confidence">' + data.confidence + '</span>' +
+            '<span class="weather-samples">' + samples + '</span></div>';
+
+        // Location (voted across the broadcast loop)
+        if (data.location && data.location.length > 0) {
+            html += '<div class="weather-location">' +
+                escapeHtml(data.location.join(' · ')) + '</div>';
+        }
+
+        // Headline conditions
+        if (data.conditions) {
+            html += '<div class="weather-headline">' + escapeHtml(data.conditions) + '</div>';
+        }
 
         // Current conditions card
         html += '<div class="weather-conditions">';
         if (data.temperature) {
-            html += '<div class="weather-field">' +
-                '<span class="weather-field-label">Temp</span>' +
-                '<span class="weather-field-value">' + data.temperature.value + '&deg;' + data.temperature.unit + '</span>' +
-                '</div>';
+            html += this._field('Now', data.temperature.value + '&deg;' + data.temperature.unit);
+        }
+        if (data.high != null) {
+            html += this._field('High', data.high + '&deg;F');
+        }
+        if (data.low != null) {
+            html += this._field('Low', data.low + '&deg;F');
         }
         if (data.wind) {
             var windText = data.wind.speed === 0 ? 'Light & variable' :
-                data.wind.direction + ' ' + data.wind.speed + ' ' + data.wind.unit;
-            html += '<div class="weather-field">' +
-                '<span class="weather-field-label">Wind</span>' +
-                '<span class="weather-field-value">' + windText + '</span>' +
-                '</div>';
+                (data.wind.direction ? data.wind.direction + ' ' : '') +
+                data.wind.speed + ' ' + data.wind.unit;
+            html += this._field('Wind', windText);
         }
         if (data.visibility) {
-            html += '<div class="weather-field">' +
-                '<span class="weather-field-label">Vis</span>' +
-                '<span class="weather-field-value">' + data.visibility.value + ' ' + data.visibility.unit + '</span>' +
-                '</div>';
+            html += this._field('Vis', data.visibility.value + ' ' + data.visibility.unit);
         }
         html += '</div>';
+
+        // Forecast periods
+        if (data.forecast && data.forecast.length > 0) {
+            html += '<div class="weather-forecast">';
+            html += '<div class="weather-section-header" onclick="this.parentNode.classList.toggle(\'expanded\')">Forecast (' + data.forecast.length + ')</div>';
+            html += '<div class="weather-section-body">';
+            data.forecast.forEach(function (p) {
+                html += '<div class="forecast-period"><strong>' + escapeHtml(p.period) +
+                    '</strong> ' + escapeHtml(p.forecast) + '</div>';
+            });
+            html += '</div></div>';
+        }
 
         // Active alerts
         if (data.alerts && data.alerts.length > 0) {
@@ -175,12 +199,20 @@
         if (banner) banner.classList.add("hidden");
     };
 
+    WeatherPanel.prototype._field = function (label, value) {
+        return '<div class="weather-field">' +
+            '<span class="weather-field-label">' + label + '</span>' +
+            '<span class="weather-field-value">' + value + '</span>' +
+            '</div>';
+    };
+
     WeatherPanel.prototype._relativeTime = function (isoString) {
         if (!isoString) return "never";
         var then = new Date(isoString);
         var now = new Date();
-        var diffMs = now - then;
-        var diffS = Math.floor(diffMs / 1000);
+        var diffS = Math.floor((now - then) / 1000);
+        if (diffS < 0) diffS = 0;          // guard clock skew (was showing "-1s ago")
+        if (diffS < 5) return "just now";
         if (diffS < 60) return diffS + "s ago";
         var diffM = Math.floor(diffS / 60);
         if (diffM < 60) return diffM + " min ago";
