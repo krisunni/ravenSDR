@@ -830,3 +830,20 @@ select {
     border-color: var(--yellow);
     background: #3a2f1a;
 }
+
+/* ── ISM raw frame inspector ── */
+.ism-row { cursor: pointer; }
+.ism-row:hover { background: var(--surface); }
+
+.ism-raw-row > td { padding: 0; background: var(--bg); }
+
+.ism-raw {
+    margin: 0;
+    padding: 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    white-space: pre;
+    overflow-x: auto;
+    border-left: 2px solid var(--accent);
+}

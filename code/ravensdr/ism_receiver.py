@@ -15,6 +15,21 @@ log = logging.getLogger(__name__)
 DEFAULT_FREQUENCY = "433.92M"
 
 
+# Sensor readings we render with units/labels in the UI.
+KNOWN_READINGS = (
+    "temperature_C", "humidity", "wind_avg_km_h", "wind_dir_deg",
+    "rain_mm", "pressure_hPa", "battery_ok", "pressure_kPa",
+    "moisture", "depth_cm",
+)
+
+# Only fields that already have their own column are withheld from the passthrough.
+# Everything else is kept — including mod/freq/len, which are genuinely useful on
+# an RF intelligence node (e.g. the hop channel a frequency-hopping meter used).
+_NON_READING_KEYS = frozenset({
+    "model", "id", "channel", "time", "rssi", "snr",
+})
+
+
 class IsmReceiver(SubprocessDecoder):
     """Decode ISM-band sensor telemetry via rtl_433 -F json."""
 
@@ -41,7 +56,6 @@ class IsmReceiver(SubprocessDecoder):
         model = obj.get("model")
         if not model:
             return None
-        # Normalise the fields we display; keep the raw payload too.
         rec = {
             "model": model,
             "id": obj.get("id", obj.get("channel", "")),
@@ -51,11 +65,27 @@ class IsmReceiver(SubprocessDecoder):
             "snr": obj.get("snr"),
         }
         # Common sensor readings (present depending on device type)
-        for k in ("temperature_C", "humidity", "wind_avg_km_h", "wind_dir_deg",
-                  "rain_mm", "pressure_hPa", "battery_ok", "pressure_kPa",
-                  "moisture", "depth_cm"):
+        for k in KNOWN_READINGS:
             if k in obj:
                 rec[k] = obj[k]
+
+        # Anything else the decoder produced. rtl_433 supports ~250 protocols and
+        # only weather sensors report the fields above — utility meters
+        # (LandisGyr-GS, SCM, IDM), TPMS and remotes emit entirely different keys.
+        # Whitelisting alone silently discarded them, so such devices showed a
+        # blank READINGS column with no way to tell "nothing decoded" apart from
+        # "decoded, then dropped".
+        extra = {k: v for k, v in obj.items()
+                 if k not in _NON_READING_KEYS and k not in KNOWN_READINGS
+                 and not isinstance(v, (dict, list))}
+        if extra:
+            rec["extra"] = extra
+
+        # Keep the decoder's complete output. Nothing is discarded: the UI shows
+        # a summary inline and the full frame on click, so an unfamiliar device
+        # is always inspectable rather than reduced to whatever keys we happened
+        # to anticipate.
+        rec["raw"] = obj
         return rec
 
     def record_key(self, record):

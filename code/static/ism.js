@@ -6,6 +6,7 @@
     function IsmPanel(socket) {
         this.socket = socket;
         this.devices = [];
+        this._expanded = {};   // device key -> raw frame visible, survives re-render
         var self = this;
         // Full table snapshot (with TTL expiry) every few seconds
         this.socket.on("ism_update", function (list) {
@@ -29,6 +30,15 @@
         if (d.pressure_kPa != null) parts.push(d.pressure_kPa + "kPa");
         if (d.moisture != null) parts.push("moist " + d.moisture);
         if (d.battery_ok != null) parts.push("batt " + (d.battery_ok ? "ok" : "low"));
+        // Everything else the decoder produced. rtl_433 covers ~250 protocols and
+        // only weather sensors use the fields above — utility meters, TPMS and
+        // remotes emit entirely different keys, which used to be dropped so the
+        // row read "—" as if the decode had failed when it had actually worked.
+        if (d.extra) {
+            Object.keys(d.extra).sort().forEach(function (k) {
+                parts.push(k + "=" + d.extra[k]);
+            });
+        }
         return parts.join(" · ") || "—";
     }
 
@@ -51,8 +61,10 @@
             return;
         }
 
+        var self = this;
         this.devices.forEach(function (d) {
             var row = document.createElement("tr");
+            row.className = "ism-row";
             [
                 d.model || "?",
                 String(d.id != null ? d.id : ""),
@@ -65,6 +77,27 @@
                 row.appendChild(cell);
             });
             tbody.appendChild(row);
+
+            // Raw decoder frame, revealed on click. Nothing is dropped, so an
+            // unfamiliar device stays fully inspectable.
+            var key = (d.model || "?") + "/" + (d.id != null ? d.id : "");
+            var detail = document.createElement("tr");
+            detail.className = "ism-raw-row";
+            if (!self._expanded[key]) detail.classList.add("hidden");
+            var cell = document.createElement("td");
+            cell.colSpan = 5;
+            var pre = document.createElement("pre");
+            pre.className = "ism-raw";
+            pre.textContent = JSON.stringify(d.raw || d, null, 2);
+            cell.appendChild(pre);
+            detail.appendChild(cell);
+            tbody.appendChild(detail);
+
+            row.title = "Click to show the raw decoded frame";
+            row.addEventListener("click", function () {
+                self._expanded[key] = !self._expanded[key];
+                detail.classList.toggle("hidden", !self._expanded[key]);
+            });
         });
     };
 

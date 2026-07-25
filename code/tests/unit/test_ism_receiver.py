@@ -81,3 +81,44 @@ class TestRecordTable:
         assert "-d" in cmd and "1" in cmd
         assert "json" in cmd
         assert "915M" in cmd
+
+
+class TestNonWeatherPassthrough:
+    """Utility meters/TPMS emit fields no weather whitelist anticipates.
+
+    Regression: LandisGyr-GS smart meters rendered a blank READINGS column, which
+    was indistinguishable from a failed decode.
+    """
+
+    def _rx(self):
+        from ravensdr.ism_receiver import IsmReceiver
+        return IsmReceiver(device_index=0)
+
+    def test_unknown_fields_are_kept_as_extra(self):
+        import json
+        line = json.dumps({"model": "LandisGyr-GS", "id": "907b0418",
+                           "rssi": -12.1, "snr": 11.8,
+                           "packet_type": 2, "uptime": 41234})
+        rec = self._rx().parse_line(line)
+        assert rec["extra"]["packet_type"] == 2
+        assert rec["extra"]["uptime"] == 41234
+
+    def test_raw_frame_is_preserved_entirely(self):
+        import json
+        payload = {"model": "LandisGyr-GS", "id": "x", "mod": "FSK",
+                   "freq": 915.2, "len": 92}
+        rec = self._rx().parse_line(json.dumps(payload))
+        assert rec["raw"] == payload
+
+    def test_columns_are_not_duplicated_into_extra(self):
+        import json
+        rec = self._rx().parse_line(json.dumps(
+            {"model": "M", "id": "1", "rssi": -3.0, "snr": 9.0, "time": "t"}))
+        assert "extra" not in rec or not (
+            {"model", "id", "rssi", "snr", "time"} & set(rec["extra"]))
+
+    def test_weather_readings_still_normalised(self):
+        import json
+        rec = self._rx().parse_line(json.dumps(
+            {"model": "Oregon-v1", "id": 15, "temperature_C": 18.8}))
+        assert rec["temperature_C"] == 18.8

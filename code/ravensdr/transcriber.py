@@ -99,24 +99,28 @@ _HALLUCINATION_PHRASES = re.compile(
 _BRACKETED_RE = re.compile(r"^\s*[\[\(].+[\]\)]\s*$")
 
 
+def hallucination_reason(text):
+    """Return why `text` looks like a Whisper hallucination, or None to keep it."""
+    t = text.strip()
+    if len(t) <= 1:
+        return "too_short"
+    if _HALLUCINATION_PHRASES.match(t):
+        return "known_phrase"
+    if _BRACKETED_RE.match(t):
+        return "bracketed"
+    if re.match(r"^(.{1,4}[-–])\1{2,}$", t, re.IGNORECASE):
+        return "repetitive"
+    words = t.split()
+    if len(words) <= 2 and len(t) < 15:
+        return "short_fragment"
+    return None
+
+
 def _is_hallucination(text):
     """Return True if text is a known Whisper hallucination on noise."""
-    t = text.strip()
-    reason = None
-    if len(t) <= 1:
-        reason = "too_short"
-    elif _HALLUCINATION_PHRASES.match(t):
-        reason = "known_phrase"
-    elif _BRACKETED_RE.match(t):
-        reason = "bracketed"
-    elif re.match(r"^(.{1,4}[-–])\1{2,}$", t, re.IGNORECASE):
-        reason = "repetitive"
-    else:
-        words = t.split()
-        if len(words) <= 2 and len(t) < 15:
-            reason = "short_fragment"
+    reason = hallucination_reason(text)
     if reason:
-        log.debug("Hallucination filtered [%s]: %r", reason, t)
+        log.debug("Hallucination filtered [%s]: %r", reason, text.strip())
         return True
     return False
 
@@ -242,6 +246,9 @@ class Transcriber:
             "backend": "none",
             "chunks_processed": 0,
             "chunks_skipped_silence": 0,
+            "chunks_filtered": 0,
+            "last_filtered_text": None,
+            "last_filtered_reason": None,
             "total_tokens": 0,
             "last_encoder_ms": 0,
             "last_decoder_ms": 0,
@@ -426,6 +433,21 @@ class Transcriber:
             except Exception:
                 continue
 
+    def _note_filtered(self, text, reason):
+        """Record a transcript that was produced but withheld from the UI.
+
+        Whisper genuinely decodes noise into plausible-looking text, so the
+        filter is necessary — but dropping it silently made a working NPU look
+        like a dead one: stats showed chunks processed and tokens generated
+        while the operator saw an empty feed and no way to tell why. Counting
+        drops (and keeping the last one) distinguishes "nothing was heard" from
+        "something was heard and rejected".
+        """
+        self._stats["chunks_filtered"] = self._stats.get("chunks_filtered", 0) + 1
+        self._stats["last_filtered_text"] = (text or "").strip()[:200]
+        self._stats["last_filtered_reason"] = reason
+        log.info("Transcript filtered [%s]: %r", reason, (text or "").strip()[:120])
+
     def _make_segmenter(self):
         """Choose segmenter based on current preset configuration."""
         preset = self._current_preset or {}
@@ -481,7 +503,10 @@ class Transcriber:
                 })
                 self.emit_fn("inference_stats", self._stats)
 
-                if text and text.strip() and not _is_hallucination(text):
+                filtered = hallucination_reason(text) if text and text.strip() else "empty"
+                if filtered:
+                    self._note_filtered(text, filtered)
+                else:
                     preset = self._current_preset or {}
                     text_clean = text.strip()
                     text_clean, parsed_data = self._post_process(text_clean)
@@ -645,7 +670,11 @@ class Transcriber:
                                     self.emit_fn("inference_stats", self._stats)
 
                                     text = self._tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                                    if text and text.strip() and not _is_hallucination(text):
+                                    filtered = (hallucination_reason(text)
+                                                if text and text.strip() else "empty")
+                                    if filtered:
+                                        self._note_filtered(text, filtered)
+                                    else:
                                         preset = self._current_preset or {}
                                         text_clean = text.strip()
                                         text_clean, parsed_data = self._post_process(text_clean)
