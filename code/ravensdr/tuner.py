@@ -103,6 +103,17 @@ class Tuner:
         self._pid = None
         self._thread = None
         self._stop_event = threading.Event()
+        # Every rtl_fm pid we have spawned and not yet confirmed dead.
+        #
+        # self._pid alone is not enough to guarantee cleanup: _kill_pid() yields
+        # (time.sleep is green-patched), so two overlapping tune() calls from
+        # different greenthreads can interleave — A blocks in _kill_pid while B
+        # runs a full stop + Popen, then A resumes and clears self._pid,
+        # clobbering B's brand-new pid. That rtl_fm is then never killed and
+        # squats on the dongle, so every later tune/APT/pager decoder fails with
+        # usb_claim_interface -6 ("device busy"). Killing the whole set on stop
+        # makes the leak unreachable regardless of interleaving.
+        self._spawned_pids = set()
 
     # ── Properties (delegate to IQCapture or local state) ──
 
@@ -329,6 +340,7 @@ class Tuner:
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
             self._pid = self._process.pid
+            self._spawned_pids.add(self._pid)
         except FileNotFoundError:
             log.error("rtl_fm not found — is rtl-sdr installed?")
             raise
@@ -342,15 +354,22 @@ class Tuner:
     def _stop_rtlfm(self):
         self._stop_event.set()
         pid = self._pid
-        if pid:
-            if self._process:
-                for pipe in (self._process.stdout, self._process.stderr):
-                    try:
-                        pipe.close()
-                    except Exception:
-                        pass
-            _kill_pid(pid)
-            log.info("rtl_fm stopped (pid %d)", pid)
+        if self._process:
+            for pipe in (self._process.stdout, self._process.stderr):
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+        # Kill every pid we spawned, not just the current one — see _spawned_pids.
+        # Snapshot first: _kill_pid yields, so the set can be mutated underneath us.
+        for spawned in sorted(self._spawned_pids):
+            _kill_pid(spawned)
+            if spawned == pid:
+                log.info("rtl_fm stopped (pid %d)", spawned)
+            else:
+                log.warning("Reaped orphaned rtl_fm (pid %d) — it was holding the "
+                            "SDR and would have blocked later tunes", spawned)
+            self._spawned_pids.discard(spawned)
         self._process = None
         self._pid = None
         if self._thread is not None:

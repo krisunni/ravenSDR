@@ -68,6 +68,24 @@ pytest code/tests/unit/
 pytest code/tests/integration/
 ```
 
+## Running 24x7 (deployed node)
+ravenSDR runs as a systemd unit, `ravensdr.service` (enabled at boot,
+`Restart=always`). Do not launch a second copy alongside it — both will fight
+for the RTL-SDR dongle (`usb_claim_interface error -6`).
+
+```bash
+sudo systemctl restart ravensdr   # after code changes
+./code/scripts/start.sh           # start (wraps systemctl)
+./code/scripts/stop.sh            # stop
+./code/scripts/logs.sh            # follow logs (errors | sat | today)
+journalctl -u ravensdr -f         # same, raw
+```
+
+Logs go to journald, **not** `ravensdr.log`. On startup the app auto-tunes the
+last preset tuned from the UI (`code/ravensdr/config.json` → `last_preset`);
+pin one with `startup.default_preset`, or set `startup.auto_tune: false` to
+start idle.
+
 ## Implementation Phases
 1. System Dependencies & Environment Setup
 2. Input Source Abstraction (SDR + Web Stream)

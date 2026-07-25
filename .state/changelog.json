@@ -1,20 +1,171 @@
 {
   "versions": [
     {
+      "version": "1.2.0",
+      "date": "2026-07-25",
+      "status": "in-progress",
+      "changes": [
+        {
+          "type": "fixed",
+          "description": "Orphaned rtl_fm holding the RTL-SDR: overlapping tune requests raced because _kill_pid yields, letting one greenthread clear self._pid after another stored a fresh one. Tuner now tracks every spawned pid and kills the whole set on stop. The orphan had held the dongle 17 min, breaking the pager decoder, the 16:41Z NOAA-15 APT pass, and all tuning",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "fixed",
+          "description": "APT mode no longer pins the SDR for a whole ~15 min pass when the capture never starts: _exit_apt polls apt_decoder.is_recording with a 20s startup grace instead of blind-sleeping duration+30",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "fixed",
+          "description": "Piped decoders (pager/ISM/ACARS) misreported a busy dongle as a missing binary. SubprocessDecoder now checks the source process first and keeps its stderr, so usb_claim_interface -6 is surfaced instead of blamed on multimon-ng",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "ipc.py \u2014 NDJSON UI<->radio protocol: codec, FrameBuffer with 4MB desync guard, CommandRegistry that converts raising handlers into error responses",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "ipc_server.py \u2014 radio-side Unix-socket server on real threads (no eventlet), multi-client event fan-out, stale-socket-file recovery",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "radio_link.py \u2014 UI-side client with exponential-backoff reconnect and observable LINK UP/DOWN telemetry; commands fail fast while down instead of hanging",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "sdr_arbiter.py \u2014 serialized, coalescing SDR command queue with command-and-control states (LOCKED/SWITCHING/FAULT); five rapid clicks move the hardware once, to the final target",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "fixed",
+          "description": "IPC sockets are shutdown() before close(): a thread blocked in recv() keeps the socket alive and suppresses FIN, which would leave every UI reporting LINK UP forever after the radio exited",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "Phase 18 plan and design.md section 3.9 documenting the two-process UI/radio architecture, command surface, and failure modes",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "Radio-side IPC command surface in app.py (status, sdr_state, presets, tune, stop, squelch, gain) plus fan-out of every Socket.IO event to connected UI processes",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "ui_app.py \u2014 the console process: serves templates/static, forwards commands over IPC, relays radio events to browsers, resyncs on reconnect, and proxies not-yet-migrated /api/* routes to the radio over HTTP. Owns no hardware",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "operations/ravensdr-ui.service \u2014 Wants= (never Requires=) the radio, so the console starts even when the radio is broken",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "C2 header panel: ACTUAL vs CMD, state lamp (LOCKED/SWITCHING/FAULT), LINK lamp, and an amber pending highlight on the in-flight preset button",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "fixed",
+          "description": "IPC socket path resolution no longer consults XDG_RUNTIME_DIR: systemd does not set it, so the daemon resolved /tmp/ravensdr/radio.sock while an interactive shell resolved /run/user/1000/... and the client sat at LINK DOWN against a healthy radio",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "fixed",
+          "description": "Cross-thread greenlet crash: logging handler locks are now real RLocks (monkey_patch made them green semaphores, so a real thread merely calling log.info crashed the hub and killed both the meteor detector and the in-flight /api/tune request)",
+          "date": "2026-07-25"
+        },
+        {
+          "type": "added",
+          "description": "emit_bridge.py \u2014 ThreadSafeEmitter hands events from real OS threads to a greenthread drain instead of calling socketio.emit across threads",
+          "date": "2026-07-25"
+        }
+      ]
+    },
+    {
+      "version": "1.1.1",
+      "date": "2026-07-23",
+      "status": "superseded",
+      "changes": [
+        {
+          "type": "fixed",
+          "description": "NOAA APT satellite imagery end-to-end (TLE lookup, decoder invocation, pass triggering)",
+          "date": "2026-07-23"
+        }
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-07-23",
+      "status": "superseded",
+      "changes": [
+        {
+          "type": "added",
+          "description": "NOAA weather broadcast accumulator",
+          "date": "2026-07-23"
+        }
+      ]
+    },
+    {
       "version": "1.0.0",
       "date": "2026-03-21",
       "status": "running",
       "changes": [
-        {"type": "added", "description": "Persistent config system (config.json) for secondary dongle assignment — meteor detector, ADS-B, or WEFAX can be assigned to dongle 2 via UI dropdown or /api/config/secondary endpoint", "date": "2026-03-21"},
-        {"type": "added", "description": "Secondary dongle config UI in header — dropdown selector with status indicator, persists across restarts", "date": "2026-03-21"},
-        {"type": "added", "description": "Signal classifier and SEI panels wired into main UI (index.html) — always-visible when receiving audio, hidden on WEFAX/Science/ADS-B-only tabs", "date": "2026-03-21"},
-        {"type": "added", "description": "Version badge displayed in UI header from backend VERSION constant", "date": "2026-03-21"},
-        {"type": "changed", "description": "WEFAX receiver: added 2s startup health check for rtl_fm process, robust finally-block cleanup to prevent orphaned processes holding USB device", "date": "2026-03-21"},
-        {"type": "changed", "description": "WEFAX receiver: build_rtl_fm_cmd now instance method using self.device_index for multi-dongle support", "date": "2026-03-21"},
-        {"type": "changed", "description": "WEFAX scheduler: expanded priority chart types to include 48hr, 96hr, 144hr forecasts and wave charts; widened trigger window from ±10s to ±60s to prevent missed broadcasts; added dedup set to prevent double-triggers", "date": "2026-03-21"},
-        {"type": "changed", "description": "InputSource enter_apt_mode/enter_wefax_mode: always stop source to release USB device, even if not marked as running", "date": "2026-03-21"},
-        {"type": "changed", "description": "App startup: meteor detector and ADS-B stopped before WEFAX recording in single-dongle mode to prevent device contention", "date": "2026-03-21"},
-        {"type": "changed", "description": "Audio-related UI sections (signal, stats, classifier, SEI, controls) hidden on non-audio tabs (WEFAX, Science, ADS-B only, AIS only)", "date": "2026-03-21"}
+        {
+          "type": "added",
+          "description": "Persistent config system (config.json) for secondary dongle assignment \u2014 meteor detector, ADS-B, or WEFAX can be assigned to dongle 2 via UI dropdown or /api/config/secondary endpoint",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "added",
+          "description": "Secondary dongle config UI in header \u2014 dropdown selector with status indicator, persists across restarts",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "added",
+          "description": "Signal classifier and SEI panels wired into main UI (index.html) \u2014 always-visible when receiving audio, hidden on WEFAX/Science/ADS-B-only tabs",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "added",
+          "description": "Version badge displayed in UI header from backend VERSION constant",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "changed",
+          "description": "WEFAX receiver: added 2s startup health check for rtl_fm process, robust finally-block cleanup to prevent orphaned processes holding USB device",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "changed",
+          "description": "WEFAX receiver: build_rtl_fm_cmd now instance method using self.device_index for multi-dongle support",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "changed",
+          "description": "WEFAX scheduler: expanded priority chart types to include 48hr, 96hr, 144hr forecasts and wave charts; widened trigger window from \u00b110s to \u00b160s to prevent missed broadcasts; added dedup set to prevent double-triggers",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "changed",
+          "description": "InputSource enter_apt_mode/enter_wefax_mode: always stop source to release USB device, even if not marked as running",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "changed",
+          "description": "App startup: meteor detector and ADS-B stopped before WEFAX recording in single-dongle mode to prevent device contention",
+          "date": "2026-03-21"
+        },
+        {
+          "type": "changed",
+          "description": "Audio-related UI sections (signal, stats, classifier, SEI, controls) hidden on non-audio tabs (WEFAX, Science, ADS-B only, AIS only)",
+          "date": "2026-03-21"
+        }
       ]
     },
     {
@@ -22,18 +173,66 @@
       "date": "2026-03-17",
       "status": "running",
       "changes": [
-        {"type": "changed", "description": "Replaced rtl_fm subprocess with pyrtlsdr direct IQ capture as main audio pipeline. Raw IQ samples now flow to signal classifier, IQ segmenter, SEI emitter fingerprinter, and live spectrogram waterfall in real time. Demodulated PCM audio still flows to Whisper transcriber and browser audio stream unchanged.", "date": "2026-03-17"},
-        {"type": "added", "description": "Dual-path Tuner: auto-detects pyrtlsdr at startup, delegates all methods to IQCapture when available, falls back to rtl_fm subprocess unchanged if pyrtlsdr not installed", "date": "2026-03-17"},
-        {"type": "added", "description": "Python DSP pipeline in iq_capture.py: FM demod (conjugate product discriminator), AM demod (envelope detection), WFM demod, squelch gate (RMS thresholding), de-emphasis filter (75μs single-pole IIR), frequency string parser", "date": "2026-03-17"},
-        {"type": "added", "description": "Live IQ pipeline wiring in app.py: IQSegmenter detects transmission boundaries every chunk, signal classifier runs every 500ms, spectrogram_row Socket.IO event emitted every 300ms for waterfall UI", "date": "2026-03-17"},
-        {"type": "added", "description": "Spectrogram waterfall now renders live data — classifier.js binds spectrogram_row event to existing _renderWaterfall() method", "date": "2026-03-17"},
-        {"type": "added", "description": "InputSource.set_iq_callback() passthrough for wiring raw IQ from Tuner to classifier pipeline", "date": "2026-03-17"},
-        {"type": "added", "description": "Environment variables CLASSIFIER_HEF_PATH, CLASSIFIER_CLASSES_PATH, SEI_HEF_PATH for NPU model deployment without code changes", "date": "2026-03-17"},
-        {"type": "added", "description": "NPU model training guide (operations/npu-model-training.md): Mac ARM64 training workflow, 7-step classifier pipeline, 6-step SEI pipeline, HEF compilation via Docker/DFC, deployment instructions, troubleshooting", "date": "2026-03-17"},
-        {"type": "changed", "description": "IQ capture sample rate reduced from 2.4 MHz to 240 kHz (matches rtl_fm 200k bandwidth, reduces CPU load on Pi 5)", "date": "2026-03-17"},
-        {"type": "changed", "description": "setup.sh: added pip install pyrtlsdr, signal classifier and SEI data directories", "date": "2026-03-17"},
-        {"type": "added", "description": "Unit tests: 34 new tests for DSP functions (freq parsing, FM/AM/WFM demod, squelch, de-emphasis, PCM conversion, IQCapture interface)", "date": "2026-03-17"},
-        {"type": "fixed", "description": "Meteor detector, APT decoder, WEFAX receiver unchanged — keep independent rtl_fm instances (different sample rates, pipe to sox/fldigi)", "date": "2026-03-17"}
+        {
+          "type": "changed",
+          "description": "Replaced rtl_fm subprocess with pyrtlsdr direct IQ capture as main audio pipeline. Raw IQ samples now flow to signal classifier, IQ segmenter, SEI emitter fingerprinter, and live spectrogram waterfall in real time. Demodulated PCM audio still flows to Whisper transcriber and browser audio stream unchanged.",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Dual-path Tuner: auto-detects pyrtlsdr at startup, delegates all methods to IQCapture when available, falls back to rtl_fm subprocess unchanged if pyrtlsdr not installed",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Python DSP pipeline in iq_capture.py: FM demod (conjugate product discriminator), AM demod (envelope detection), WFM demod, squelch gate (RMS thresholding), de-emphasis filter (75\u03bcs single-pole IIR), frequency string parser",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Live IQ pipeline wiring in app.py: IQSegmenter detects transmission boundaries every chunk, signal classifier runs every 500ms, spectrogram_row Socket.IO event emitted every 300ms for waterfall UI",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Spectrogram waterfall now renders live data \u2014 classifier.js binds spectrogram_row event to existing _renderWaterfall() method",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "InputSource.set_iq_callback() passthrough for wiring raw IQ from Tuner to classifier pipeline",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Environment variables CLASSIFIER_HEF_PATH, CLASSIFIER_CLASSES_PATH, SEI_HEF_PATH for NPU model deployment without code changes",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "NPU model training guide (operations/npu-model-training.md): Mac ARM64 training workflow, 7-step classifier pipeline, 6-step SEI pipeline, HEF compilation via Docker/DFC, deployment instructions, troubleshooting",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "changed",
+          "description": "IQ capture sample rate reduced from 2.4 MHz to 240 kHz (matches rtl_fm 200k bandwidth, reduces CPU load on Pi 5)",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "changed",
+          "description": "setup.sh: added pip install pyrtlsdr, signal classifier and SEI data directories",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Unit tests: 34 new tests for DSP functions (freq parsing, FM/AM/WFM demod, squelch, de-emphasis, PCM conversion, IQCapture interface)",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "fixed",
+          "description": "Meteor detector, APT decoder, WEFAX receiver unchanged \u2014 keep independent rtl_fm instances (different sample rates, pipe to sox/fldigi)",
+          "date": "2026-03-17"
+        }
       ]
     },
     {
@@ -41,21 +240,81 @@
       "date": "2026-03-17",
       "status": "running",
       "changes": [
-        {"type": "added", "description": "Phase 16 — Signal Classification via Spectrogram CNN: real-time modulation identification (AM, FM, WFM, SSB, P25, DMR, ADS-B, NOAA APT, WEFAX, CW) from IQ spectrograms using MobileNetV2 on Hailo-8L NPU with CPU heuristic fallback", "date": "2026-03-17"},
-        {"type": "added", "description": "signal_classifier.py — IQ-to-spectrogram conversion (256-point FFT, Hann window, 50% overlap), spectrogram normalization to 224x224 uint8, Hailo inference wrapper, confidence thresholding (>0.7), uncertainty detection, self-supervised sample collection", "date": "2026-03-17"},
-        {"type": "added", "description": "iq_capture.py — direct IQ capture via pyrtlsdr bypassing rtl_fm, FM/AM demodulation from raw IQ, device mutex to prevent concurrent access with rtl_fm", "date": "2026-03-17"},
-        {"type": "added", "description": "ML training pipeline (code/ml/signal_classifier/) — RadioML 2018.01A dataset loader, MobileNetV2 fine-tuning with differential learning rates, ONNX export, Hailo DFC compilation for HAILO8L, model evaluation with confusion matrix", "date": "2026-03-17"},
-        {"type": "added", "description": "Signal classification panel UI (classifier.js + classifier.css) — always-visible panel with current modulation type, confidence bar, spectrogram waterfall canvas, scrolling classification history, accuracy tracker vs preset ground truth", "date": "2026-03-17"},
-        {"type": "added", "description": "expected_modulation field added to all 19 frequency presets for ground truth comparison and self-supervised labeling", "date": "2026-03-17"},
-        {"type": "added", "description": "GET /api/classifier/status endpoint and signal_classified Socket.IO event", "date": "2026-03-17"},
-        {"type": "added", "description": "Phase 17 — Specific Emitter Identification (SEI): passive RF fingerprinting via 1D CNN + attention on raw IQ, 128-dimensional embedding vectors, cosine similarity matching against local emitter database, automatic enrollment of new emitters", "date": "2026-03-17"},
-        {"type": "added", "description": "sei_model.py — Hailo-8L inference for 128-dim embeddings, cosine similarity matcher (threshold 0.85), emitter database with atomic JSON persistence, exponential moving average centroid updates, sequential ID assignment (EMITTER-001, etc)", "date": "2026-03-17"},
-        {"type": "added", "description": "iq_segmenter.py — transmission boundary detection from continuous IQ stream using power thresholding with hysteresis, ring buffer, SNR estimation, min/max duration filtering (50ms–30s)", "date": "2026-03-17"},
-        {"type": "added", "description": "SEI ML training pipeline (code/ml/sei/) — ADS-B-labeled IQ collection script, 1D CNN + SE attention triplet loss training, ONNX export, Hailo DFC compilation, rank-1/rank-5 accuracy evaluation", "date": "2026-03-17"},
-        {"type": "added", "description": "Emitter tracking panel UI (sei.js + sei.css) — always-visible panel with known emitters table (sortable, inline label editing), re-identification feed with ID/NEW badges, new emitter alerts, database statistics", "date": "2026-03-17"},
-        {"type": "added", "description": "GET /api/emitters (paginated), GET /api/emitters/<id>, POST /api/emitters/<id>/label, GET /api/sei/status endpoints and emitter_identified, new_emitter Socket.IO events", "date": "2026-03-17"},
-        {"type": "added", "description": "Classifier-to-SEI pipeline wiring: classify_segment() method, _forward_to_sei() with confidence/SNR/duration gating", "date": "2026-03-17"},
-        {"type": "added", "description": "Unit tests: 21 signal classifier tests + 10 IQ segmenter tests + 22 SEI model tests. Integration tests: 7 classifier pipeline + 7 SEI pipeline (67 new tests total)", "date": "2026-03-17"}
+        {
+          "type": "added",
+          "description": "Phase 16 \u2014 Signal Classification via Spectrogram CNN: real-time modulation identification (AM, FM, WFM, SSB, P25, DMR, ADS-B, NOAA APT, WEFAX, CW) from IQ spectrograms using MobileNetV2 on Hailo-8L NPU with CPU heuristic fallback",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "signal_classifier.py \u2014 IQ-to-spectrogram conversion (256-point FFT, Hann window, 50% overlap), spectrogram normalization to 224x224 uint8, Hailo inference wrapper, confidence thresholding (>0.7), uncertainty detection, self-supervised sample collection",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "iq_capture.py \u2014 direct IQ capture via pyrtlsdr bypassing rtl_fm, FM/AM demodulation from raw IQ, device mutex to prevent concurrent access with rtl_fm",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "ML training pipeline (code/ml/signal_classifier/) \u2014 RadioML 2018.01A dataset loader, MobileNetV2 fine-tuning with differential learning rates, ONNX export, Hailo DFC compilation for HAILO8L, model evaluation with confusion matrix",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Signal classification panel UI (classifier.js + classifier.css) \u2014 always-visible panel with current modulation type, confidence bar, spectrogram waterfall canvas, scrolling classification history, accuracy tracker vs preset ground truth",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "expected_modulation field added to all 19 frequency presets for ground truth comparison and self-supervised labeling",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "GET /api/classifier/status endpoint and signal_classified Socket.IO event",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Phase 17 \u2014 Specific Emitter Identification (SEI): passive RF fingerprinting via 1D CNN + attention on raw IQ, 128-dimensional embedding vectors, cosine similarity matching against local emitter database, automatic enrollment of new emitters",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "sei_model.py \u2014 Hailo-8L inference for 128-dim embeddings, cosine similarity matcher (threshold 0.85), emitter database with atomic JSON persistence, exponential moving average centroid updates, sequential ID assignment (EMITTER-001, etc)",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "iq_segmenter.py \u2014 transmission boundary detection from continuous IQ stream using power thresholding with hysteresis, ring buffer, SNR estimation, min/max duration filtering (50ms\u201330s)",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "SEI ML training pipeline (code/ml/sei/) \u2014 ADS-B-labeled IQ collection script, 1D CNN + SE attention triplet loss training, ONNX export, Hailo DFC compilation, rank-1/rank-5 accuracy evaluation",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Emitter tracking panel UI (sei.js + sei.css) \u2014 always-visible panel with known emitters table (sortable, inline label editing), re-identification feed with ID/NEW badges, new emitter alerts, database statistics",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "GET /api/emitters (paginated), GET /api/emitters/<id>, POST /api/emitters/<id>/label, GET /api/sei/status endpoints and emitter_identified, new_emitter Socket.IO events",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Classifier-to-SEI pipeline wiring: classify_segment() method, _forward_to_sei() with confidence/SNR/duration gating",
+          "date": "2026-03-17"
+        },
+        {
+          "type": "added",
+          "description": "Unit tests: 21 signal classifier tests + 10 IQ segmenter tests + 22 SEI model tests. Integration tests: 7 classifier pipeline + 7 SEI pipeline (67 new tests total)",
+          "date": "2026-03-17"
+        }
       ]
     },
     {
@@ -63,20 +322,76 @@
       "date": "2026-03-16",
       "status": "running",
       "changes": [
-        {"type": "added", "description": "Phase 14 — WEFAX Weather Fax: HF direct sampling receiver (-D 2 Q-branch), fldigi WEFAX decode via Xvfb, NMC/NOJ broadcast scheduler with time-of-day frequency selection, chart history and filter UI", "date": "2026-03-16"},
-        {"type": "added", "description": "wefax_scheduler.py — hardcoded NMC Point Reyes and NOJ Kodiak schedules, 5-min advance Socket.IO notification, priority tagging for surface analysis and 24hr forecast charts", "date": "2026-03-16"},
-        {"type": "added", "description": "wefax_receiver.py — rtl_fm USB demod with -1.9 kHz offset, sox WAV pipeline, fldigi headless decode, structured PNG filename output, image history API", "date": "2026-03-16"},
-        {"type": "added", "description": "WEFAX panel UI (wefax.js + wefax.css) — broadcast schedule with station/frequency badges, countdown, active reception indicator, decoded chart display, chart type filter buttons, thumbnail history", "date": "2026-03-16"},
-        {"type": "added", "description": "InputSource WEFAX mode — enter/exit with preset restore, APT satellite pass priority enforcement", "date": "2026-03-16"},
-        {"type": "added", "description": "GET /api/wefax/latest, /api/wefax/schedule, /api/wefax/history endpoints and wefax_broadcast_upcoming, wefax_image_ready Socket.IO events", "date": "2026-03-16"},
-        {"type": "added", "description": "Phase 15 — Passive Meteor Scatter Detection: forward scatter carrier power monitor, threshold-based burst detection, underdense/overdense trail classification, shower calendar correlation", "date": "2026-03-16"},
-        {"type": "added", "description": "meteor_detector.py — IQ power monitoring via rtl_fm, rolling 30s baseline, configurable dB threshold, duration filtering (50ms–30s), trail type classification, JSON event log", "date": "2026-03-16"},
-        {"type": "added", "description": "meteor_analyzer.py — 7-shower annual calendar (Quadrantids through Geminids), active shower tagging, hourly/daily rate stats, session statistics with peak rate and U/O ratio", "date": "2026-03-16"},
-        {"type": "added", "description": "Meteor panel UI (meteor.js + meteor.css) — real-time event feed with trail badges, 24hr rate bar chart on canvas, shower context, stats grid, target frequency display", "date": "2026-03-16"},
-        {"type": "added", "description": "Dual dongle meteor mode (METEOR_DUAL_DONGLE=true) — device 1 runs 24/7 independent of main pipeline. Single dongle mode at background priority", "date": "2026-03-16"},
-        {"type": "added", "description": "GET /api/meteor/events (paginated, filterable), /api/meteor/stats, /api/meteor/showers endpoints and meteor_detection, meteor_stats_update Socket.IO events", "date": "2026-03-16"},
-        {"type": "changed", "description": "setup.sh — added fldigi and Xvfb install steps for WEFAX headless decode, WEFAX directory creation, HF antenna guidance", "date": "2026-03-16"},
-        {"type": "added", "description": "Unit tests: 49 WEFAX tests (scheduler frequency selection, schedule parsing, receiver commands) + 47 meteor tests (threshold, classification, shower calendar, rate stats)", "date": "2026-03-16"}
+        {
+          "type": "added",
+          "description": "Phase 14 \u2014 WEFAX Weather Fax: HF direct sampling receiver (-D 2 Q-branch), fldigi WEFAX decode via Xvfb, NMC/NOJ broadcast scheduler with time-of-day frequency selection, chart history and filter UI",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "wefax_scheduler.py \u2014 hardcoded NMC Point Reyes and NOJ Kodiak schedules, 5-min advance Socket.IO notification, priority tagging for surface analysis and 24hr forecast charts",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "wefax_receiver.py \u2014 rtl_fm USB demod with -1.9 kHz offset, sox WAV pipeline, fldigi headless decode, structured PNG filename output, image history API",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "WEFAX panel UI (wefax.js + wefax.css) \u2014 broadcast schedule with station/frequency badges, countdown, active reception indicator, decoded chart display, chart type filter buttons, thumbnail history",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "InputSource WEFAX mode \u2014 enter/exit with preset restore, APT satellite pass priority enforcement",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "GET /api/wefax/latest, /api/wefax/schedule, /api/wefax/history endpoints and wefax_broadcast_upcoming, wefax_image_ready Socket.IO events",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "Phase 15 \u2014 Passive Meteor Scatter Detection: forward scatter carrier power monitor, threshold-based burst detection, underdense/overdense trail classification, shower calendar correlation",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "meteor_detector.py \u2014 IQ power monitoring via rtl_fm, rolling 30s baseline, configurable dB threshold, duration filtering (50ms\u201330s), trail type classification, JSON event log",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "meteor_analyzer.py \u2014 7-shower annual calendar (Quadrantids through Geminids), active shower tagging, hourly/daily rate stats, session statistics with peak rate and U/O ratio",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "Meteor panel UI (meteor.js + meteor.css) \u2014 real-time event feed with trail badges, 24hr rate bar chart on canvas, shower context, stats grid, target frequency display",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "Dual dongle meteor mode (METEOR_DUAL_DONGLE=true) \u2014 device 1 runs 24/7 independent of main pipeline. Single dongle mode at background priority",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "GET /api/meteor/events (paginated, filterable), /api/meteor/stats, /api/meteor/showers endpoints and meteor_detection, meteor_stats_update Socket.IO events",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "changed",
+          "description": "setup.sh \u2014 added fldigi and Xvfb install steps for WEFAX headless decode, WEFAX directory creation, HF antenna guidance",
+          "date": "2026-03-16"
+        },
+        {
+          "type": "added",
+          "description": "Unit tests: 49 WEFAX tests (scheduler frequency selection, schedule parsing, receiver commands) + 47 meteor tests (threshold, classification, shower calendar, rate stats)",
+          "date": "2026-03-16"
+        }
       ]
     },
     {
@@ -84,15 +399,51 @@
       "date": "2026-03-02",
       "status": "running",
       "changes": [
-        {"type": "fixed", "description": "RTL-SDR Blog V4 driver — stock Debian librtlsdr causes PLL not locked on R828D tuner. Setup now builds patched driver from rtlsdrblog/rtl-sdr-blog, reinstalls after dump1090", "date": "2026-03-02"},
-        {"type": "fixed", "description": "Whisper decode prefix — Hailo NPU decoder seeded with full prefix (<|startoftranscript|> <|en|> <|transcribe|> <|notimestamps|>) instead of just start token. Decoder now produces real transcriptions (28/32 tokens)", "date": "2026-03-02"},
-        {"type": "fixed", "description": "Signal meter flickering — heartbeat loop no longer emits rms:0 every 500ms, only resets on stop transition", "date": "2026-03-02"},
-        {"type": "fixed", "description": "ADS-B scan scheduler — uses eventlet.spawn instead of threading.Thread to avoid greenlet cross-thread errors", "date": "2026-03-02"},
-        {"type": "fixed", "description": "ADS-B scans only activate on Aviation presets, no longer interrupt Weather/Broadcast/Marine", "date": "2026-03-02"},
-        {"type": "fixed", "description": "NOAA Weather presets changed from wbfm to fm (narrowband FM)", "date": "2026-03-02"},
-        {"type": "added", "description": "Antenna guide (operations/antenna-guide.md) — element lengths, orientation diagrams, positioning, PLL troubleshooting", "date": "2026-03-02"},
-        {"type": "added", "description": "System diagram (operations/system-diagram.md) — physical setup, software architecture, data flow, hardware stack", "date": "2026-03-02"},
-        {"type": "added", "description": "Squelch & Gain tooltip info icons, satellite panel Weather-only visibility, audio auto-stop on source stop", "date": "2026-03-02"}
+        {
+          "type": "fixed",
+          "description": "RTL-SDR Blog V4 driver \u2014 stock Debian librtlsdr causes PLL not locked on R828D tuner. Setup now builds patched driver from rtlsdrblog/rtl-sdr-blog, reinstalls after dump1090",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "fixed",
+          "description": "Whisper decode prefix \u2014 Hailo NPU decoder seeded with full prefix (<|startoftranscript|> <|en|> <|transcribe|> <|notimestamps|>) instead of just start token. Decoder now produces real transcriptions (28/32 tokens)",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "fixed",
+          "description": "Signal meter flickering \u2014 heartbeat loop no longer emits rms:0 every 500ms, only resets on stop transition",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "fixed",
+          "description": "ADS-B scan scheduler \u2014 uses eventlet.spawn instead of threading.Thread to avoid greenlet cross-thread errors",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "fixed",
+          "description": "ADS-B scans only activate on Aviation presets, no longer interrupt Weather/Broadcast/Marine",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "fixed",
+          "description": "NOAA Weather presets changed from wbfm to fm (narrowband FM)",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "added",
+          "description": "Antenna guide (operations/antenna-guide.md) \u2014 element lengths, orientation diagrams, positioning, PLL troubleshooting",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "added",
+          "description": "System diagram (operations/system-diagram.md) \u2014 physical setup, software architecture, data flow, hardware stack",
+          "date": "2026-03-02"
+        },
+        {
+          "type": "added",
+          "description": "Squelch & Gain tooltip info icons, satellite panel Weather-only visibility, audio auto-stop on source stop",
+          "date": "2026-03-02"
+        }
       ]
     },
     {
@@ -100,19 +451,71 @@
       "date": "2026-03-01",
       "status": "running",
       "changes": [
-        {"type": "added", "description": "Phase 12 complete — NOAA weather radio integration: continuous 162.550 MHz monitoring, NWS broadcast transcript parser (temperature, wind, visibility, alerts, marine forecasts), weather conditions panel UI with priority alert banners, 30s squelch-zero segmenter, weather preset", "date": "2026-03-01"},
-        {"type": "added", "description": "noaa_parser.py — structured NWS broadcast parser: regex extraction for temperature, wind, humidity, visibility, marine forecasts, and priority alerts (warnings/watches)", "date": "2026-03-01"},
-        {"type": "added", "description": "weather.js — WeatherPanel class with live conditions display, priority alert banners (pulsing red), marine forecast section, auto-refresh on weather_update Socket.IO events", "date": "2026-03-01"},
-        {"type": "added", "description": "Continuous capture mode — 30s audio segmenter for squelch-zero NOAA broadcasts, weather callback pipeline from transcriber to parser to UI", "date": "2026-03-01"},
-        {"type": "added", "description": "Phase 13 complete — NOAA APT satellite imaging: auto-scheduled pass recording for NOAA-15/19 at 137 MHz, orbital prediction with ephem + Celestrak TLEs, rtl_fm wideband FM capture at 60k sample rate, noaa-apt CLI decoding to PNG", "date": "2026-03-01"},
-        {"type": "added", "description": "apt_scheduler.py — TLE-based pass prediction using PyEphem, 24h lookahead, 20° minimum elevation filter, Celestrak TLE refresh (24h cache), background scheduling loop with 10-min advance notification", "date": "2026-03-01"},
-        {"type": "added", "description": "apt_decoder.py — APT pass recorder using rtl_fm + sox pipeline, 11025 Hz sample rate, noaa-apt CLI decode with auto-rotate, decoded PNG storage, image history tracking", "date": "2026-03-01"},
-        {"type": "added", "description": "satellite.js + satellite.css — SatellitePanel UI: upcoming pass list with elevation indicators, countdown timer, recording progress bar, decoded image display with click-to-expand, image history thumbnails", "date": "2026-03-01"},
-        {"type": "added", "description": "InputSource APT mode — enter_apt_mode/exit_apt_mode methods for exclusive SDR access during satellite passes, automatic preset restore after recording", "date": "2026-03-01"},
-        {"type": "added", "description": "GET /api/satellite/passes and /api/satellite/latest-image endpoints for satellite pass schedule and decoded image retrieval", "date": "2026-03-01"},
-        {"type": "added", "description": "Unit tests for NOAA parser (24 tests), APT scheduler (TLE parsing, pass prediction, elevation filtering), APT decoder (command construction, state management), integration test for APT pipeline", "date": "2026-03-01"},
-        {"type": "changed", "description": "setup.sh — added ephem pip install, noaa-apt CLI install (apt or Rust build), APT directory creation (/tmp/ravensdr/apt/, static/images/apt/)", "date": "2026-03-01"},
-        {"type": "changed", "description": "requirements.txt — added ephem>=4.1.0 for orbital mechanics", "date": "2026-03-01"}
+        {
+          "type": "added",
+          "description": "Phase 12 complete \u2014 NOAA weather radio integration: continuous 162.550 MHz monitoring, NWS broadcast transcript parser (temperature, wind, visibility, alerts, marine forecasts), weather conditions panel UI with priority alert banners, 30s squelch-zero segmenter, weather preset",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "noaa_parser.py \u2014 structured NWS broadcast parser: regex extraction for temperature, wind, humidity, visibility, marine forecasts, and priority alerts (warnings/watches)",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "weather.js \u2014 WeatherPanel class with live conditions display, priority alert banners (pulsing red), marine forecast section, auto-refresh on weather_update Socket.IO events",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "Continuous capture mode \u2014 30s audio segmenter for squelch-zero NOAA broadcasts, weather callback pipeline from transcriber to parser to UI",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "Phase 13 complete \u2014 NOAA APT satellite imaging: auto-scheduled pass recording for NOAA-15/19 at 137 MHz, orbital prediction with ephem + Celestrak TLEs, rtl_fm wideband FM capture at 60k sample rate, noaa-apt CLI decoding to PNG",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "apt_scheduler.py \u2014 TLE-based pass prediction using PyEphem, 24h lookahead, 20\u00b0 minimum elevation filter, Celestrak TLE refresh (24h cache), background scheduling loop with 10-min advance notification",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "apt_decoder.py \u2014 APT pass recorder using rtl_fm + sox pipeline, 11025 Hz sample rate, noaa-apt CLI decode with auto-rotate, decoded PNG storage, image history tracking",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "satellite.js + satellite.css \u2014 SatellitePanel UI: upcoming pass list with elevation indicators, countdown timer, recording progress bar, decoded image display with click-to-expand, image history thumbnails",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "InputSource APT mode \u2014 enter_apt_mode/exit_apt_mode methods for exclusive SDR access during satellite passes, automatic preset restore after recording",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "GET /api/satellite/passes and /api/satellite/latest-image endpoints for satellite pass schedule and decoded image retrieval",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "added",
+          "description": "Unit tests for NOAA parser (24 tests), APT scheduler (TLE parsing, pass prediction, elevation filtering), APT decoder (command construction, state management), integration test for APT pipeline",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "changed",
+          "description": "setup.sh \u2014 added ephem pip install, noaa-apt CLI install (apt or Rust build), APT directory creation (/tmp/ravensdr/apt/, static/images/apt/)",
+          "date": "2026-03-01"
+        },
+        {
+          "type": "changed",
+          "description": "requirements.txt \u2014 added ephem>=4.1.0 for orbital mechanics",
+          "date": "2026-03-01"
+        }
       ]
     },
     {
@@ -120,31 +523,131 @@
       "date": "2026-02-24",
       "status": "done",
       "changes": [
-        {"type": "added", "description": "Project scaffolding — directory structure, state files, architecture docs, implementation plans", "date": "2026-02-24"},
-        {"type": "added", "description": "Input source abstraction — Tuner (rtl_fm) and StreamSource (ffmpeg) with auto-detection", "date": "2026-02-24"},
-        {"type": "added", "description": "Transcriber with faster-whisper CPU fallback (whisper-tiny, int8)", "date": "2026-02-24"},
-        {"type": "added", "description": "Audio router — HTTP chunked WAV streaming to browser", "date": "2026-02-24"},
-        {"type": "added", "description": "Flask backend — REST API routes + Socket.IO events for transcripts and signal levels", "date": "2026-02-24"},
-        {"type": "added", "description": "Console UI — single-page web frontend with preset selector, signal meter, audio player, transcript feed", "date": "2026-02-24"},
-        {"type": "added", "description": "Frequency presets for Seattle/Redmond area (weather, aviation, marine, public safety, broadcast)", "date": "2026-02-24"},
-        {"type": "added", "description": "Setup script (setup.sh) — system deps, venv, RTL-SDR, Hailo SDK detection", "date": "2026-02-24"},
-        {"type": "added", "description": "Hailo-8L NPU inference — mel.py spectrogram, encoder/decoder HEF pipeline via VDevice/InferModel API, 10s chunks, iterative decoder with repetition penalty, tokenizer decode", "date": "2026-02-24"},
-        {"type": "added", "description": "download_models.sh — fetches encoder/decoder HEF + token embedding npy from Hailo S3", "date": "2026-02-24"},
-        {"type": "changed", "description": "setup.sh — hailo_platform symlink into venv, auto-download model files when Hailo NPU detected", "date": "2026-02-24"},
-        {"type": "changed", "description": "requirements.txt — added torch, transformers dependencies for Hailo inference", "date": "2026-02-24"},
-        {"type": "changed", "description": "Transcriber chunk size from 3s (48k samples) to 10s (160k samples) to match Hailo encoder input", "date": "2026-02-24"},
-        {"type": "added", "description": "AGPL-3.0 license — copyleft requiring source sharing for modifications and network use", "date": "2026-02-25"},
-        {"type": "added", "description": "Attributions dashboard page — full dependency table with GitHub repos, licenses, and copyright notices for all third-party projects", "date": "2026-02-25"},
-        {"type": "changed", "description": "README updated with AGPL-3.0 license section and attributions table listing all 13+ dependencies", "date": "2026-02-25"},
-        {"type": "added", "description": ".nojekyll file to fix GitHub Pages serving of .state/ JSON files", "date": "2026-02-25"},
-        {"type": "changed", "description": "Dashboard navigation — added Attributions link to all pages", "date": "2026-02-25"},
-        {"type": "added", "description": "Phase 10 implementation plan — ADS-B flight tracking with dump1090, callsign-to-flight correlation from Whisper transcripts, Leaflet.js map panel, single/dual dongle modes", "date": "2026-02-27"},
-        {"type": "added", "description": "Voice-activity audio segmentation plan — silence-boundary chunking replaces fixed 10s splits, prevents cutting words mid-utterance", "date": "2026-02-27"},
-        {"type": "added", "description": "Phase 11 implementation plan — inference stats dashboard with encoder/decoder timing, RTF, tokens/s, silence skip rate, frontend stats panel", "date": "2026-02-27"},
-        {"type": "added", "description": "Phase 8 complete — SDR disconnect detection with auto-recovery on replug, process crash auto-restart (3 retries), /api/retry endpoint, error banner with retry button in UI", "date": "2026-02-27"},
-        {"type": "added", "description": "Phase 11 complete — inference stats dashboard with encoder/decoder timing, RTF, tokens/s, decoder steps, chunks processed, silence skip rate in UI. GET /api/stats endpoint, periodic 5s broadcast.", "date": "2026-02-27"},
-        {"type": "added", "description": "Phase 12 implementation plan — NOAA weather radio integration: continuous 162.550 MHz monitoring, NWS broadcast transcript parser (temperature, wind, visibility, alerts, marine forecasts), weather panel UI with priority alert banners, squelch-zero continuous capture mode", "date": "2026-02-28"},
-        {"type": "added", "description": "Phase 13 implementation plan — NOAA APT satellite imaging: auto-scheduled pass recording for NOAA-15/19 at 137 MHz using ephem + Celestrak TLEs, rtl_fm capture, noaa-apt CLI decoding, satellite panel UI with pass countdown, decoded image display, and image history", "date": "2026-02-28"}
+        {
+          "type": "added",
+          "description": "Project scaffolding \u2014 directory structure, state files, architecture docs, implementation plans",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Input source abstraction \u2014 Tuner (rtl_fm) and StreamSource (ffmpeg) with auto-detection",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Transcriber with faster-whisper CPU fallback (whisper-tiny, int8)",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Audio router \u2014 HTTP chunked WAV streaming to browser",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Flask backend \u2014 REST API routes + Socket.IO events for transcripts and signal levels",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Console UI \u2014 single-page web frontend with preset selector, signal meter, audio player, transcript feed",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Frequency presets for Seattle/Redmond area (weather, aviation, marine, public safety, broadcast)",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Setup script (setup.sh) \u2014 system deps, venv, RTL-SDR, Hailo SDK detection",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "Hailo-8L NPU inference \u2014 mel.py spectrogram, encoder/decoder HEF pipeline via VDevice/InferModel API, 10s chunks, iterative decoder with repetition penalty, tokenizer decode",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "download_models.sh \u2014 fetches encoder/decoder HEF + token embedding npy from Hailo S3",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "changed",
+          "description": "setup.sh \u2014 hailo_platform symlink into venv, auto-download model files when Hailo NPU detected",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "changed",
+          "description": "requirements.txt \u2014 added torch, transformers dependencies for Hailo inference",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "changed",
+          "description": "Transcriber chunk size from 3s (48k samples) to 10s (160k samples) to match Hailo encoder input",
+          "date": "2026-02-24"
+        },
+        {
+          "type": "added",
+          "description": "AGPL-3.0 license \u2014 copyleft requiring source sharing for modifications and network use",
+          "date": "2026-02-25"
+        },
+        {
+          "type": "added",
+          "description": "Attributions dashboard page \u2014 full dependency table with GitHub repos, licenses, and copyright notices for all third-party projects",
+          "date": "2026-02-25"
+        },
+        {
+          "type": "changed",
+          "description": "README updated with AGPL-3.0 license section and attributions table listing all 13+ dependencies",
+          "date": "2026-02-25"
+        },
+        {
+          "type": "added",
+          "description": ".nojekyll file to fix GitHub Pages serving of .state/ JSON files",
+          "date": "2026-02-25"
+        },
+        {
+          "type": "changed",
+          "description": "Dashboard navigation \u2014 added Attributions link to all pages",
+          "date": "2026-02-25"
+        },
+        {
+          "type": "added",
+          "description": "Phase 10 implementation plan \u2014 ADS-B flight tracking with dump1090, callsign-to-flight correlation from Whisper transcripts, Leaflet.js map panel, single/dual dongle modes",
+          "date": "2026-02-27"
+        },
+        {
+          "type": "added",
+          "description": "Voice-activity audio segmentation plan \u2014 silence-boundary chunking replaces fixed 10s splits, prevents cutting words mid-utterance",
+          "date": "2026-02-27"
+        },
+        {
+          "type": "added",
+          "description": "Phase 11 implementation plan \u2014 inference stats dashboard with encoder/decoder timing, RTF, tokens/s, silence skip rate, frontend stats panel",
+          "date": "2026-02-27"
+        },
+        {
+          "type": "added",
+          "description": "Phase 8 complete \u2014 SDR disconnect detection with auto-recovery on replug, process crash auto-restart (3 retries), /api/retry endpoint, error banner with retry button in UI",
+          "date": "2026-02-27"
+        },
+        {
+          "type": "added",
+          "description": "Phase 11 complete \u2014 inference stats dashboard with encoder/decoder timing, RTF, tokens/s, decoder steps, chunks processed, silence skip rate in UI. GET /api/stats endpoint, periodic 5s broadcast.",
+          "date": "2026-02-27"
+        },
+        {
+          "type": "added",
+          "description": "Phase 12 implementation plan \u2014 NOAA weather radio integration: continuous 162.550 MHz monitoring, NWS broadcast transcript parser (temperature, wind, visibility, alerts, marine forecasts), weather panel UI with priority alert banners, squelch-zero continuous capture mode",
+          "date": "2026-02-28"
+        },
+        {
+          "type": "added",
+          "description": "Phase 13 implementation plan \u2014 NOAA APT satellite imaging: auto-scheduled pass recording for NOAA-15/19 at 137 MHz using ephem + Celestrak TLEs, rtl_fm capture, noaa-apt CLI decoding, satellite panel UI with pass countdown, decoded image display, and image history",
+          "date": "2026-02-28"
+        }
       ]
     }
   ]

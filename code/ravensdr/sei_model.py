@@ -108,6 +108,7 @@ class SEIModel:
         self._model = None
         self._vdevice = None
         self._lock = threading.Lock()
+        self.match_threshold = MATCH_THRESHOLD  # runtime-tunable via apply_settings
 
         # Emitter database
         self._emitters = {}  # emitter_id -> EmitterRecord
@@ -321,7 +322,7 @@ class SEIModel:
                     best_sim = sim
                     best_id = eid
 
-        if best_id is not None and best_sim >= MATCH_THRESHOLD:
+        if best_id is not None and best_sim >= self.match_threshold:
             return best_id, best_sim
         return None
 
@@ -449,6 +450,15 @@ class SEIModel:
         self._save_db()
         return True
 
+    def delete_emitter(self, emitter_id):
+        """Remove an emitter from the fingerprint database."""
+        with self._db_lock:
+            if emitter_id not in self._emitters:
+                return False
+            del self._emitters[emitter_id]
+        self._save_db()
+        return True
+
     def get_status(self):
         """Return SEI model status for API."""
         with self._db_lock:
@@ -458,8 +468,16 @@ class SEIModel:
             "backend": self._backend,
             "emitter_count": total,
             "embedding_dim": EMBEDDING_DIM,
-            "match_threshold": MATCH_THRESHOLD,
+            "match_threshold": self.match_threshold,
         }
+
+    def apply_settings(self, settings):
+        """Apply runtime settings from the Settings tab (see config.py)."""
+        try:
+            self.match_threshold = float(settings.get(
+                "sei_match_threshold", self.match_threshold))
+        except (TypeError, ValueError):
+            pass
 
     def stop(self):
         """Clean up resources."""

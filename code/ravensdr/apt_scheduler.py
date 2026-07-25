@@ -26,7 +26,7 @@ OBSERVER_ELEV = 46  # meters
 # Satellites to track (NOAA-18 decommissioned June 2025)
 NOAA_SATS = {
     "NOAA 15": "137.6200M",
-    "NOAA 19": "137.9125M",
+    "NOAA 19": "137.1000M",  # NOAA-19 APT downlink. (137.9125 is NOAA-18, decommissioned.)
 }
 
 MIN_ELEVATION_DEG = 20
@@ -42,7 +42,8 @@ class AptScheduler:
         self._tle_last_fetch = None
         self._running = False
         self._thread = None
-        self._notified_passes = set()  # AOS timestamps already notified
+        self._notified_passes = set()  # stable pass keys already notified
+        self._recorded_passes = set()  # stable pass keys recording was triggered for
 
     def start(self):
         if self._running:
@@ -122,18 +123,35 @@ class AptScheduler:
         passes.sort(key=lambda p: p["aos"])
         return passes
 
+    POLL_INTERVAL_S = 15
+
     def _schedule_loop(self):
-        """Check every 30s for upcoming passes and trigger recordings."""
+        """Poll for upcoming passes and trigger recordings.
+
+        Polls every POLL_INTERVAL_S. The AOS trigger window is far wider than
+        one interval (see _check_upcoming_passes), so a missed or delayed poll
+        still catches the pass on the next tick.
+        """
         while self._running:
             try:
                 self._check_upcoming_passes()
             except Exception as e:
                 log.error("APT scheduler error: %s", e)
 
-            for _ in range(30):
+            for _ in range(self.POLL_INTERVAL_S):
                 if not self._running:
                     return
                 time.sleep(1)
+
+    @staticmethod
+    def _pass_key(p):
+        """Stable identity for a pass.
+
+        ephem recomputes AOS to microsecond precision on every poll, so the raw
+        ISO timestamp differs each time and can't be used to dedupe. Truncate to
+        the minute — passes are ~15 min apart, so this never collides.
+        """
+        return f"{p['satellite']}_{p['aos'][:16]}"  # YYYY-MM-DDTHH:MM
 
     def _check_upcoming_passes(self):
         passes = self.get_next_passes(hours=1)
@@ -142,7 +160,7 @@ class AptScheduler:
         for p in passes:
             aos = datetime.datetime.fromisoformat(p["aos"].rstrip("Z"))
             time_until = (aos - now).total_seconds()
-            pass_key = f"{p['satellite']}_{p['aos']}"
+            pass_key = self._pass_key(p)
 
             # Emit upcoming event 10 minutes before
             if 0 < time_until <= 600 and pass_key not in self._notified_passes:
@@ -158,9 +176,18 @@ class AptScheduler:
                 log.info("Upcoming pass: %s at %s (%.0f° max elev, %ds)",
                          p["satellite"], p["aos"], p["max_elevation"], p["duration"])
 
-            # Trigger recording at AOS
-            if -10 <= time_until <= 10 and self.on_pass_start:
-                self.on_pass_start(p)
+            # Trigger recording once at AOS. Fire on the first poll from ~15s
+            # before AOS through the first ~3 min of the pass, rather than a
+            # narrow ±10s window: the 30s poll loop drifts under load (eventlet
+            # greenthread starved by WEFAX decode / Hailo inference), so a tight
+            # window gets skipped past entirely. The recorded-key set guarantees
+            # we still only start once per pass.
+            if -180 <= time_until <= 15 and pass_key not in self._recorded_passes:
+                self._recorded_passes.add(pass_key)
+                log.info("Triggering APT recording: %s (T%+.0fs from AOS, %.0f° max elev)",
+                         p["satellite"], time_until, p["max_elevation"])
+                if self.on_pass_start:
+                    self.on_pass_start(p)
 
     def _make_observer(self):
         observer = ephem.Observer()

@@ -1,0 +1,45 @@
+# ravensdr-ui — the console process (phase 18).
+#
+# Install:
+#   sudo cp operations/ravensdr-ui.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ravensdr-ui
+#
+# Deliberately `Wants=` the radio, never `Requires=`: the console must start and
+# serve even when the radio service is broken, stopped, or crash-looping. That is
+# the entire point of the split — an operator who cannot reach the radio should
+# still get a console telling them so, not a dead port.
+
+[Unit]
+Description=ravenSDR UI — operator console (owns no hardware)
+Documentation=file:///home/kris/code/ravenSDR/implementation-plans/phase-18-ui-backend-split.md
+After=network-online.target
+Wants=network-online.target
+Wants=ravensdr.service
+
+[Service]
+Type=simple
+User=kris
+Group=kris
+WorkingDirectory=/home/kris/code/ravenSDR/code
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/kris/code/ravenSDR/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/home/kris
+Environment=RAVENSDR_UI_PORT=5001
+# Both processes must resolve the SAME rendezvous socket. Set it explicitly here
+# rather than relying on fallback order — a mismatch presents as a permanent
+# LINK DOWN against a perfectly healthy radio.
+Environment=RAVENSDR_RADIO_SOCKET=/tmp/ravensdr/radio.sock
+Environment=RAVENSDR_RADIO_HTTP=http://127.0.0.1:5000
+ExecStart=/home/kris/code/ravenSDR/.venv/bin/python -m ravensdr.ui_app
+
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ravensdr-ui
+
+[Install]
+WantedBy=multi-user.target

@@ -138,6 +138,76 @@ else
     pass "rtl_ais built and installed"
 fi
 
+# ── Step 6c: rtl_433 for ISM-band sensor decoding (optional) ──
+echo ""
+echo "── Step 6c: rtl_433 (ISM sensors) ──"
+if command -v rtl_433 &>/dev/null; then
+    pass "rtl_433 already installed"
+elif sudo apt-get install -y rtl-433 2>/dev/null && command -v rtl_433 &>/dev/null; then
+    pass "rtl_433 installed from apt"
+else
+    echo "apt package unavailable — building rtl_433 from source..."
+    RTL433_BUILD_DIR="/tmp/rtl_433-build"
+    rm -rf "$RTL433_BUILD_DIR"
+    if git clone --depth 1 https://github.com/merbanan/rtl_433.git "$RTL433_BUILD_DIR" 2>/dev/null \
+            && cmake -S "$RTL433_BUILD_DIR" -B "$RTL433_BUILD_DIR/build" >/dev/null \
+            && make -C "$RTL433_BUILD_DIR/build" -j"$(nproc)" >/dev/null; then
+        sudo make -C "$RTL433_BUILD_DIR/build" install >/dev/null
+        rm -rf "$RTL433_BUILD_DIR"
+        pass "rtl_433 built and installed"
+    else
+        warn "rtl_433 install failed — ISM sensor decoding will be unavailable"
+    fi
+fi
+
+# ── Step 6d: acarsdec for ACARS aircraft messaging (optional) ──
+echo ""
+echo "── Step 6d: acarsdec (ACARS) ──"
+if command -v acarsdec &>/dev/null; then
+    pass "acarsdec already installed"
+else
+    echo "Building libacars + acarsdec from source..."
+    ACARS_OK=1
+    # libacars first (ACARS sublayer reassembly/decoding)
+    if ! ldconfig -p | grep -q libacars; then
+        LIBACARS_DIR="/tmp/libacars-build"
+        rm -rf "$LIBACARS_DIR"
+        if git clone --depth 1 https://github.com/szpajder/libacars.git "$LIBACARS_DIR" 2>/dev/null \
+                && cmake -S "$LIBACARS_DIR" -B "$LIBACARS_DIR/build" >/dev/null 2>&1 \
+                && make -C "$LIBACARS_DIR/build" -j"$(nproc)" >/dev/null 2>&1; then
+            sudo make -C "$LIBACARS_DIR/build" install >/dev/null 2>&1
+            sudo ldconfig
+            rm -rf "$LIBACARS_DIR"
+        else
+            warn "libacars build failed"; ACARS_OK=0
+        fi
+    fi
+    if [ "$ACARS_OK" = "1" ]; then
+        ACARSDEC_DIR="/tmp/acarsdec-build"
+        rm -rf "$ACARSDEC_DIR"
+        if git clone --depth 1 https://github.com/TLeconte/acarsdec.git "$ACARSDEC_DIR" 2>/dev/null \
+                && cmake -Drtl=ON -S "$ACARSDEC_DIR" -B "$ACARSDEC_DIR/build" >/dev/null 2>&1 \
+                && make -C "$ACARSDEC_DIR/build" -j"$(nproc)" >/dev/null 2>&1; then
+            sudo make -C "$ACARSDEC_DIR/build" install >/dev/null 2>&1
+            rm -rf "$ACARSDEC_DIR"
+            pass "acarsdec built and installed"
+        else
+            warn "acarsdec build failed — ACARS decoding will be unavailable"
+        fi
+    fi
+fi
+
+# ── Step 6e: multimon-ng for POCSAG/FLEX pager decoding (optional) ──
+echo ""
+echo "── Step 6e: multimon-ng (pagers) ──"
+if command -v multimon-ng &>/dev/null; then
+    pass "multimon-ng already installed"
+elif sudo apt-get install -y multimon-ng 2>/dev/null && command -v multimon-ng &>/dev/null; then
+    pass "multimon-ng installed from apt"
+else
+    warn "multimon-ng install failed — pager decoding will be unavailable"
+fi
+
 # ── Step 6b: APT Satellite Imaging dependencies ──
 echo ""
 echo "── Step 6b: APT Satellite Imaging ──"

@@ -20,6 +20,11 @@ hf_cache/
 *.pid
 code/ravensdr/models/decoder_assets/
 code/ravensdr/data/emitter_db.json
+code/ravensdr/data/meteor_log.json
+# Locally-collected IQ/spectrogram training captures (per-node, regenerated)
+code/ml/signal_classifier/data/collected/
+# Per-node runtime state (secondary dongle task, startup preset)
+code/ravensdr/config.json
 # Generated images (WEFAX charts, APT satellite passes)
 code/static/images/
 # Locally-cloned driver/SDR source trees (built by setup.sh)

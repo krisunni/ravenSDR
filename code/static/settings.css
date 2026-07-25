@@ -1,0 +1,149 @@
+/* Settings panel — NPU keywords, thresholds, training corpus */
+
+.settings-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 420px;
+    max-width: 100%;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+    padding: 16px;
+    z-index: 1000;
+}
+
+.settings-panel.hidden { display: none; }
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+}
+
+.settings-header h2 { margin: 0; font-size: 1.1rem; }
+
+.settings-group {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-group h3 {
+    margin: 0 0 4px;
+    font-size: 0.95rem;
+    color: var(--accent);
+}
+
+.settings-hint {
+    margin: 0 0 10px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    line-height: 1.4;
+}
+
+.settings-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    margin-bottom: 10px;
+}
+
+/* Keyword list */
+.kw-list { margin-bottom: 10px; }
+
+.kw-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    margin-bottom: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+    border-radius: 4px;
+}
+
+.kw-row.kw-sev-info { border-left-color: var(--text-dim); }
+.kw-row.kw-sev-warning { border-left-color: var(--yellow); }
+.kw-row.kw-sev-critical { border-left-color: var(--red); }
+
+.kw-term { flex: 1; font-weight: 600; }
+
+.kw-badge {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+.kw-badge-info { background: #21262d; color: var(--text-dim); }
+.kw-badge-warning { background: #3a2f0d; color: var(--yellow); }
+.kw-badge-critical { background: #3a1a1a; color: var(--red); }
+
+.kw-del {
+    padding: 0 8px;
+    line-height: 1.4;
+    color: var(--red);
+}
+
+.kw-add-row { display: flex; gap: 6px; }
+.kw-add-row input[type="text"] { flex: 1; }
+.kw-add-row input, .kw-add-row select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-family: var(--font-mono);
+}
+
+/* Threshold sliders */
+.settings-slider-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+    font-size: 0.82rem;
+}
+.settings-slider-row span { color: var(--accent); font-weight: 600; }
+.settings-slider-row input[type="range"] { width: 100%; }
+
+/* Training corpus */
+.training-summary {
+    font-size: 0.82rem;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+.training-row {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    padding: 2px 0;
+}
+
+/* ACARS message text */
+.acars-text {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 2px 0 0 0;
+    padding-left: 8px;
+    border-left: 2px solid var(--border);
+}
+
+/* SEI emitter delete button (used in sei.js) */
+.sei-del-btn {
+    color: var(--red);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 0 7px;
+}
+.sei-del-btn:hover { background: #3a1a1a; }

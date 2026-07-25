@@ -138,7 +138,7 @@ class AptDecoder:
     def _record_and_decode(self, pass_info, gain):
         """Record rtl_fm audio, then decode with noaa-apt."""
         satellite = pass_info.get("satellite", "NOAA-19")
-        frequency = pass_info.get("frequency", "137.9125M")
+        frequency = pass_info.get("frequency", "137.1000M")  # NOAA-19 APT downlink
         timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%MZ")
         safe_name = satellite.replace(" ", "-")
 

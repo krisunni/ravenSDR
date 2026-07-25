@@ -1,7 +1,7 @@
 {
   "name": "ravenSDR",
-  "description": "Real-time RF Signal Transcription Pipeline — RTL-SDR → Edge AI Inference (Hailo-8L NPU) → Live Web Interface",
-  "version": "1.0.0",
+  "description": "Real-time RF Signal Transcription Pipeline \u2014 RTL-SDR \u2192 Edge AI Inference (Hailo-8L NPU) \u2192 Live Web Interface",
+  "version": "1.2.0",
   "status": "running",
   "license": "AGPL-3.0",
   "stack": {
@@ -26,7 +26,10 @@
     "signalClassifier": "MobileNetV2 CNN spectrogram classifier (Hailo-8L NPU, CPU fallback)",
     "emitterIdentification": "1D CNN + attention SEI model (Hailo-8L NPU, CPU fallback)",
     "iqCapture": "pyrtlsdr direct IQ capture with FM/AM/WFM demodulation, squelch, de-emphasis, replaces rtl_fm main pipeline",
-    "sdrDemodFallback": "rtl_fm subprocess (auto-fallback when pyrtlsdr unavailable)"
+    "sdrDemodFallback": "rtl_fm subprocess (auto-fallback when pyrtlsdr unavailable)",
+    "processArchitecture": "Two-process split: ravensdr-ui (Flask+Socket.IO, no hardware) and ravensdr-radio (RTL-SDR/Hailo/decoders, eventlet-free), NDJSON over Unix domain socket",
+    "ipc": "Newline-delimited JSON over Unix domain socket (ipc.py / ipc_server.py / radio_link.py)",
+    "sdrArbitration": "SdrArbiter \u2014 serialized coalescing command queue, C2 states LOCKED/SWITCHING/FAULT"
   },
   "targetHardware": {
     "sbc": "Raspberry Pi 5",
@@ -53,27 +56,83 @@
     "implementation-plans/phase-14-weatherfax-wefax.md",
     "implementation-plans/phase-15-meteor-scatter-detection.md",
     "implementation-plans/phase-16-signal-classification.md",
-    "implementation-plans/phase-17-specific-emitter-identification.md"
+    "implementation-plans/phase-17-specific-emitter-identification.md",
+    "implementation-plans/phase-18-ui-backend-split.md"
   ],
   "phases": {
-    "1": {"name": "System Dependencies & Environment Setup", "status": "done"},
-    "2": {"name": "Input Source Abstraction", "status": "done"},
-    "3": {"name": "Transcriber (Hailo Whisper)", "status": "done"},
-    "4": {"name": "Audio Router (HTTP Streaming)", "status": "done"},
-    "5": {"name": "Backend API (Flask App)", "status": "done"},
-    "6": {"name": "Frontend (Console UI)", "status": "done"},
-    "7": {"name": "Frequency Presets", "status": "done"},
-    "8": {"name": "Error Handling & Edge Cases", "status": "done"},
-    "9": {"name": "Setup Script & Requirements", "status": "done"},
-    "10": {"name": "ADS-B Aviation Correlation & Voice-Activity Segmentation", "status": "done"},
-    "11": {"name": "Inference Stats Dashboard", "status": "done"},
-    "12": {"name": "NOAA Weather Radio Integration", "status": "done"},
-    "13": {"name": "NOAA APT Satellite Imaging", "status": "done"},
-    "14": {"name": "WEFAX Weather Fax HF Reception", "status": "done"},
-    "15": {"name": "Passive Meteor Scatter Detection", "status": "done"},
-    "16": {"name": "Signal Classification via Spectrogram CNN", "status": "done"},
-    "17": {"name": "Specific Emitter Identification (SEI)", "status": "done"}
+    "1": {
+      "name": "System Dependencies & Environment Setup",
+      "status": "done"
+    },
+    "2": {
+      "name": "Input Source Abstraction",
+      "status": "done"
+    },
+    "3": {
+      "name": "Transcriber (Hailo Whisper)",
+      "status": "done"
+    },
+    "4": {
+      "name": "Audio Router (HTTP Streaming)",
+      "status": "done"
+    },
+    "5": {
+      "name": "Backend API (Flask App)",
+      "status": "done"
+    },
+    "6": {
+      "name": "Frontend (Console UI)",
+      "status": "done"
+    },
+    "7": {
+      "name": "Frequency Presets",
+      "status": "done"
+    },
+    "8": {
+      "name": "Error Handling & Edge Cases",
+      "status": "done"
+    },
+    "9": {
+      "name": "Setup Script & Requirements",
+      "status": "done"
+    },
+    "10": {
+      "name": "ADS-B Aviation Correlation & Voice-Activity Segmentation",
+      "status": "done"
+    },
+    "11": {
+      "name": "Inference Stats Dashboard",
+      "status": "done"
+    },
+    "12": {
+      "name": "NOAA Weather Radio Integration",
+      "status": "done"
+    },
+    "13": {
+      "name": "NOAA APT Satellite Imaging",
+      "status": "done"
+    },
+    "14": {
+      "name": "WEFAX Weather Fax HF Reception",
+      "status": "done"
+    },
+    "15": {
+      "name": "Passive Meteor Scatter Detection",
+      "status": "done"
+    },
+    "16": {
+      "name": "Signal Classification via Spectrogram CNN",
+      "status": "done"
+    },
+    "17": {
+      "name": "Specific Emitter Identification (SEI)",
+      "status": "done"
+    },
+    "18": {
+      "name": "UI / Radio Process Split",
+      "status": "in-progress"
+    }
   },
   "lastUpdated": "2026-03-21",
-  "notes": "v1.0.0: All 17 phases complete. Full IQ pipeline integrated — pyrtlsdr direct capture feeds signal classifier, SEI emitter fingerprinter, and live spectrogram waterfall. Persistent config system for secondary dongle assignment. WEFAX recording robustness improvements. Classifier and SEI panels wired into main UI."
+  "notes": "v1.0.0: All 17 phases complete. Full IQ pipeline integrated \u2014 pyrtlsdr direct capture feeds signal classifier, SEI emitter fingerprinter, and live spectrogram waterfall. Persistent config system for secondary dongle assignment. WEFAX recording robustness improvements. Classifier and SEI panels wired into main UI."
 }

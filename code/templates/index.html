@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/static/meteor.css">
     <link rel="stylesheet" href="/static/classifier.css">
     <link rel="stylesheet" href="/static/sei.css">
+    <link rel="stylesheet" href="/static/settings.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css" />
 </head>
 <body>
@@ -26,12 +27,90 @@
             </select>
             <span id="secondary-status" class="secondary-indicator"></span>
         </div>
+        <!-- SDR command & control: the radio is separate hardware, so the
+             console shows what it was COMMANDED to do next to what it is
+             ACTUALLY doing, and the transition between them. -->
+        <div id="sdr-c2" class="sdr-c2" title="SDR command &amp; control">
+            <div class="c2-lamp-group">
+                <span id="c2-state-lamp" class="c2-lamp c2-lamp-locked"></span>
+                <span id="c2-state" class="c2-state">LOCKED</span>
+            </div>
+            <div class="c2-fields">
+                <div class="c2-field">
+                    <span class="c2-key">ACTUAL</span>
+                    <span id="c2-actual" class="c2-val">—</span>
+                </div>
+                <div class="c2-field">
+                    <span class="c2-key">CMD</span>
+                    <span id="c2-commanded" class="c2-val">—</span>
+                </div>
+            </div>
+            <div class="c2-lamp-group c2-link-group" title="Link to the radio process">
+                <span id="c2-link-lamp" class="c2-lamp c2-lamp-locked"></span>
+                <span id="c2-link" class="c2-state">LINK</span>
+            </div>
+            <span id="c2-fault" class="c2-fault hidden"></span>
+        </div>
+        <button id="settings-toggle" class="btn btn-sm btn-advanced" title="NPU & alert settings">⚙ Settings</button>
         <div id="connection-banner" class="banner hidden">Connecting...</div>
         <div id="error-banner" class="banner banner-error hidden">
             <span class="error-message"></span>
             <button id="retry-btn" class="btn btn-sm btn-retry">Retry</button>
         </div>
     </header>
+
+    <!-- Settings panel (NPU keywords, thresholds, training) — toggled from header -->
+    <div id="settings-panel" class="settings-panel hidden">
+        <div class="settings-header">
+            <h2>Settings</h2>
+            <button id="settings-close" class="btn btn-sm">Close</button>
+        </div>
+
+        <section class="settings-group">
+            <h3>Keyword Watchlist</h3>
+            <p class="settings-hint">Whisper transcripts are scanned for these terms; a hit raises an alert. Warning/critical hits also flash the alert banner.</p>
+            <label class="settings-toggle-row">
+                <input type="checkbox" id="kw-enabled"> Keyword alerting enabled
+            </label>
+            <div id="kw-list" class="kw-list"></div>
+            <div class="kw-add-row">
+                <input type="text" id="kw-term" placeholder="term e.g. mayday" maxlength="64">
+                <select id="kw-severity">
+                    <option value="info">info</option>
+                    <option value="warning">warning</option>
+                    <option value="critical">critical</option>
+                </select>
+                <button id="kw-add" class="btn btn-sm">Add</button>
+            </div>
+        </section>
+
+        <section class="settings-group">
+            <h3>NPU / Analysis Thresholds</h3>
+            <p class="settings-hint">Applied live and persisted. Defaults mirror the original constants.</p>
+            <div class="settings-slider-row">
+                <label for="thr-sei">SEI match threshold <span id="thr-sei-val"></span></label>
+                <input type="range" id="thr-sei" min="0.5" max="0.99" step="0.01">
+            </div>
+            <div class="settings-slider-row">
+                <label for="thr-classifier">Classifier confidence <span id="thr-classifier-val"></span></label>
+                <input type="range" id="thr-classifier" min="0.1" max="0.99" step="0.01">
+            </div>
+            <div class="settings-slider-row">
+                <label for="thr-segmenter">Segmenter trigger (dB over noise) <span id="thr-segmenter-val"></span></label>
+                <input type="range" id="thr-segmenter" min="3" max="30" step="1">
+            </div>
+            <div class="settings-slider-row">
+                <label for="thr-silence">Transcribe silence gate (RMS) <span id="thr-silence-val"></span></label>
+                <input type="range" id="thr-silence" min="0" max="2000" step="50">
+            </div>
+        </section>
+
+        <section class="settings-group">
+            <h3>SEI Training Corpus <span class="badge">on-device</span></h3>
+            <p class="settings-hint" id="training-note"></p>
+            <div id="training-stats" class="training-stats"></div>
+        </section>
+    </div>
 
     <main>
         <!-- Preset Selector -->
@@ -154,6 +233,7 @@
                             <th>Obs</th>
                             <th>Last Seen</th>
                             <th>Frequencies</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody id="sei-emitter-tbody"></tbody>
@@ -409,6 +489,49 @@
             <div id="adsb-scan-status">Scanning ADS-B...</div>
             <div id="adsb-map"></div>
         </div>
+
+        <!-- ISM / Sensors Panel (rtl_433) -->
+        <div id="ism-panel" class="hidden">
+            <div class="panel-header">
+                <label>ISM Sensors (rtl_433)</label>
+                <span id="ism-count" class="flight-count">0 devices</span>
+            </div>
+            <div id="ism-status">Listening for ISM devices…</div>
+            <div class="sei-table-wrap">
+                <table class="sei-emitter-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>ID</th>
+                            <th>Readings</th>
+                            <th>RSSI</th>
+                            <th>Last Seen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ism-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ACARS Panel (acarsdec) -->
+        <div id="acars-panel" class="hidden">
+            <div class="panel-header">
+                <label>ACARS Aircraft Messages</label>
+                <span id="acars-count" class="flight-count">0 aircraft</span>
+            </div>
+            <div id="acars-status">Listening for ACARS on 131.550 / 130.025 / 130.425 / 131.725 / 131.825 MHz…</div>
+            <div id="acars-feed" class="sei-recent-feed"></div>
+        </div>
+
+        <!-- Pager Panel (POCSAG/FLEX via multimon-ng) -->
+        <div id="pager-panel" class="hidden">
+            <div class="panel-header">
+                <label>Pager Messages (POCSAG / FLEX)</label>
+                <span id="pager-count" class="flight-count">0 addresses</span>
+            </div>
+            <div id="pager-status">Decoding pager traffic…</div>
+            <div id="pager-feed" class="sei-recent-feed"></div>
+        </div>
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
@@ -421,6 +544,10 @@
     <script src="/static/meteor.js"></script>
     <script src="/static/classifier.js"></script>
     <script src="/static/sei.js"></script>
+    <script src="/static/ism.js"></script>
+    <script src="/static/acars.js"></script>
+    <script src="/static/pager.js"></script>
+    <script src="/static/settings.js"></script>
     <script src="/static/ravensdr.js"></script>
 </body>
 </html>

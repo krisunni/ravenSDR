@@ -5,17 +5,21 @@ import json
 import logging
 import os
 import struct
-import threading
 import time
 
 import numpy as np
 
-# Use REAL stdlib modules, not eventlet's green versions.
+# Use REAL stdlib modules, not eventlet's green versions. The monitor thread does
+# a blocking read on rtl_fm's stdout pipe; under a GREEN thread that blocking read
+# stalls the entire eventlet hub (all HTTP/Socket.IO freezes), so the reader must
+# be a real OS thread — same pattern as ais_receiver / adsb_receiver.
 try:
     from eventlet.patcher import original
     subprocess = original("subprocess")
+    threading = original("threading")
 except ImportError:
     import subprocess
+    import threading
 
 log = logging.getLogger(__name__)
 

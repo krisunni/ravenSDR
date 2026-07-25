@@ -12,6 +12,10 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from flask_socketio import SocketIO
 
 from ravensdr.audio_router import audio_stream_generator
+from ravensdr.emit_bridge import ThreadSafeEmitter
+from ravensdr.sdr_arbiter import SdrArbiter
+from ravensdr.ipc import CommandRegistry, resolve_socket_path
+from ravensdr.ipc_server import IpcServer
 from ravensdr.input_source import InputSource, detect_sdr
 from ravensdr.presets import get_presets, get_preset_by_id, CATEGORY_LABELS
 from ravensdr.transcriber import Transcriber
@@ -20,26 +24,69 @@ from ravensdr.adsb_receiver import (
     ADSB_ENABLED, ADSB_DUAL_DONGLE,
 )
 from ravensdr.ais_receiver import AisReceiver
+from ravensdr.ism_receiver import IsmReceiver
+from ravensdr.acars_receiver import AcarsReceiver, correlate_with_adsb
+from ravensdr.pager_receiver import PagerReceiver
 from ravensdr.adsb_correlator import extract_callsigns, match_flights
 from ravensdr.noaa_parser import WeatherAccumulator, detect_priority_alert
 from ravensdr.apt_scheduler import AptScheduler
 from ravensdr.apt_decoder import AptDecoder
-from ravensdr.wefax_scheduler import WefaxScheduler
+from ravensdr.wefax_scheduler import WefaxScheduler, WEFAX_ENABLED
 from ravensdr.wefax_receiver import WefaxReceiver
 from ravensdr.meteor_detector import MeteorDetector, METEOR_ENABLED, METEOR_DUAL_DONGLE, METEOR_FREQUENCY
 from ravensdr.meteor_analyzer import MeteorAnalyzer
 from ravensdr.signal_classifier import SignalClassifier, iq_to_spectrogram, spectrogram_to_image
 from ravensdr.sei_model import SEIModel
 from ravensdr.iq_segmenter import IQSegmenter
-from ravensdr.config import load_config, save_config, get_secondary_task, set_secondary_task
+from ravensdr.config import (
+    load_config, save_config, get_secondary_task, set_secondary_task,
+    get_startup_preset, set_last_preset, get_settings, update_settings,
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
+
+
+def _make_logging_thread_safe():
+    """Give logging REAL locks instead of eventlet's green ones.
+
+    eventlet.monkey_patch() replaces threading.RLock, so every logging handler
+    lock created afterwards is a GREEN semaphore. Those may only be touched from
+    the hub's thread. But several subsystems legitimately run on real OS threads
+    (meteor detector, subprocess decoders) and they log — and when a real thread
+    contends a green lock, the hub tries to switch to a greenlet it does not own:
+
+        greenlet.error: Cannot switch to a different thread
+
+    which is raised inside the hub's fire_timers and destroys whichever
+    greenthread was running — observed killing both the meteor detector and the
+    in-flight /api/tune request that started it.
+
+    Real locks are correct here: they are safe from any thread, and a log write
+    is short enough that a greenthread briefly blocking on one is harmless.
+
+    This is a mitigation, not a cure. The structural fix is phase 18 — move the
+    hardware into a process that never imports eventlet at all.
+    """
+    try:
+        from eventlet.patcher import original
+        real_threading = original("threading")
+    except ImportError:
+        return
+    logging._lock = real_threading.RLock()
+    for handler in logging.root.handlers:
+        handler.lock = real_threading.RLock()
+    # Handlers created later (per-module) must get real locks too.
+    logging.Handler.createLock = lambda self: setattr(
+        self, "lock", real_threading.RLock())
+
+
+_make_logging_thread_safe()
 log = logging.getLogger(__name__)
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 
 # ── Flask + Socket.IO ──
 app = Flask(
@@ -50,6 +97,25 @@ app = Flask(
 app.config["SECRET_KEY"] = "ravensdr-dev"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
+# ── Thread-safe emit bridge ──
+# Anything running on a REAL OS thread (meteor detector, rtl_433 / acarsdec /
+# multimon-ng decoders) must emit through this instead of calling socketio.emit
+# directly — a direct call from a non-hub thread raises
+# "greenlet.error: Cannot switch to a different thread" and kills the caller.
+# A greenthread (emit_bridge_loop) drains it. See emit_bridge.py.
+def _late_emit(event, data=None, **kwargs):
+    """Call whatever socketio.emit currently is.
+
+    Late binding matters: the IPC fan-out below replaces socketio.emit, and
+    events from real threads must go through the replacement too.
+    """
+    if data is None and not kwargs:
+        return socketio.emit(event)
+    return socketio.emit(event, data, **kwargs)
+
+
+emit_safe = ThreadSafeEmitter(_late_emit)
+
 # ── Detect mode ──
 sdr_available = detect_sdr()
 mode = "SDR" if sdr_available else "WEBSTREAM"
@@ -57,7 +123,7 @@ log.info("Mode: %s (SDR detected: %s)", mode, sdr_available)
 
 # ── Core components ──
 input_source = InputSource(mode)
-transcriber = Transcriber(input_source.pcm_queue, emit_fn=socketio.emit)
+transcriber = Transcriber(input_source.pcm_queue, emit_fn=_late_emit)
 
 # ── Persistent config ──
 _config = load_config()
@@ -83,23 +149,56 @@ if ADSB_ENABLED:
         adsb_scheduler = AdsbScanScheduler(adsb_receiver, input_source)
         log.info("ADS-B configured (on-demand via Aviation tab)")
 
-    # Wire transcript callback for callsign correlation
-    def _on_transcript(text):
-        if not adsb_receiver:
-            return
-        callsigns = extract_callsigns(text)
-        if callsigns:
-            matches = match_flights(callsigns, adsb_receiver.get_flights())
-            if matches:
-                socketio.emit("callsign_match", {
-                    "transcript": text,
-                    "matches": matches,
-                })
-
-    transcriber.set_transcript_callback(_on_transcript)
-
 # ── AIS Receiver ──
 ais_receiver = AisReceiver(device_index=0)
+
+# ── ISM sensor receiver (rtl_433) ──
+ism_receiver = IsmReceiver(device_index=0)
+
+
+def _ism_on_record(record, is_new):
+    """Emit each rtl_433 device update to the ISM panel.
+
+    Called from rtl_433's REAL reader thread — emit via the bridge.
+    """
+    emit_safe("ism_device", record)
+
+
+ism_receiver.on_record = _ism_on_record
+
+# ── ACARS receiver (acarsdec) ──
+acars_receiver = AcarsReceiver(device_index=0)
+
+
+def _acars_on_record(record, is_new):
+    """Emit each ACARS message; correlate with tracked ADS-B flights.
+
+    Called from acarsdec's REAL reader thread — emit via the bridge.
+    """
+    payload = dict(record)
+    if adsb_receiver and adsb_receiver.is_running:
+        match = correlate_with_adsb(record, adsb_receiver.get_flights())
+        if match:
+            payload["adsb_hex"] = match.get("hex")
+            payload["adsb_flight"] = match.get("flight")
+    emit_safe("acars_message", payload)
+
+
+acars_receiver.on_record = _acars_on_record
+
+# ── Pager receiver (rtl_fm | multimon-ng) ──
+pager_receiver = PagerReceiver(device_index=0)
+
+
+def _pager_on_record(record, is_new):
+    """Emit each decoded pager message to the Pager panel.
+
+    Called from multimon-ng's REAL reader thread — emit via the bridge.
+    """
+    emit_safe("pager_message", record)
+
+
+pager_receiver.on_record = _pager_on_record
 
 # ── Weather state ──
 # Accumulate transcripts across NOAA's broadcast loop and re-summarize; a single
@@ -142,8 +241,68 @@ def _on_weather_update(parsed_data):
 
 transcriber.set_weather_callback(_on_weather_update)
 
+
+def _scan_keywords(text):
+    """Scan a transcript for user watchlist terms; emit a keyword_hit per match.
+
+    The watchlist lives in the settings block (Settings tab). Matching is
+    case-insensitive substring; each hit reuses the priority_alert UI banner and
+    writes a structured INTEL log line, mirroring the weather-alert path.
+    """
+    if not text:
+        return
+    settings = get_settings()
+    if not settings.get("keywords_enabled", True):
+        return
+    lowered = text.lower()
+    preset = input_source.current_preset or {}
+    for entry in settings.get("keywords", []):
+        term = entry.get("term", "")
+        if not term or not entry.get("enabled", True):
+            continue
+        if term.lower() in lowered:
+            severity = entry.get("severity", "info")
+            payload = {
+                "term": term,
+                "severity": severity,
+                "transcript": text[:300],
+                "freq": preset.get("freq", ""),
+                "label": preset.get("label", ""),
+                "source": mode,
+            }
+            socketio.emit("keyword_hit", payload)
+            # Also drive the shared alert banner for warning/critical hits
+            if severity in ("warning", "critical"):
+                socketio.emit("priority_alert", {
+                    "alerts": [{"type": "keyword", "name": term, "area": ""}],
+                    "raw_snippet": text[:200],
+                    "freq": preset.get("freq", ""),
+                    "source": mode,
+                })
+            log.warning(
+                "INTEL KEYWORD_HIT | term=%s | severity=%s | freq=%s | source=%s | snippet=%.200s",
+                term, severity, preset.get("freq", ""), mode, text[:200],
+            )
+
+
+def _on_transcript(text):
+    """General per-transcript hook: keyword watchlist + ADS-B callsign match."""
+    _scan_keywords(text)
+    if adsb_receiver:
+        callsigns = extract_callsigns(text)
+        if callsigns:
+            matches = match_flights(callsigns, adsb_receiver.get_flights())
+            if matches:
+                socketio.emit("callsign_match", {
+                    "transcript": text,
+                    "matches": matches,
+                })
+
+
+transcriber.set_transcript_callback(_on_transcript)
+
 # ── APT Satellite Imaging ──
-apt_decoder = AptDecoder(emit_fn=socketio.emit)
+apt_decoder = AptDecoder(emit_fn=_late_emit)
 
 
 def _on_apt_pass_start(pass_info):
@@ -151,27 +310,102 @@ def _on_apt_pass_start(pass_info):
     satellite = pass_info.get("satellite", "")
     frequency = pass_info.get("frequency", "")
 
+    # Stop meteor detector if it's holding the device (single-dongle mode)
+    if meteor_detector and meteor_detector.is_running and not METEOR_DUAL_DONGLE:
+        meteor_detector.stop()
+        log.info("Stopped meteor detector for APT recording")
+        socketio.emit("notice", {
+            "message": f"Meteor detector paused — SDR dedicated to {satellite} pass",
+            "type": "apt_preempt",
+        })
+
+    # Stop dedicated decoders that seize the dongle directly (ISM/AIS/ACARS/Pager)
+    for _rx, _name in ((ism_receiver, "ISM"), (ais_receiver, "AIS"),
+                       (acars_receiver, "ACARS"), (pager_receiver, "Pager")):
+        if _rx and _rx.is_running:
+            _rx.stop()
+            log.info("Stopped %s for APT recording", _name)
+            socketio.emit("notice", {
+                "message": f"{_name} paused — SDR dedicated to {satellite} pass",
+                "type": "apt_preempt",
+            })
+
+    # Stop ADS-B if it's holding the device (single-dongle mode)
+    resumed_adsb_scheduler = False
+    if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+        adsb_receiver.stop()
+        if adsb_scheduler:
+            adsb_scheduler.stop()
+            resumed_adsb_scheduler = True
+        log.info("Stopped ADS-B for APT recording")
+        socketio.emit("notice", {
+            "message": f"ADS-B paused — SDR dedicated to {satellite} pass",
+            "type": "apt_preempt",
+        })
+
     if input_source.enter_apt_mode(frequency):
         apt_decoder.record_pass(pass_info)
         socketio.emit("status", _get_status())
 
-        # Schedule exit from APT mode after recording duration
+        # Release APT mode once the recording actually finishes.
+        #
+        # Don't just sleep for the pass duration: record_pass() returns True for
+        # merely *spawning* the capture task, and the capture can die immediately
+        # (e.g. an orphaned rtl_fm still holds the dongle -> "device busy"). A
+        # blind sleep then pins the SDR in APT mode for the full ~15 min while
+        # nothing is being recorded, and every tune is refused with
+        # "Cannot tune — SDR is in APT satellite recording mode". So poll
+        # is_recording and drop APT mode as soon as it is no longer active.
         def _exit_apt():
             import eventlet as _ev
-            _ev.sleep(pass_info.get("duration", 900) + 30)
+
+            deadline = pass_info.get("duration", 900) + 30
+            waited = 0
+            # Grace period for the capture task to come up before we judge it.
+            startup_grace = 20
+            while waited < deadline:
+                _ev.sleep(1)
+                waited += 1
+                if apt_decoder.is_recording:
+                    break
+                if waited >= startup_grace:
+                    log.warning("APT capture for %s never started (device busy?) — "
+                                "releasing APT mode after %ds instead of holding "
+                                "the SDR for the whole pass", satellite, waited)
+                    break
+            # Now wait out the actual recording, if one is running.
+            while apt_decoder.is_recording and waited < deadline:
+                _ev.sleep(1)
+                waited += 1
+
             if input_source.apt_mode:
                 input_source.exit_apt_mode()
                 socketio.emit("status", _get_status())
+            # Resume opportunistic ADS-B scanning we suspended for the pass
+            if resumed_adsb_scheduler and adsb_scheduler:
+                adsb_scheduler.start()
+                log.info("Resumed ADS-B scan scheduler after APT recording")
+                socketio.emit("notice", {
+                    "message": "ADS-B scanning resumed after satellite pass",
+                    "type": "apt_preempt",
+                })
 
         socketio.start_background_task(_exit_apt)
     else:
         log.warning("Could not enter APT mode for %s", satellite)
+        socketio.emit("error", {
+            "message": f"Could not enter APT mode for {satellite} — pass missed",
+            "type": "apt_failed",
+        })
+        # Nothing to record — put ADS-B scanning back
+        if resumed_adsb_scheduler and adsb_scheduler:
+            adsb_scheduler.start()
 
 
-apt_scheduler = AptScheduler(emit_fn=socketio.emit, on_pass_start=_on_apt_pass_start)
+apt_scheduler = AptScheduler(emit_fn=_late_emit, on_pass_start=_on_apt_pass_start)
 
 # ── WEFAX Weather Fax ──
-wefax_receiver = WefaxReceiver(emit_fn=socketio.emit)
+wefax_receiver = WefaxReceiver(emit_fn=_late_emit)
 
 
 def _on_wefax_broadcast_start(broadcast_info):
@@ -211,7 +445,7 @@ def _on_wefax_broadcast_start(broadcast_info):
     return False
 
 
-wefax_scheduler = WefaxScheduler(emit_fn=socketio.emit, on_broadcast_start=_on_wefax_broadcast_start)
+wefax_scheduler = WefaxScheduler(emit_fn=_late_emit, on_broadcast_start=_on_wefax_broadcast_start)
 
 # ── Meteor Scatter Detection ──
 meteor_analyzer = MeteorAnalyzer()
@@ -219,7 +453,7 @@ meteor_analyzer = MeteorAnalyzer()
 _meteor_is_secondary = (_secondary_task == "meteor")
 _meteor_device_idx = _secondary_device if _meteor_is_secondary else 0
 meteor_detector = MeteorDetector(
-    emit_fn=socketio.emit,
+    emit_fn=_late_emit,
     frequency_hz=METEOR_FREQUENCY,
     device_index=_meteor_device_idx,
 )
@@ -230,7 +464,7 @@ import os as _os
 _classifier_hef = _os.environ.get("CLASSIFIER_HEF_PATH")
 _classifier_classes = _os.environ.get("CLASSIFIER_CLASSES_PATH")
 signal_classifier = SignalClassifier(
-    emit_fn=socketio.emit,
+    emit_fn=_late_emit,
     hef_path=_classifier_hef,
     class_map_path=_classifier_classes,
 )
@@ -238,7 +472,7 @@ log.info("Signal classifier initialized (backend: %s)", signal_classifier.backen
 
 # ── Specific Emitter Identification ──
 _sei_hef = _os.environ.get("SEI_HEF_PATH")
-sei_model = SEIModel(emit_fn=socketio.emit, hef_path=_sei_hef)
+sei_model = SEIModel(emit_fn=_late_emit, hef_path=_sei_hef)
 signal_classifier.set_sei_model(sei_model)
 log.info("SEI model initialized (backend: %s, %d emitters loaded)",
          sei_model.backend, sei_model.get_status()["emitter_count"])
@@ -297,14 +531,15 @@ signal_classifier.emit_fn = lambda *a, **kw: None
 input_source.set_iq_callback(_on_iq_chunk)
 log.info("IQ pipeline wired (segmenter + classifier + spectrogram waterfall)")
 
-# Wire analyzer to tag shower info on each detection
-_original_meteor_emit = socketio.emit
-
-
+# Wire analyzer to tag shower info on each detection.
+# NOTE: this runs on the meteor detector's REAL OS thread (it does a blocking read
+# on rtl_fm's pipe), so it must emit through the bridge, never socketio.emit
+# directly — the direct call raised "greenlet.error: Cannot switch to a different
+# thread" and killed the detector the instant a meteor was detected.
 def _meteor_emit_wrapper(event, data, **kw):
     if event == "meteor_detection" and isinstance(data, dict):
         meteor_analyzer.tag_event_shower(data)
-    _original_meteor_emit(event, data, **kw)
+    emit_safe(event, data, **kw)
 
 
 meteor_detector.emit_fn = _meteor_emit_wrapper
@@ -325,6 +560,21 @@ def _input_error_callback(event, data):
 
 
 input_source.set_error_callback(_input_error_callback)
+
+# ── Emit bridge drain ──
+def emit_bridge_loop():
+    """Deliver events queued by real OS threads.
+
+    This is the ONLY place those events reach Socket.IO. It must run in a
+    greenthread — the hub owns socketio.emit, and calling it from the hardware
+    threads directly is what raised "greenlet.error: Cannot switch to a
+    different thread".
+    """
+    emit_safe.drain_forever(
+        sleep_fn=eventlet.sleep,
+        should_run=lambda: not _signal_stop.is_set(),
+    )
+
 
 # ── Signal meter thread ──
 _signal_stop = threading.Event()
@@ -364,25 +614,47 @@ def api_presets():
 
 @app.route("/api/tune", methods=["POST"])
 def api_tune():
+    """Command the SDR to a preset. Returns as soon as the command is QUEUED.
+
+    The hardware switch takes ~1-2s (kill rtl_fm, wait for the kernel to release
+    the USB interface, respawn). This handler does not wait for it: it validates,
+    hands the command to the arbiter, and returns the C2 snapshot. The UI follows
+    the transition via `sdr_state` / `status` events. That gap between "request"
+    and "actually switched" is what used to let rapid clicks race on the dongle.
+    """
     data = request.get_json(force=True)
     preset_id = data.get("preset_id")
     preset = get_preset_by_id(preset_id)
     if not preset:
         return jsonify({"error": "Unknown preset"}), 400
 
+    # Validate before queueing so a bad request fails synchronously.
+    if mode == "WEBSTREAM" and not preset.get("stream_url"):
+        return jsonify({"error": "No web stream available for this preset (SDR only)"}), 400
+
+    snapshot = sdr_arbiter.request(preset)
+    return jsonify({"status": "commanded", "preset": preset, "sdr": snapshot}), 202
+
+def _apply_tune(preset):
+    """Perform the actual SDR switch. Runs ONLY in the arbiter worker.
+
+    Returns (ok, error_message). Never touches Flask's request context.
+    """
     # Start weather accumulation fresh when the station changes
     if input_source.current_preset is None or \
             input_source.current_preset.get("id") != preset.get("id"):
         _weather_accumulator.reset()
 
-    # Check if web stream mode and no stream_url
-    if mode == "WEBSTREAM" and not preset.get("stream_url"):
-        return jsonify({"error": "No web stream available for this preset (SDR only)"}), 400
-
     # Science tab: display-only, start meteor detector if not running
     if preset.get("category") == "science":
         input_source.stop()
         input_source.current_preset = preset
+        if ism_receiver.is_running:
+            ism_receiver.stop()
+        if acars_receiver.is_running:
+            acars_receiver.stop()
+        if pager_receiver.is_running:
+            pager_receiver.stop()
         if ais_receiver.is_running:
             ais_receiver.stop()
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
@@ -393,7 +665,7 @@ def api_tune():
         if meteor_detector and not meteor_detector.is_running:
             meteor_detector.start()
         _broadcast_status()
-        return jsonify({"status": "tuned", "preset": preset})
+        return True, None
 
     # If switching away from Science, stop meteor detector on main dongle
     if meteor_detector and meteor_detector.is_running and not METEOR_DUAL_DONGLE:
@@ -408,14 +680,100 @@ def api_tune():
             adsb_receiver.stop()
             if adsb_scheduler:
                 adsb_scheduler.start()
-        # Stop AIS if active
+        # Stop AIS / ISM / ACARS / Pager if active
         if ais_receiver.is_running:
             ais_receiver.stop()
+        if ism_receiver.is_running:
+            ism_receiver.stop()
+        if acars_receiver.is_running:
+            acars_receiver.stop()
+        if pager_receiver.is_running:
+            pager_receiver.stop()
         _broadcast_status()
-        return jsonify({"status": "tuned", "preset": preset})
+        return True, None
 
     is_adsb = preset.get("mode") == "adsb"
     is_ais = preset.get("mode") == "ais"
+    is_ism = preset.get("mode") == "ism"
+    is_acars = preset.get("mode") == "acars"
+    is_pager = preset.get("mode") == "pager"
+
+    # Pager dedicated mode: stop audio pipeline, run rtl_fm|multimon-ng continuously
+    if is_pager:
+        input_source.stop()
+        input_source.current_preset = preset
+        for _rx in (ais_receiver, ism_receiver, acars_receiver):
+            if _rx.is_running:
+                _rx.stop()
+        if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+            adsb_receiver.stop()
+            if adsb_scheduler:
+                adsb_scheduler.start()
+        pager_receiver.frequency = preset.get("freq", pager_receiver.frequency)
+        pager_receiver.start()
+        if not pager_receiver.is_running:
+            reason = pager_receiver.last_error or "unknown error"
+            log.error("Failed to start multimon-ng pager decoder: %s", reason)
+            return False, f"Failed to start pager decoder — {reason}"
+        log.info("Pager dedicated mode — multimon-ng on %s", pager_receiver.frequency)
+        _broadcast_status()
+        return True, None
+
+    # Switching away from pager: stop multimon-ng
+    if pager_receiver.is_running:
+        pager_receiver.stop()
+
+    # ACARS dedicated mode: stop audio pipeline, run acarsdec continuously
+    if is_acars:
+        input_source.stop()
+        input_source.current_preset = preset
+        if ais_receiver.is_running:
+            ais_receiver.stop()
+        if ism_receiver.is_running:
+            ism_receiver.stop()
+        if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+            adsb_receiver.stop()
+            if adsb_scheduler:
+                adsb_scheduler.start()
+        acars_receiver.start()
+        if not acars_receiver.is_running:
+            reason = acars_receiver.last_error or "unknown error"
+            log.error("Failed to start acarsdec: %s", reason)
+            return False, f"Failed to start acarsdec — {reason}"
+        log.info("ACARS dedicated mode — acarsdec running on %s",
+                 ",".join(acars_receiver.channels))
+        _broadcast_status()
+        return True, None
+
+    # Switching away from ACARS: stop acarsdec
+    if acars_receiver.is_running:
+        acars_receiver.stop()
+
+    # ISM dedicated mode: stop audio pipeline, run rtl_433 continuously
+    if is_ism:
+        input_source.stop()
+        input_source.current_preset = preset
+        if ais_receiver.is_running:
+            ais_receiver.stop()
+        if acars_receiver.is_running:
+            acars_receiver.stop()
+        if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+            adsb_receiver.stop()
+            if adsb_scheduler:
+                adsb_scheduler.start()
+        ism_receiver.frequency = preset.get("freq", ism_receiver.frequency)
+        ism_receiver.start()
+        if not ism_receiver.is_running:
+            reason = ism_receiver.last_error or "unknown error"
+            log.error("Failed to start rtl_433: %s", reason)
+            return False, f"Failed to start rtl_433 — {reason}"
+        log.info("ISM dedicated mode — rtl_433 running on %s", ism_receiver.frequency)
+        _broadcast_status()
+        return True, None
+
+    # Switching away from ISM: stop rtl_433
+    if ism_receiver.is_running:
+        ism_receiver.stop()
 
     # AIS dedicated mode: stop audio pipeline, run rtl_ais continuously
     if is_ais:
@@ -429,10 +787,10 @@ def api_tune():
         ais_receiver.start()
         if not ais_receiver.is_running:
             log.error("Failed to start rtl_ais")
-            return jsonify({"error": "Failed to start rtl_ais"}), 500
+            return False, "Failed to start rtl_ais"
         log.info("AIS dedicated mode — rtl_ais running continuously")
         _broadcast_status()
-        return jsonify({"status": "tuned", "preset": preset})
+        return True, None
 
     # Switching away from AIS: stop rtl_ais
     if ais_receiver.is_running:
@@ -447,10 +805,10 @@ def api_tune():
         adsb_receiver.start()
         if not adsb_receiver.is_running:
             log.error("Failed to start dump1090")
-            return jsonify({"error": "Failed to start dump1090"}), 500
+            return False, "Failed to start dump1090"
         log.info("ADS-B dedicated mode — dump1090 running continuously")
         _broadcast_status()
-        return jsonify({"status": "tuned", "preset": preset})
+        return True, None
 
     # Switching away from ADS-B: stop dedicated dump1090, restart scheduler
     if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
@@ -460,20 +818,139 @@ def api_tune():
 
     success = input_source.tune(preset)
     if not success:
-        return jsonify({"error": "Failed to tune"}), 500
+        return False, "Failed to tune — SDR busy or unavailable"
 
     transcriber.set_preset(preset)
+    set_last_preset(preset.get("id"))
     _broadcast_status()
 
-    return jsonify({"status": "tuned", "preset": preset})
+    return True, None
+
+
+# ── SDR arbiter ──
+# Serializes and coalesces every SDR switch. See sdr_arbiter.py for why: the
+# hardware takes ~1-2s to switch while HTTP requests arrive in milliseconds, and
+# applying them concurrently orphaned rtl_fm processes that then held the dongle.
+def _on_sdr_state_change(snapshot):
+    """Push the C2 snapshot (commanded vs actual) to every console."""
+    emit_safe("sdr_state", snapshot)
+
+
+def _on_sdr_fault(message, preset):
+    label = (preset or {}).get("label") or (preset or {}).get("id") or "preset"
+    emit_safe("error", {
+        "message": f"SDR switch to {label} failed — {message}",
+        "type": "sdr_fault",
+    })
+
+
+sdr_arbiter = SdrArbiter(
+    apply_fn=_apply_tune,
+    on_change=_on_sdr_state_change,
+    on_error=_on_sdr_fault,
+    sleep_fn=eventlet.sleep,
+)
+
+
+@app.route("/api/sdr/state")
+def api_sdr_state():
+    """C2 view of the radio: commanded vs actual, and the transition between."""
+    return jsonify(sdr_arbiter.snapshot())
+
+
+# ── Radio-side IPC (phase 18) ──
+# This process owns the hardware, so it serves the radio half of the UI/radio
+# boundary. A separate UI process (ui_app.py) drives it over this socket; the
+# built-in Flask routes above remain during the transition.
+ipc_commands = CommandRegistry()
+RADIO_SOCKET_PATH = resolve_socket_path()
+ipc_server = IpcServer(RADIO_SOCKET_PATH, registry=ipc_commands)
+
+
+@ipc_commands.command("status")
+def _cmd_status(args):
+    return _get_status()
+
+
+@ipc_commands.command("sdr_state")
+def _cmd_sdr_state(args):
+    return sdr_arbiter.snapshot()
+
+
+@ipc_commands.command("presets")
+def _cmd_presets(args):
+    return {"presets": get_presets(), "categories": CATEGORY_LABELS}
+
+
+@ipc_commands.command("tune")
+def _cmd_tune(args):
+    preset = get_preset_by_id(args.get("preset_id"))
+    if not preset:
+        raise ValueError(f"unknown preset: {args.get('preset_id')!r}")
+    if mode == "WEBSTREAM" and not preset.get("stream_url"):
+        raise ValueError("no web stream available for this preset (SDR only)")
+    return {"preset": preset, "sdr": sdr_arbiter.request(preset)}
+
+
+@ipc_commands.command("stop")
+def _cmd_stop(args):
+    input_source.stop()
+    sdr_arbiter.adopt(None)
+    _broadcast_status()
+    return sdr_arbiter.snapshot()
+
+
+@ipc_commands.command("squelch")
+def _cmd_squelch(args):
+    input_source.set_squelch(int(args.get("level", 0)))
+    _broadcast_status()
+    return {"squelch": input_source.squelch}
+
+
+@ipc_commands.command("gain")
+def _cmd_gain(args):
+    input_source.set_gain(args.get("value", "auto"))
+    _broadcast_status()
+    return {"gain": input_source.gain}
+
+
+# Fan every Socket.IO event out to connected UI processes as well.
+# Replacing socketio.emit catches all ~40 existing call sites without touching
+# them; _late_emit above ensures real-thread emitters route through here too.
+_socketio_emit = socketio.emit
+
+
+def _emit_with_ipc_fanout(event, data=None, **kwargs):
+    try:
+        if data is None and not kwargs:
+            result = _socketio_emit(event)
+        else:
+            result = _socketio_emit(event, data, **kwargs)
+    finally:
+        # A UI process must never be able to break local emission.
+        try:
+            ipc_server.broadcast(event, data)
+        except Exception:
+            log.debug("IPC fan-out failed for %r", event, exc_info=True)
+    return result
+
+
+socketio.emit = _emit_with_ipc_fanout
 
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
     input_source.stop()
-    # Stop dedicated AIS mode if active
+    sdr_arbiter.adopt(None)      # nothing is tuned now
+    # Stop dedicated AIS / ISM mode if active
     if ais_receiver.is_running:
         ais_receiver.stop()
+    if ism_receiver.is_running:
+        ism_receiver.stop()
+    if acars_receiver.is_running:
+        acars_receiver.stop()
+    if pager_receiver.is_running:
+        pager_receiver.stop()
     # Stop dedicated ADS-B mode if active
     if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
         adsb_receiver.stop()
@@ -567,6 +1044,21 @@ def api_ais_vessels():
     return jsonify(ais_receiver.get_vessels())
 
 
+@app.route("/api/ism/devices")
+def api_ism_devices():
+    return jsonify(ism_receiver.get_devices())
+
+
+@app.route("/api/acars/messages")
+def api_acars_messages():
+    return jsonify(acars_receiver.get_messages())
+
+
+@app.route("/api/pager/pages")
+def api_pager_pages():
+    return jsonify(pager_receiver.get_pages())
+
+
 @app.route("/api/weather/current")
 def api_weather_current():
     if _latest_weather is None:
@@ -616,6 +1108,8 @@ def api_wefax_record():
 
     Body (JSON, all optional): frequency_khz, station, chart_type, duration_minutes.
     """
+    if not WEFAX_ENABLED:
+        return jsonify({"error": "WEFAX is disabled (WEFAX_ENABLED=false)"}), 403
     if wefax_receiver.is_recording:
         return jsonify({"error": "WEFAX capture already in progress"}), 409
 
@@ -700,9 +1194,60 @@ def api_emitter_label(emitter_id):
     return jsonify({"error": "Emitter not found"}), 404
 
 
+@app.route("/api/emitters/<emitter_id>", methods=["DELETE"])
+def api_emitter_delete(emitter_id):
+    if sei_model.delete_emitter(emitter_id):
+        return jsonify({"status": "deleted", "emitter_id": emitter_id})
+    return jsonify({"error": "Emitter not found"}), 404
+
+
 @app.route("/api/sei/status")
 def api_sei_status():
     return jsonify(sei_model.get_status())
+
+
+@app.route("/api/training/stats")
+def api_training_stats():
+    """On-device SEI training-corpus stats for the Training panel.
+
+    Reports the enrolled fingerprint DB plus any IQ collected under
+    data/collected/<icao>/. Actual model retrain + HEF compile is an OFFLINE
+    x86 step (Hailo Dataflow Compiler), so `collection_available` is False here —
+    the panel shows this as read-only guidance, not a live trainer.
+    """
+    import os as _os2
+    data_dir = _os2.path.join(_os2.path.dirname(__file__), "data")
+    collected_dir = _os2.path.join(data_dir, "collected")
+    per_emitter = []
+    total_files = 0
+    total_bytes = 0
+    if _os2.path.isdir(collected_dir):
+        for name in sorted(_os2.listdir(collected_dir)):
+            sub = _os2.path.join(collected_dir, name)
+            if not _os2.path.isdir(sub):
+                continue
+            files = [f for f in _os2.listdir(sub) if f.endswith((".npy", ".iq", ".cf32"))]
+            nbytes = 0
+            for f in files:
+                try:
+                    nbytes += _os2.path.getsize(_os2.path.join(sub, f))
+                except OSError:
+                    pass
+            total_files += len(files)
+            total_bytes += nbytes
+            per_emitter.append({"label": name, "samples": len(files), "bytes": nbytes})
+
+    sei_status = sei_model.get_status()
+    return jsonify({
+        "enrolled_emitters": sei_status.get("emitter_count", 0),
+        "collected_samples": total_files,
+        "collected_bytes": total_bytes,
+        "per_emitter": per_emitter,
+        "collection_available": False,
+        "note": ("On-device: curate fingerprints, label emitters, tune thresholds. "
+                 "Model retrain + Hailo HEF compile run offline on x86; load the "
+                 "new .hef to update the weights."),
+    })
 
 
 @app.route("/api/config/secondary")
@@ -784,6 +1329,67 @@ def _start_secondary_task(task):
         log.info("WEFAX configured for secondary dongle (device %d)", dev)
 
 
+@app.route("/api/config")
+def api_config_get():
+    """Return the full runtime settings block (keywords + thresholds)."""
+    return jsonify(get_settings())
+
+
+@app.route("/api/config", methods=["POST"])
+def api_config_set():
+    """Merge a partial settings patch, persist it, and apply it live."""
+    patch = request.get_json(force=True)
+    if not isinstance(patch, dict):
+        return jsonify({"error": "Body must be a JSON object"}), 400
+
+    # Validate the keyword list shape if present
+    if "keywords" in patch:
+        cleaned, err = _sanitize_keywords(patch["keywords"])
+        if err:
+            return jsonify({"error": err}), 400
+        patch["keywords"] = cleaned
+
+    settings = update_settings(patch)
+    _apply_settings(settings)
+    log.info("Settings updated: %s", ", ".join(sorted(patch.keys())))
+    return jsonify(settings)
+
+
+def _sanitize_keywords(raw):
+    """Normalise the keyword list from the UI. Returns (list, error_or_None)."""
+    if not isinstance(raw, list):
+        return None, "keywords must be a list"
+    cleaned = []
+    for item in raw:
+        if isinstance(item, str):
+            item = {"term": item}
+        if not isinstance(item, dict):
+            return None, "each keyword must be a string or object"
+        term = str(item.get("term", "")).strip()
+        if not term:
+            continue
+        severity = item.get("severity", "info")
+        if severity not in ("info", "warning", "critical"):
+            severity = "info"
+        cleaned.append({
+            "term": term,
+            "severity": severity,
+            "enabled": bool(item.get("enabled", True)),
+        })
+    return cleaned, None
+
+
+def _apply_settings(settings):
+    """Push runtime settings into the modules that own each threshold."""
+    try:
+        sei_model.apply_settings(settings)
+        iq_segmenter.apply_settings(settings)
+        transcriber.apply_settings(settings)
+        signal_classifier.apply_settings(settings)
+    except Exception as e:
+        log.warning("Failed to apply some settings: %s", e)
+
+
 @app.route("/api/status")
 def api_status():
     return jsonify(_get_status())
@@ -829,6 +1435,7 @@ def _get_status():
         "mode": mode,
         "squelch": input_source.squelch,
         "gain": input_source.gain,
+        "sdr": sdr_arbiter.snapshot(),
         "sample_rate": input_source.sample_rate,
         "effective_sample_rate": input_source.effective_sample_rate,
         "deemp": input_source.deemp,
@@ -843,8 +1450,12 @@ def _get_status():
         "adsb_scanning": adsb_scheduler.is_scanning if adsb_scheduler else False,
         "adsb_dedicated": adsb_receiver.is_running if adsb_receiver else False,
         "ais_dedicated": ais_receiver.is_running,
+        "ism_running": ism_receiver.is_running,
+        "acars_running": acars_receiver.is_running,
+        "pager_running": pager_receiver.is_running,
         "apt_mode": input_source.apt_mode,
         "apt_recording": apt_decoder.is_recording,
+        "wefax_enabled": WEFAX_ENABLED,
         "wefax_mode": input_source.wefax_mode,
         "wefax_recording": wefax_receiver.is_recording,
         "meteor_enabled": True,
@@ -891,6 +1502,30 @@ def ais_broadcast_loop():
             vessels = ais_receiver.get_vessels()
             if vessels:
                 socketio.emit("ais_update", vessels)
+
+
+def ism_broadcast_loop():
+    """Push the full ISM device table (with TTL expiry) to clients every 3s."""
+    while not _signal_stop.is_set():
+        eventlet.sleep(3)
+        if ism_receiver.is_running:
+            socketio.emit("ism_update", ism_receiver.get_devices())
+
+
+def acars_broadcast_loop():
+    """Push the ACARS aircraft table (with TTL expiry) to clients every 3s."""
+    while not _signal_stop.is_set():
+        eventlet.sleep(3)
+        if acars_receiver.is_running:
+            socketio.emit("acars_update", acars_receiver.get_messages())
+
+
+def pager_broadcast_loop():
+    """Push the pager address table (with TTL expiry) to clients every 3s."""
+    while not _signal_stop.is_set():
+        eventlet.sleep(3)
+        if pager_receiver.is_running:
+            socketio.emit("pager_update", pager_receiver.get_pages())
 
 
 def iq_pipeline_emit_loop():
@@ -993,6 +1628,7 @@ def _do_shutdown(signum=None):
     log.info("Shutting down (triggered by %s)...", sig_name)
 
     _signal_stop.set()
+    ipc_server.stop()
     input_source.stop()
     transcriber.stop()
     if adsb_receiver:
@@ -1000,6 +1636,9 @@ def _do_shutdown(signum=None):
     if adsb_scheduler:
         adsb_scheduler.stop()
     ais_receiver.stop()
+    ism_receiver.stop()
+    acars_receiver.stop()
+    pager_receiver.stop()
     apt_scheduler.stop()
     apt_decoder.stop()
     wefax_scheduler.stop()
@@ -1032,19 +1671,72 @@ signal.signal(signal.SIGINT, shutdown)
 atexit.register(shutdown)
 
 
+def _auto_tune_on_startup():
+    """Tune the configured startup preset so the node collects unattended.
+
+    Only plain audio presets are restored — dedicated modes (ADS-B, AIS,
+    Science, WEFAX) hold the dongle outright and are left for the operator,
+    so an unattended boot never blocks a scheduled satellite pass.
+    """
+    preset_id = get_startup_preset(_config)
+    if not preset_id:
+        log.info("No startup preset configured — starting idle")
+        return
+
+    preset = get_preset_by_id(preset_id)
+    if not preset:
+        log.warning("Startup preset %r not found — starting idle", preset_id)
+        return
+
+    if preset.get("mode") in ("adsb", "ais") or preset.get("category") in ("science", "wefax"):
+        log.warning("Startup preset %r is a dedicated mode — starting idle", preset_id)
+        return
+
+    if input_source.tune(preset):
+        transcriber.set_preset(preset)
+        # Tell the arbiter what the hardware is actually doing, so the console's
+        # ACTUAL field is populated from boot rather than after the first command.
+        sdr_arbiter.adopt(preset)
+        log.info("Auto-tuned startup preset: %s (%s)",
+                 preset.get("label", ""), preset.get("freq", ""))
+    else:
+        log.error("Failed to auto-tune startup preset %r", preset_id)
+
+
 # ── Main ──
 
 if __name__ == "__main__":
     log.info("Starting ravenSDR v%s...", VERSION)
+    _apply_settings(get_settings())  # push persisted thresholds into the modules
     transcriber.start()
+    # Tune before the schedulers start, so a pass firing at boot preempts us
+    # rather than us stealing the dongle out from under an active recording.
+    _auto_tune_on_startup()
+    # Drain real-thread events into the hub. Start this FIRST: until it runs,
+    # anything the hardware threads emit only queues up.
+    socketio.start_background_task(emit_bridge_loop)
+    # Single worker that owns every SDR switch, serialized and coalescing.
+    sdr_arbiter.start(spawn_fn=socketio.start_background_task)
+    # Serve the radio half of the UI/radio boundary (phase 18).
+    try:
+        ipc_server.start()
+    except OSError as e:
+        log.error("Could not start IPC server on %s: %s — UI processes cannot "
+                  "connect, built-in web UI still works", RADIO_SOCKET_PATH, e)
     socketio.start_background_task(signal_meter_loop)
     socketio.start_background_task(sdr_health_loop)
     socketio.start_background_task(stats_broadcast_loop)
     if ADSB_ENABLED:
         socketio.start_background_task(adsb_broadcast_loop)
     socketio.start_background_task(ais_broadcast_loop)
+    socketio.start_background_task(ism_broadcast_loop)
+    socketio.start_background_task(acars_broadcast_loop)
+    socketio.start_background_task(pager_broadcast_loop)
     apt_scheduler.start()
-    wefax_scheduler.start()
+    if WEFAX_ENABLED:
+        wefax_scheduler.start()
+    else:
+        log.info("WEFAX disabled (WEFAX_ENABLED=false) — scheduler not started")
     socketio.start_background_task(meteor_stats_loop)
     socketio.start_background_task(iq_pipeline_emit_loop)
     # Start secondary dongle task from config (if configured)

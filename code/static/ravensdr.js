@@ -5,6 +5,7 @@
 
     // ── State ──
     let currentPresetId = null;
+    let sdrC2 = null;          // last SDR command & control snapshot
     let presets = [];
     let categories = {};
     let activeCategory = null;
@@ -16,6 +17,10 @@
     let meteorPanel = null;
     let classifierPanel = null;
     let seiPanel = null;
+    let settingsPanel = null;
+    let ismPanel = null;
+    let acarsPanel = null;
+    let pagerPanel = null;
 
     // ── DOM refs ──
     const modeBadge = document.getElementById("mode-badge");
@@ -69,6 +74,24 @@
         if (window.SEIPanel && !seiPanel) {
             seiPanel = new window.SEIPanel(socket);
         }
+        if (window.SettingsPanel && !settingsPanel) {
+            settingsPanel = new window.SettingsPanel(socket);
+        }
+        if (window.IsmPanel && !ismPanel) {
+            ismPanel = new window.IsmPanel(socket);
+        }
+        if (window.AcarsPanel && !acarsPanel) {
+            acarsPanel = new window.AcarsPanel(socket);
+        }
+        if (window.PagerPanel && !pagerPanel) {
+            pagerPanel = new window.PagerPanel(socket);
+        }
+    });
+
+    // Keyword-hit toast: reuse the transcript feed as a lightweight notice
+    socket.on("keyword_hit", function (data) {
+        addNoticeEntry("KEYWORD [" + (data.severity || "info") + "] \"" + data.term
+            + "\" — " + (data.transcript || ""));
     });
 
     socket.on("disconnect", function () {
@@ -95,6 +118,18 @@
 
     socket.on("status", function (data) {
         updateStatus(data);
+        if (data.sdr) renderSdrC2(data.sdr);
+    });
+
+    // SDR command & control: commanded vs actual, plus the transition.
+    socket.on("sdr_state", function (data) {
+        renderSdrC2(data);
+    });
+
+    // Link to the radio process. Distinguishes "the radio says nothing is
+    // tuned" from "this console cannot reach the radio at all".
+    socket.on("radio_link", function (data) {
+        renderRadioLink(data);
     });
 
     socket.on("signal_level", function (data) {
@@ -107,6 +142,10 @@
 
     socket.on("inference_stats", function (stats) {
         updateStats(stats);
+    });
+
+    socket.on("notice", function (data) {
+        addNoticeEntry(data.message);
     });
 
     socket.on("error", function (data) {
@@ -163,6 +202,75 @@
         renderPresetButtons(catId);
     }
 
+    // ── SDR command & control ──
+    // The radio is separate hardware with a real switching delay, so the console
+    // reports what it was COMMANDED to do, what it is ACTUALLY doing, and the
+    // transition between the two.
+    function renderSdrC2(snap) {
+        if (!snap) return;
+        const prev = sdrC2;
+        sdrC2 = snap;
+
+        const lamp = document.getElementById("c2-state-lamp");
+        const stateEl = document.getElementById("c2-state");
+        const actualEl = document.getElementById("c2-actual");
+        const cmdEl = document.getElementById("c2-commanded");
+        const faultEl = document.getElementById("c2-fault");
+        if (!lamp || !stateEl) return;
+
+        const state = snap.state || "LOCKED";
+        const key = state.toLowerCase();
+        lamp.className = "c2-lamp c2-lamp-" + key;
+        stateEl.textContent = state;
+        stateEl.className = "c2-state is-" + key;
+
+        if (actualEl) actualEl.textContent = describeC2(snap.actual);
+        if (cmdEl) {
+            cmdEl.textContent = describeC2(snap.commanded);
+            cmdEl.classList.toggle("is-pending", !!snap.in_transition);
+        }
+
+        if (faultEl) {
+            if (state === "FAULT" && snap.last_error) {
+                faultEl.textContent = snap.last_error;
+                faultEl.classList.remove("hidden");
+            } else {
+                faultEl.classList.add("hidden");
+            }
+        }
+
+        // Keep the preset grid's pending highlight in step with the transition.
+        const wasPending = prev && prev.in_transition;
+        const cmdChanged = !prev || describeC2(prev.commanded) !== describeC2(snap.commanded);
+        if (activeCategory && (wasPending !== !!snap.in_transition || cmdChanged)) {
+            renderPresetButtons(activeCategory);
+        }
+    }
+
+    function renderRadioLink(snap) {
+        const lamp = document.getElementById("c2-link-lamp");
+        const label = document.getElementById("c2-link");
+        if (!lamp || !label || !snap) return;
+        const up = snap.link === "UP";
+        lamp.className = "c2-lamp " + (up ? "c2-lamp-locked" : "c2-lamp-fault");
+        label.textContent = up ? "LINK" : "NO LINK";
+        label.className = "c2-state " + (up ? "is-locked" : "is-fault");
+        label.title = up
+            ? "Radio process connected (" + snap.socket + ")"
+            : "Radio unreachable: " + (snap.last_error || "unknown");
+        if (!up) {
+            // Actual state is now unknowable — say so rather than showing stale data.
+            const actualEl = document.getElementById("c2-actual");
+            if (actualEl) actualEl.textContent = "—";
+        }
+    }
+
+    function describeC2(entry) {
+        if (!entry) return "—";
+        const label = entry.label || entry.id || "?";
+        return entry.freq ? label + "  " + entry.freq : label;
+    }
+
     function renderPresetButtons(catId) {
         presetButtons.innerHTML = "";
         var filtered = presets.filter(function (p) { return p.category === catId; });
@@ -171,6 +279,12 @@
             btn.className = "preset-btn";
             if (preset.id === currentPresetId) {
                 btn.classList.add("active");
+            }
+            // Switching takes ~1-2s. Flag the in-flight target so a click
+            // visibly registers before the hardware has actually moved.
+            if (sdrC2 && sdrC2.in_transition && sdrC2.commanded &&
+                preset.id === sdrC2.commanded.id) {
+                btn.classList.add("commanded");
             }
             // Grey out SDR-only presets in web stream mode
             if (modeBadge.textContent.indexOf("WEBSTREAM") !== -1 && !preset.stream_url) {
@@ -242,6 +356,19 @@
                     classifierPanel._fetchStatus();
                 }
 
+                var isIsm = preset.mode === "ism";
+                if (ismPanel) {
+                    if (isIsm) { ismPanel.show(); } else { ismPanel.hide(); }
+                }
+                var isAcars = preset.mode === "acars";
+                if (acarsPanel) {
+                    if (isAcars) { acarsPanel.show(); } else { acarsPanel.hide(); }
+                }
+                var isPager = preset.mode === "pager";
+                if (pagerPanel) {
+                    if (isPager) { pagerPanel.show(); } else { pagerPanel.hide(); }
+                }
+
                 // Manage map panel based on preset + config
                 var isAviation = preset.category === "aviation";
                 var isAdsbOnly = preset.mode === "adsb";
@@ -254,7 +381,7 @@
                     "sei-panel", "control-section", "advanced-panel",
                     "audio-section", "tuned-section",
                 ];
-                var hasAudio = !isWefax && !isScience && !isAdsbOnly && !isAisOnly;
+                var hasAudio = !isWefax && !isScience && !isAdsbOnly && !isAisOnly && !isIsm && !isAcars && !isPager;
 
                 audioSections.forEach(function (id) {
                     var el = document.getElementById(id);
@@ -270,6 +397,27 @@
 
                 // Science tab: show meteor panel, hide transcript
                 if (isScience) {
+                    hideMapPanel();
+                    document.getElementById("transcript-section").style.display = "none";
+                    return;
+                }
+
+                // ISM tab: show sensor table, hide transcript + map
+                if (isIsm) {
+                    hideMapPanel();
+                    document.getElementById("transcript-section").style.display = "none";
+                    return;
+                }
+
+                // ACARS: show message feed, hide transcript + map (even though aviation)
+                if (isAcars) {
+                    hideMapPanel();
+                    document.getElementById("transcript-section").style.display = "none";
+                    return;
+                }
+
+                // Pager: show message feed, hide transcript + map
+                if (isPager) {
                     hideMapPanel();
                     document.getElementById("transcript-section").style.display = "none";
                     return;
@@ -416,6 +564,16 @@
         transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
     }
 
+    function addNoticeEntry(message) {
+        var entry = document.createElement("div");
+        entry.className = "transcript-entry notice-entry";
+        entry.innerHTML =
+            '<span class="ts">' + new Date().toLocaleTimeString() + '</span> ' +
+            '<span class="notice-text">' + escapeHtml(message) + '</span>';
+        transcriptFeed.appendChild(entry);
+        transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
+    }
+
     function escapeHtml(text) {
         var div = document.createElement("div");
         div.textContent = text;
@@ -438,6 +596,9 @@
                 if (satellitePanel) satellitePanel.hide();
                 if (wefaxPanel) wefaxPanel.hide();
                 if (meteorPanel) meteorPanel.hide();
+                if (ismPanel) ismPanel.hide();
+                if (acarsPanel) acarsPanel.hide();
+                if (pagerPanel) pagerPanel.hide();
                 document.getElementById("transcript-section").style.display = "";
             });
     });

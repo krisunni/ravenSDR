@@ -18,6 +18,25 @@ DEFAULT_CONFIG = {
         "task": None,       # "adsb", "meteor", "wefax", or None
         "device_index": 1,
     },
+    "startup": {
+        "auto_tune": True,
+        "default_preset": None,   # preset id to pin; None = resume last tuned
+    },
+    "last_preset": None,          # preset id, updated on each audio-preset tune
+    # Runtime-tunable NPU/analysis settings, editable from the Settings tab.
+    # Defaults mirror the original module constants so behaviour is unchanged
+    # until the user overrides them.
+    "settings": {
+        # Keyword watchlist — transcripts (Whisper NPU output) are scanned for
+        # these terms; a hit raises an alert. Each entry: {term, severity, enabled}.
+        "keywords": [],
+        "keywords_enabled": True,
+        # Model / pipeline thresholds (see the owning module for meaning).
+        "sei_match_threshold": 0.85,      # sei_model.MATCH_THRESHOLD
+        "segmenter_threshold_db": 10,     # iq_segmenter.DEFAULT_THRESHOLD_DB
+        "silence_threshold": 500,         # transcriber.SILENCE_THRESHOLD
+        "classifier_confidence": 0.7,     # signal_classifier.CONFIDENCE_THRESHOLD
+    },
 }
 
 
@@ -111,6 +130,59 @@ def set_secondary_task(task):
         config["secondary_dongle"]["task"] = None
     save_config(config)
     return config
+
+
+def get_startup_preset(config=None):
+    """Preset id to tune when the app starts, or None to start idle.
+
+    A pinned `startup.default_preset` wins; otherwise the last audio preset
+    tuned from the UI is resumed, so a restart picks up where it left off.
+    """
+    if config is None:
+        config = load_config()
+    startup = config.get("startup", {})
+    if not startup.get("auto_tune", True):
+        return None
+    return startup.get("default_preset") or config.get("last_preset")
+
+
+def set_last_preset(preset_id):
+    """Remember the last audio preset tuned, for resume-on-restart."""
+    config = load_config()
+    if config.get("last_preset") == preset_id:
+        return config
+    config["last_preset"] = preset_id
+    save_config(config)
+    return config
+
+
+def get_settings(config=None):
+    """Return the runtime settings block, backfilling any missing defaults.
+
+    Configs written by older versions may lack `settings` (or individual keys),
+    so merge onto the defaults rather than returning the stored block directly.
+    """
+    if config is None:
+        config = load_config()
+    merged = _deep_copy(DEFAULT_CONFIG["settings"])
+    stored = config.get("settings")
+    if isinstance(stored, dict):
+        _merge(merged, stored)
+    return merged
+
+
+def update_settings(patch):
+    """Merge `patch` into the settings block and persist. Returns new settings.
+
+    Only keys present in `patch` are changed; everything else is preserved.
+    """
+    config = load_config()
+    current = get_settings(config)
+    if isinstance(patch, dict):
+        _merge(current, patch)
+    config["settings"] = current
+    save_config(config)
+    return current
 
 
 def _deep_copy(d):

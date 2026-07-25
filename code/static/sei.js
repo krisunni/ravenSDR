@@ -99,7 +99,7 @@
         if (this.emitters.length === 0) {
             var row = document.createElement("tr");
             var td = document.createElement("td");
-            td.colSpan = 5;
+            td.colSpan = 6;
             td.className = "sei-no-data";
             td.textContent = "No emitters enrolled yet";
             row.appendChild(td);
@@ -145,6 +145,20 @@
             });
             freqTd.textContent = freqs.join(", ") || "—";
             row.appendChild(freqTd);
+
+            var actTd = document.createElement("td");
+            var delBtn = document.createElement("button");
+            delBtn.className = "sei-del-btn";
+            delBtn.textContent = "×";
+            delBtn.title = "Delete emitter";
+            delBtn.addEventListener("click", function () {
+                if (!window.confirm("Delete emitter " + em.emitter_id + "?")) return;
+                fetch("/api/emitters/" + em.emitter_id, { method: "DELETE" })
+                    .then(function () { self._fetchEmitters(); })
+                    .catch(function () {});
+            });
+            actTd.appendChild(delBtn);
+            row.appendChild(actTd);
 
             tbody.appendChild(row);
         });

@@ -110,6 +110,14 @@ class IQSegmenter:
         """Set current center frequency for segment metadata."""
         self._frequency_hz = frequency_hz
 
+    def apply_settings(self, settings):
+        """Apply runtime settings from the Settings tab (see config.py)."""
+        try:
+            self.threshold_db = float(settings.get(
+                "segmenter_threshold_db", self.threshold_db))
+        except (TypeError, ValueError):
+            pass
+
     def feed(self, iq_samples):
         """Feed IQ samples into the segmenter.
 

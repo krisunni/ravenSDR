@@ -112,6 +112,7 @@ class SignalClassifier:
         self._vdevice = None
         self._running = False
         self._lock = threading.Lock()
+        self.confidence_threshold = CONFIDENCE_THRESHOLD  # runtime-tunable
 
         # SEI pipeline (set via set_sei_model)
         self._sei_model = None
@@ -151,6 +152,14 @@ class SignalClassifier:
         """Set SEI model for emitter fingerprinting after classification."""
         self._sei_model = sei_model
 
+    def apply_settings(self, settings):
+        """Apply runtime settings from the Settings tab (see config.py)."""
+        try:
+            self.confidence_threshold = float(settings.get(
+                "classifier_confidence", self.confidence_threshold))
+        except (TypeError, ValueError):
+            pass
+
     @property
     def backend(self):
         return self._backend
@@ -189,7 +198,7 @@ class SignalClassifier:
         modulation, confidence, probs = result
 
         # Check confidence threshold
-        if confidence < CONFIDENCE_THRESHOLD:
+        if confidence < self.confidence_threshold:
             return None
 
         # Check uncertainty (top two classes close)

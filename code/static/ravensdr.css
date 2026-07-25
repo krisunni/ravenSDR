@@ -537,6 +537,7 @@ select {
 .text { color: var(--text); }
 
 .error-entry .error-text { color: var(--red); }
+.notice-entry .notice-text { color: var(--yellow); }
 
 @keyframes slideIn {
     from { opacity: 0; transform: translateY(-4px); }
@@ -753,3 +754,79 @@ select {
     line-height: 1.4;
 }
 .forecast-period strong { text-transform: capitalize; }
+
+/* ── SDR command & control ──
+   The SDR is separate hardware: it is commanded to a state and reports the
+   state it is actually in. Showing both (plus the transition) is what lets an
+   operator tell "the radio is still slewing" from "the click did nothing". */
+.sdr-c2 {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 4px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.c2-lamp-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 92px;
+}
+
+.c2-lamp {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    flex: none;
+}
+
+.c2-lamp-locked   { background: var(--green);  box-shadow: 0 0 5px var(--green); }
+.c2-lamp-switching{ background: var(--yellow); box-shadow: 0 0 5px var(--yellow);
+                    animation: c2-pulse 0.9s ease-in-out infinite; }
+.c2-lamp-fault    { background: var(--red);    box-shadow: 0 0 5px var(--red); }
+
+@keyframes c2-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+}
+
+.c2-state { letter-spacing: 0.08em; font-weight: 600; color: var(--text-dim); }
+.c2-state.is-locked    { color: var(--green); }
+.c2-state.is-switching { color: var(--yellow); }
+.c2-state.is-fault     { color: var(--red); }
+
+.c2-fields { display: flex; flex-direction: column; gap: 1px; }
+.c2-field  { display: flex; gap: 6px; align-items: baseline; }
+
+.c2-key {
+    color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    min-width: 42px;
+}
+
+.c2-val { color: var(--text); }
+
+/* While commanded != actual, the pending target is what to watch. */
+.c2-val.is-pending { color: var(--yellow); }
+
+.c2-fault {
+    color: var(--red);
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* A preset button whose switch is still in flight. */
+.preset-btn.commanded {
+    border-color: var(--yellow);
+    background: #3a2f1a;
+}

@@ -212,12 +212,117 @@ Single-page console-style UI with:
 
 ---
 
+## 3.9 Process Architecture — UI / Radio Split
+
+### Why
+
+The console used to die with the hardware. Everything ran in one eventlet
+process, and eventlet's hub is cooperatively scheduled on a single OS thread: any
+*blocking* call — a read on an `rtl_fm` pipe, a Hailo inference, a decoder's
+stdout — stalls the hub, which means every HTTP request and Socket.IO frame stops
+until it returns. Observed failures:
+
+- A meteor detection did a blocking pipe read from a green thread; the entire web
+  UI froze the instant a meteor was detected.
+- Overlapping `/api/tune` requests raced on the dongle, orphaning an `rtl_fm`
+  that then held the device so every later tune, APT capture, and piped decoder
+  failed with `usb_claim_interface error -6`.
+- A Hailo driver fault took down inference, and with it the process serving the
+  console.
+
+The SDR is separate hardware and is treated as such: it is *commanded*, it
+reports its *actual* state, and it is allowed to fail without taking the operator
+interface with it.
+
+### Topology
+
+```
+  ravensdr-ui.service                      ravensdr-radio.service
+  ┌───────────────────────────┐            ┌──────────────────────────────┐
+  │ Flask + Socket.IO         │   NDJSON   │ SdrArbiter (queue of one)    │
+  │ static assets, templates  │◄──────────►│ tuner / rtl_fm, decoders     │
+  │ RadioLink (auto-reconnect)│   unix     │ Hailo Whisper, schedulers    │
+  │ owns NO hardware          │   socket   │ real OS threads, NO eventlet │
+  └───────────────────────────┘            └──────────────────────────────┘
+        /run/ravensdr/radio.sock  (commands + events)
+        /run/ravensdr/audio.sock  (PCM for /audio-stream)
+```
+
+The UI process owns no hardware and never blocks on it. The radio process is
+deliberately **eventlet-free**, so a blocking read there cannot freeze anything a
+browser talks to.
+
+### IPC protocol (`ipc.py`)
+
+Newline-delimited JSON over a Unix domain socket — trivially framed, greppable,
+no schema compiler on a Pi. Three message kinds:
+
+| Kind | Direction | Shape |
+|---|---|---|
+| `req` | UI → radio | `{"t":"req","id":7,"cmd":"tune","args":{…}}` |
+| `res` | radio → UI | `{"t":"res","id":7,"ok":true,"data":{…}}` |
+| `ev` | radio → UI | `{"t":"ev","name":"status","data":{…}}` (unsolicited) |
+
+`ev` is what keeps the console live: the radio pushes status / transcript /
+detection events and the UI relays them to browsers over Socket.IO.
+
+`FrameBuffer` reassembles frames split across `recv()` boundaries and caps a
+single frame at 4 MB so a desynced stream can't consume unbounded memory.
+`CommandRegistry.dispatch` converts a raising handler into an error response, so
+one bad command never drops the connection.
+
+**Sockets must be `shutdown()` before `close()`.** While another thread is
+blocked in `recv()` on the same fd, the kernel keeps the socket alive and sends
+no FIN — the peer would go on believing the link is healthy. Without `shutdown()`
+a radio process that exits leaves every UI reporting LINK UP forever.
+
+### SDR arbiter (`sdr_arbiter.py`)
+
+Switching the dongle takes ~1–2 s (SIGTERM `rtl_fm`, wait for the kernel to
+release the USB interface, respawn). HTTP requests arrive in milliseconds. The
+arbiter is a **queue of one**, applied by exactly one worker, never concurrently:
+
+- **Serialized** — overlapping stop/start paths can no longer interleave and
+  orphan a process that holds the device.
+- **Coalescing** — while a switch is in flight a newer command *replaces* any
+  older pending one. Five rapid clicks move the hardware once, to the final
+  target, instead of grinding through every intermediate preset.
+- **Observable** — it is the single source of truth for SDR state.
+
+States are command-and-control: `LOCKED` (actual == commanded), `SWITCHING`
+(actual != commanded, transition in progress), `FAULT` (last command failed;
+`actual` is the last confirmed state, not the requested one).
+
+### Link state as telemetry
+
+`RadioLink` reports `UP`/`DOWN` with reconnect count and last error, and
+reconnects with exponential backoff (0.5 s → 10 s). The console renders link
+state next to SDR state so an operator can distinguish *"the radio says nothing
+is tuned"* from *"I cannot reach the radio at all"*. Commands issued while the
+link is down fail fast with that reason rather than hanging an HTTP handler.
+
+### Failure modes
+
+| Failure | Behaviour |
+|---|---|
+| Radio service stopped / restarting | UI loads and renders last-known state; LINK DOWN; commands rejected with reason; auto-reconnects |
+| UI service stopped | Radio keeps receiving, decoding, transcribing, and recording satellite passes |
+| Radio crashes mid-command | In-flight command fails fast ("link dropped mid-command"); no hang |
+| UI started before radio | UI connects on its own once the radio is up |
+| Unclean exit leaves socket file | Server unlinks the stale path before bind, so no spurious `EADDRINUSE` |
+| Slow/wedged UI client | Radio drops that client on send failure; never blocks the hardware |
+
+---
+
 ## 4. Error Handling
 
 | Scenario | Response |
 |---|---|
 | SDR not connected | Emit error event, UI banner, poll every 10s, auto-recover |
 | rtl_fm crash | Monitor with process.poll(), emit error, expose retry button |
+| Orphaned rtl_fm holding the dongle | Tuner tracks every spawned pid and kills the whole set on stop; orphan reap is logged as a warning |
+| Overlapping tune requests | Serialized and coalesced by `SdrArbiter`; superseded commands never touch hardware |
+| Radio process unreachable | UI stays up, reports LINK DOWN, fails commands fast with the reason |
 | Audio stream drop | Browser resets src after 2s delay |
 | ALSA loopback missing | Warn on startup |
 | Hailo NPU absent | Auto-fallback to faster-whisper CPU, show "CPU mode" badge |
@@ -243,7 +348,11 @@ Single-page console-style UI with:
 
 ```
 ravensdr/
-├── app.py                  # Flask app, routes, Socket.IO events
+├── app.py                  # Flask app, routes, Socket.IO events (UI process)
+├── ipc.py                  # NDJSON protocol: codec, FrameBuffer, CommandRegistry
+├── ipc_server.py           # Radio-side Unix-socket server (real threads)
+├── radio_link.py           # UI-side client: auto-reconnect, LINK UP/DOWN
+├── sdr_arbiter.py          # Serialized, coalescing SDR command queue
 ├── input_source.py         # InputSource abstraction
 ├── tuner.py                # RTL-FM process manager
 ├── stream_source.py        # Web stream ingest via ffmpeg

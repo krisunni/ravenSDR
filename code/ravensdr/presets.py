@@ -50,58 +50,10 @@ PRESETS = [
         "expected_modulation": "WFM",
     },
     # ── Aviation ──
-    {
-        "id": "ksea-atis",
-        "label": "SEA-TAC ATIS",
-        "freq": "118.000M",
-        "mode": "am",
-        "category": "aviation",
-        "squelch": 30,
-        "stream_url": "https://www.liveatc.net/hlisten.php?mount=ksea_app&icao=ksea",
-        "note": "SEA-TAC airport info",
-        "expected_modulation": "AM",
-    },
-    {
-        "id": "ksea-tower",
-        "label": "SEA-TAC Tower",
-        "freq": "119.900M",
-        "mode": "am",
-        "category": "aviation",
-        "squelch": 30,
-        "stream_url": "https://www.liveatc.net/hlisten.php?mount=ksea_twr&icao=ksea",
-        "note": "SEA-TAC tower control",
-        "expected_modulation": "AM",
-    },
-    {
-        "id": "ksea-approach",
-        "label": "SEA-TAC Approach",
-        "freq": "124.200M",
-        "mode": "am",
-        "category": "aviation",
-        "squelch": 30,
-        "note": "SEA-TAC approach control — SDR only",
-        "expected_modulation": "AM",
-    },
-    {
-        "id": "kbfi-tower",
-        "label": "Boeing Field Tower",
-        "freq": "120.600M",
-        "mode": "am",
-        "category": "aviation",
-        "squelch": 30,
-        "note": "Boeing Field / King County — SDR only",
-        "expected_modulation": "AM",
-    },
-    {
-        "id": "kpae-tower",
-        "label": "Paine Field Tower",
-        "freq": "132.950M",
-        "mode": "am",
-        "category": "aviation",
-        "squelch": 30,
-        "note": "Paine Field / Snohomish County — SDR only",
-        "expected_modulation": "AM",
-    },
+    # Ground-control AM presets (ATIS/tower/approach) were removed: the antenna is
+    # a horizontal 137 MHz satellite V-dipole (wrong polarization for aviation) and
+    # the airports are 10-20 mi line-of-sight, so nothing was audible. ADS-B and
+    # ACARS below work well and stay. Re-add AM voice with a vertical airband antenna.
     {
         "id": "adsb-1090",
         "label": "ADS-B 1090 MHz",
@@ -166,25 +118,82 @@ PRESETS = [
         "expected_modulation": "WEFAX",
     },
     # ── Public Safety ──
+    # King County / Seattle police + fire dispatch were removed: they run encrypted
+    # P25 trunking, so an FM demod only hears silence. The unencrypted amateur
+    # emergency-comms nets below (Seattle ACS / ARES) are the receivable alternative.
+    # ── Amateur emergency comms (unencrypted FM voice; Whisper-transcribable) ──
+    # Seattle ACS (Seattle OEM auxiliary comms) + nearby King County ARES/RACES.
+    # Tune the repeater OUTPUT; the 103.5 Hz PL tone is transmit-only (no effect
+    # on receive). Seattle ACS practice net: Mondays 7:00-7:30pm PT on 146.960.
     {
-        "id": "kcso-dispatch",
-        "label": "King Co Sheriff",
-        "freq": "460.125M",
+        "id": "seattle-acs-psrg",
+        "label": "Seattle ACS (PSRG)",
+        "freq": "146.960M",
         "mode": "fm",
         "category": "public_safety",
-        "squelch": 25,
-        "note": "King County Sheriff dispatch — SDR only (may be encrypted)",
+        "squelch": 0,
+        "note": "Seattle ACS primary — PSRG 146.96 (Mon 7pm net). Seattle OEM aux comms.",
         "expected_modulation": "FM",
     },
     {
-        "id": "seattle-fire",
-        "label": "Seattle Fire",
-        "freq": "460.575M",
+        "id": "kc-ares-primary",
+        "label": "KC ARES/RACES",
+        "freq": "147.080M",
         "mode": "fm",
         "category": "public_safety",
-        "squelch": 25,
-        "note": "Seattle Fire dispatch — SDR only (may be encrypted)",
+        "squelch": 0,
+        "note": "King County ARES/RACES primary repeater (147.000 is the backup)",
         "expected_modulation": "FM",
+    },
+    {
+        "id": "redmond-ares",
+        "label": "Redmond ARES",
+        "freq": "145.310M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 0,
+        "note": "Redmond ARES — local to this node (Redmond WA)",
+        "expected_modulation": "FM",
+    },
+    {
+        "id": "kirkland-ares",
+        "label": "Kirkland ARES",
+        "freq": "145.490M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 0,
+        "note": "Kirkland ARES 2m repeater",
+        "expected_modulation": "FM",
+    },
+    {
+        "id": "bellevue-simplex",
+        "label": "Bellevue CommSup",
+        "freq": "146.580M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 0,
+        "note": "Bellevue Communications Support simplex",
+        "expected_modulation": "FM",
+    },
+    {
+        "id": "shoreline-acs",
+        "label": "Shoreline ACS",
+        "freq": "442.825M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 0,
+        "note": "Shoreline ACS 70cm repeater (Mon nets)",
+        "expected_modulation": "FM",
+    },
+    {
+        "id": "pager-pocsag",
+        "label": "Pagers (POCSAG)",
+        "freq": "152.0075M",
+        "mode": "pager",
+        "category": "public_safety",
+        "squelch": 0,
+        "note": "POCSAG/FLEX pager text via multimon-ng. Edit freq per local paging channel.",
+        "expected_modulation": "FSK",
     },
     # ── Science ──
     {
@@ -208,9 +217,41 @@ PRESETS = [
         "note": "KEXP Seattle",
         "expected_modulation": "WFM",
     },
+    # ── ACARS aircraft messaging (acarsdec) ──
+    {
+        "id": "acars-vhf",
+        "label": "ACARS (aircraft msgs)",
+        "freq": "131.550M",
+        "mode": "acars",
+        "category": "aviation",
+        "squelch": 0,
+        "note": "acarsdec — VHF ACARS text; correlates with ADS-B map",
+        "expected_modulation": "MSK",
+    },
+    # ── ISM / Sensors (rtl_433) ──
+    {
+        "id": "ism-433",
+        "label": "ISM 433 MHz",
+        "freq": "433.92M",
+        "mode": "ism",
+        "category": "ism",
+        "squelch": 0,
+        "note": "rtl_433 — weather stations, TPMS, meters, remotes",
+        "expected_modulation": "OOK/FSK",
+    },
+    {
+        "id": "ism-915",
+        "label": "ISM 915 MHz",
+        "freq": "915.00M",
+        "mode": "ism",
+        "category": "ism",
+        "squelch": 0,
+        "note": "rtl_433 — US 915 MHz ISM (utility meters, sensors)",
+        "expected_modulation": "OOK/FSK",
+    },
 ]
 
-CATEGORIES = ["weather", "wefax", "aviation", "marine", "science", "public_safety", "broadcast"]
+CATEGORIES = ["weather", "wefax", "aviation", "marine", "science", "public_safety", "ism", "broadcast"]
 
 CATEGORY_LABELS = {
     "weather": "Weather",
@@ -219,6 +260,7 @@ CATEGORY_LABELS = {
     "marine": "Marine",
     "science": "Science",
     "public_safety": "Public Safety",
+    "ism": "ISM / Sensors",
     "broadcast": "Broadcast",
 }
 

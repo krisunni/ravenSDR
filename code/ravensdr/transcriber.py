@@ -10,6 +10,14 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
+# Under eventlet's monkey-patched threading, Thread.join(timeout=...) raises
+# eventlet.timeout.Timeout (a BaseException) instead of returning on expiry.
+try:
+    from eventlet.timeout import Timeout as _EventletTimeout
+    _JOIN_TIMEOUT = (_EventletTimeout,)
+except ImportError:
+    _JOIN_TIMEOUT = ()
+
 SILENCE_THRESHOLD = 500    # RMS value — below this, skip inference
 CHUNK_SAMPLES = 160000     # 10 seconds at 16kHz (matches Hailo encoder input)
 SAMPLE_RATE = 16000
@@ -62,8 +70,12 @@ def compute_rms(pcm_bytes):
     return float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
 
 
+# Runtime-tunable copy of SILENCE_THRESHOLD (updated via Transcriber.apply_settings).
+_silence_threshold = SILENCE_THRESHOLD
+
+
 def is_signal_present(pcm_bytes):
-    return compute_rms(pcm_bytes) > SILENCE_THRESHOLD
+    return compute_rms(pcm_bytes) > _silence_threshold
 
 
 import re
@@ -357,6 +369,15 @@ class Transcriber:
         """Set callback(parsed_data) called when NOAA parser produces results."""
         self._weather_callback = callback
 
+    def apply_settings(self, settings):
+        """Apply runtime settings from the Settings tab (see config.py)."""
+        global _silence_threshold
+        try:
+            _silence_threshold = float(settings.get(
+                "silence_threshold", _silence_threshold))
+        except (TypeError, ValueError):
+            pass
+
     def _post_process(self, text):
         """Route transcript through category-specific post-processors.
 
@@ -380,7 +401,10 @@ class Transcriber:
     def stop(self):
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=5)
+            try:
+                self._thread.join(timeout=5)
+            except _JOIN_TIMEOUT:
+                pass
             if self._thread.is_alive():
                 log.warning("Transcriber thread did not exit within 5s timeout")
             self._thread = None

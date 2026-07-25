@@ -2,10 +2,16 @@
 
 import datetime
 import logging
+import os
 import threading
 import time
 
 log = logging.getLogger(__name__)
+
+# Feature flag — WEFAX needs an HF antenna. Set WEFAX_ENABLED=false to keep the
+# scheduler from claiming the SDR every :00/:30 UTC slot when no HF antenna is
+# connected. Mirrors ADSB_ENABLED / METEOR_ENABLED.
+WEFAX_ENABLED = os.environ.get("WEFAX_ENABLED", "true").lower() == "true"
 
 # ── Hardcoded NMC Point Reyes schedule (UTC times, daily) ──
 # Source: https://www.weather.gov/marine/radiofax
