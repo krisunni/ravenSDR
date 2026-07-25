@@ -27,6 +27,7 @@ from ravensdr.ais_receiver import AisReceiver
 from ravensdr.ism_receiver import IsmReceiver
 from ravensdr.acars_receiver import AcarsReceiver, correlate_with_adsb
 from ravensdr.pager_receiver import PagerReceiver
+from ravensdr.aprs_receiver import AprsReceiver
 from ravensdr.adsb_correlator import extract_callsigns, match_flights
 from ravensdr.noaa_parser import WeatherAccumulator, detect_priority_alert
 from ravensdr.apt_scheduler import AptScheduler
@@ -41,6 +42,7 @@ from ravensdr.iq_segmenter import IQSegmenter
 from ravensdr.config import (
     load_config, save_config, get_secondary_task, set_secondary_task,
     get_startup_preset, set_last_preset, get_settings, update_settings,
+    get_automation, set_automation, is_automation_enabled,
 )
 
 logging.basicConfig(
@@ -200,6 +202,20 @@ def _pager_on_record(record, is_new):
 
 pager_receiver.on_record = _pager_on_record
 
+# ── APRS receiver (rtl_fm | multimon-ng AFSK1200) ──
+aprs_receiver = AprsReceiver(device_index=0)
+
+
+def _aprs_on_record(record, is_new):
+    """Emit each decoded APRS packet.
+
+    Called from multimon-ng's REAL reader thread — emit via the bridge.
+    """
+    emit_safe("aprs_packet", record)
+
+
+aprs_receiver.on_record = _aprs_on_record
+
 # ── Weather state ──
 # Accumulate transcripts across NOAA's broadcast loop and re-summarize; a single
 # garbled Whisper chunk can't carry city/temp/forecast, but voting over a window can.
@@ -330,6 +346,14 @@ def _on_apt_pass_start(pass_info):
                 "type": "apt_preempt",
             })
 
+    if not is_automation_enabled("apt"):
+        log.info("Automation off — not preempting the SDR for %s pass", satellite)
+        emit_safe("notice", {
+            "message": f"{satellite} pass in progress — not recorded (automation off)",
+            "type": "automation_skipped",
+        })
+        return
+
     # Stop ADS-B if it's holding the device (single-dongle mode)
     resumed_adsb_scheduler = False
     if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
@@ -408,9 +432,21 @@ apt_scheduler = AptScheduler(emit_fn=_late_emit, on_pass_start=_on_apt_pass_star
 wefax_receiver = WefaxReceiver(emit_fn=_late_emit)
 
 
+
+def _resume_adsb_scan():
+    """Restart opportunistic ADS-B scanning, unless automation is paused."""
+    if adsb_scheduler and is_automation_enabled("adsb_scan"):
+        adsb_scheduler.start()
+
+
 def _on_wefax_broadcast_start(broadcast_info):
     """Called by scheduler when a WEFAX broadcast begins — start recording."""
     frequency_khz = broadcast_info.get("frequency_khz", 0)
+
+    if not is_automation_enabled("wefax"):
+        log.info("Automation off — not preempting the SDR for WEFAX %s kHz",
+                 frequency_khz)
+        return
 
     # Stop meteor detector if it's holding the device (single-dongle mode)
     if meteor_detector and meteor_detector.is_running and not METEOR_DUAL_DONGLE:
@@ -640,6 +676,11 @@ def _apply_tune(preset):
 
     Returns (ok, error_message). Never touches Flask's request context.
     """
+    # Remember the target for resume-on-restart BEFORE the mode branches, every
+    # one of which returns early. Doing it per-branch is what let dedicated modes
+    # (ISM/APRS/pager/ACARS/AIS/ADS-B) go unrecorded, so a restart came back on a
+    # stale audio preset instead of where the operator left it.
+    set_last_preset(preset.get("id"))
     # Start weather accumulation fresh when the station changes
     if input_source.current_preset is None or \
             input_source.current_preset.get("id") != preset.get("id"):
@@ -655,12 +696,13 @@ def _apply_tune(preset):
             acars_receiver.stop()
         if pager_receiver.is_running:
             pager_receiver.stop()
+        if aprs_receiver.is_running:
+            aprs_receiver.stop()
         if ais_receiver.is_running:
             ais_receiver.stop()
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
-            if adsb_scheduler:
-                adsb_scheduler.start()
+            _resume_adsb_scan()
         # Start meteor detector on the main dongle if not already running
         if meteor_detector and not meteor_detector.is_running:
             meteor_detector.start()
@@ -678,8 +720,7 @@ def _apply_tune(preset):
         # Stop ADS-B dedicated mode if active
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
-            if adsb_scheduler:
-                adsb_scheduler.start()
+            _resume_adsb_scan()
         # Stop AIS / ISM / ACARS / Pager if active
         if ais_receiver.is_running:
             ais_receiver.stop()
@@ -707,8 +748,7 @@ def _apply_tune(preset):
                 _rx.stop()
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
-            if adsb_scheduler:
-                adsb_scheduler.start()
+            _resume_adsb_scan()
         pager_receiver.frequency = preset.get("freq", pager_receiver.frequency)
         pager_receiver.start()
         if not pager_receiver.is_running:
@@ -718,6 +758,30 @@ def _apply_tune(preset):
         log.info("Pager dedicated mode — multimon-ng on %s", pager_receiver.frequency)
         _broadcast_status()
         return True, None
+
+    # APRS dedicated mode: stop audio pipeline, run rtl_fm|multimon-ng continuously
+    if preset.get("mode") == "aprs":
+        input_source.stop()
+        input_source.current_preset = preset
+        for _rx in (ais_receiver, ism_receiver, acars_receiver, pager_receiver):
+            if _rx.is_running:
+                _rx.stop()
+        if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+            adsb_receiver.stop()
+            _resume_adsb_scan()
+        aprs_receiver.frequency = preset.get("freq", aprs_receiver.frequency)
+        aprs_receiver.start()
+        if not aprs_receiver.is_running:
+            reason = aprs_receiver.last_error or "unknown error"
+            log.error("Failed to start APRS decoder: %s", reason)
+            return False, f"Failed to start APRS decoder — {reason}"
+        log.info("APRS dedicated mode — multimon-ng on %s", aprs_receiver.frequency)
+        _broadcast_status()
+        return True, None
+
+    # Switching away from APRS: stop multimon-ng
+    if aprs_receiver.is_running:
+        aprs_receiver.stop()
 
     # Switching away from pager: stop multimon-ng
     if pager_receiver.is_running:
@@ -733,8 +797,7 @@ def _apply_tune(preset):
             ism_receiver.stop()
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
-            if adsb_scheduler:
-                adsb_scheduler.start()
+            _resume_adsb_scan()
         acars_receiver.start()
         if not acars_receiver.is_running:
             reason = acars_receiver.last_error or "unknown error"
@@ -759,8 +822,7 @@ def _apply_tune(preset):
             acars_receiver.stop()
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
-            if adsb_scheduler:
-                adsb_scheduler.start()
+            _resume_adsb_scan()
         ism_receiver.frequency = preset.get("freq", ism_receiver.frequency)
         ism_receiver.start()
         if not ism_receiver.is_running:
@@ -782,8 +844,7 @@ def _apply_tune(preset):
         # Stop ADS-B if running in dedicated mode
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
-            if adsb_scheduler:
-                adsb_scheduler.start()
+            _resume_adsb_scan()
         ais_receiver.start()
         if not ais_receiver.is_running:
             log.error("Failed to start rtl_ais")
@@ -813,15 +874,13 @@ def _apply_tune(preset):
     # Switching away from ADS-B: stop dedicated dump1090, restart scheduler
     if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
         adsb_receiver.stop()
-        if adsb_scheduler:
-            adsb_scheduler.start()
+        _resume_adsb_scan()
 
     success = input_source.tune(preset)
     if not success:
         return False, "Failed to tune — SDR busy or unavailable"
 
     transcriber.set_preset(preset)
-    set_last_preset(preset.get("id"))
     _broadcast_status()
 
     return True, None
@@ -850,6 +909,19 @@ sdr_arbiter = SdrArbiter(
     on_error=_on_sdr_fault,
     sleep_fn=eventlet.sleep,
 )
+
+
+@app.route("/api/automation", methods=["GET", "POST"])
+def api_automation():
+    """Read or update which automation may seize the SDR."""
+    if request.method == "GET":
+        return jsonify(get_automation())
+    patch = request.get_json(force=True) or {}
+    auto = set_automation(patch)
+    log.info("Automation updated: %s", auto)
+    socketio.emit("automation", auto)
+    _broadcast_status()
+    return jsonify(auto)
 
 
 @app.route("/api/sdr/state")
@@ -954,8 +1026,7 @@ def api_stop():
     # Stop dedicated ADS-B mode if active
     if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
         adsb_receiver.stop()
-        if adsb_scheduler:
-            adsb_scheduler.start()
+        _resume_adsb_scan()
     _broadcast_status()
     return jsonify({"status": "stopped"})
 
@@ -1052,6 +1123,11 @@ def api_ism_devices():
 @app.route("/api/acars/messages")
 def api_acars_messages():
     return jsonify(acars_receiver.get_messages())
+
+
+@app.route("/api/aprs/stations")
+def api_aprs_stations():
+    return jsonify(aprs_receiver.get_stations())
 
 
 @app.route("/api/pager/pages")
@@ -1453,6 +1529,8 @@ def _get_status():
         "ism_running": ism_receiver.is_running,
         "acars_running": acars_receiver.is_running,
         "pager_running": pager_receiver.is_running,
+        "aprs_running": aprs_receiver.is_running,
+        "automation": get_automation(),
         "apt_mode": input_source.apt_mode,
         "apt_recording": apt_decoder.is_recording,
         "wefax_enabled": WEFAX_ENABLED,
@@ -1518,6 +1596,14 @@ def acars_broadcast_loop():
         eventlet.sleep(3)
         if acars_receiver.is_running:
             socketio.emit("acars_update", acars_receiver.get_messages())
+
+
+def aprs_broadcast_loop():
+    """Push the APRS station table (with TTL expiry) to clients every 3s."""
+    while not _signal_stop.is_set():
+        eventlet.sleep(3)
+        if aprs_receiver.is_running:
+            socketio.emit("aprs_update", aprs_receiver.get_stations())
 
 
 def pager_broadcast_loop():
@@ -1629,6 +1715,7 @@ def _do_shutdown(signum=None):
 
     _signal_stop.set()
     ipc_server.stop()
+    aprs_receiver.stop()
     input_source.stop()
     transcriber.stop()
     if adsb_receiver:
@@ -1688,8 +1775,24 @@ def _auto_tune_on_startup():
         log.warning("Startup preset %r not found — starting idle", preset_id)
         return
 
-    if preset.get("mode") in ("adsb", "ais") or preset.get("category") in ("science", "wefax"):
-        log.warning("Startup preset %r is a dedicated mode — starting idle", preset_id)
+    # Dedicated modes hold the dongle outright. Normally we refuse to resume one
+    # unattended so a scheduled satellite pass isn't blocked at boot — but with
+    # automation paused nothing is going to preempt us, so honouring the
+    # operator's last choice is both safe and what they asked for.
+    is_dedicated = (preset.get("mode") in ("adsb", "ais", "ism", "aprs", "pager", "acars")
+                    or preset.get("category") in ("science", "wefax"))
+    if is_dedicated and is_automation_enabled("apt"):
+        log.warning("Startup preset %r is a dedicated mode and automation is on "
+                    "— starting idle so a scheduled pass isn't blocked", preset_id)
+        return
+
+    if is_dedicated:
+        ok, err = _apply_tune(preset)
+        if ok:
+            sdr_arbiter.adopt(preset)
+            log.info("Resumed dedicated startup preset: %s", preset.get("label", ""))
+        else:
+            log.error("Failed to resume startup preset %r: %s", preset_id, err)
         return
 
     if input_source.tune(preset):
@@ -1732,6 +1835,7 @@ if __name__ == "__main__":
     socketio.start_background_task(ism_broadcast_loop)
     socketio.start_background_task(acars_broadcast_loop)
     socketio.start_background_task(pager_broadcast_loop)
+    socketio.start_background_task(aprs_broadcast_loop)
     apt_scheduler.start()
     if WEFAX_ENABLED:
         wefax_scheduler.start()

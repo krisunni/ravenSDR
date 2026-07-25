@@ -139,3 +139,45 @@ class TestSpawnedPidTracking:
         assert 111 in killed
         assert t._pid == 222
         assert t._spawned_pids == {222}
+
+
+class TestStopOrderingAvoidsDeadlock:
+    """Regression: closing rtl_fm's pipes before killing it froze the whole app.
+
+    _read_loop blocks in stdout.read() holding BufferedReader's internal lock. A
+    close() from the eventlet hub's thread then waits on that lock forever when
+    no bytes are coming — which is exactly what a squelched preset on a quiet
+    channel produces. Killing first makes read() return EOF and release it.
+    """
+
+    def test_process_is_killed_before_pipes_are_closed(self, rtlfm_tuner,
+                                                       monkeypatch):
+        t, killed = rtlfm_tuner
+        events = []
+
+        class _OrderedPipe:
+            def close(self):
+                events.append("close")
+
+        proc = _FakeProc(42)
+        proc.stdout = _OrderedPipe()
+        proc.stderr = _OrderedPipe()
+        t._process = proc
+        t._pid = 42
+        t._spawned_pids.add(42)
+
+        monkeypatch.setattr(tuner_mod, "_kill_pid",
+                            lambda pid: events.append("kill"))
+
+        t._stop_rtlfm()
+
+        assert events[0] == "kill", f"pipes closed before kill: {events}"
+        assert events.count("close") == 2
+
+    def test_orphans_are_still_all_killed_with_new_ordering(self, rtlfm_tuner):
+        t, killed = rtlfm_tuner
+        t._spawned_pids.update({100, 200})
+        t._process = _FakeProc(200)
+        t._pid = 200
+        t._stop_rtlfm()
+        assert set(killed) == {100, 200}

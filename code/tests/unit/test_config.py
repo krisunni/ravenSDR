@@ -124,3 +124,59 @@ class TestSetLastPreset:
         cfg = config.load_config()
         assert cfg["secondary_dongle"]["task"] == "adsb"
         assert cfg["last_preset"] == "kuow-fm"
+
+
+class TestAutomationSwitch:
+    """Automation is what seizes the SDR without the operator asking."""
+
+    def test_defaults_to_enabled(self, tmp_path, monkeypatch):
+        from ravensdr import config as cfg
+        monkeypatch.setattr(cfg, "CONFIG_FILE", str(tmp_path / "c.json"))
+        assert cfg.get_automation()["enabled"] is True
+        assert cfg.is_automation_enabled("apt") is True
+
+    def test_master_switch_overrides_individual_tasks(self, tmp_path, monkeypatch):
+        """Turning automation off must disable every task without clearing each."""
+        from ravensdr import config as cfg
+        monkeypatch.setattr(cfg, "CONFIG_FILE", str(tmp_path / "c.json"))
+        cfg.set_automation({"enabled": False})
+        for task in ("apt", "wefax", "adsb_scan"):
+            assert cfg.is_automation_enabled(task) is False
+
+    def test_individual_task_can_be_disabled_alone(self, tmp_path, monkeypatch):
+        from ravensdr import config as cfg
+        monkeypatch.setattr(cfg, "CONFIG_FILE", str(tmp_path / "c.json"))
+        cfg.set_automation({"apt": False})
+        assert cfg.is_automation_enabled("apt") is False
+        assert cfg.is_automation_enabled("wefax") is True
+
+    def test_setting_persists_across_load(self, tmp_path, monkeypatch):
+        from ravensdr import config as cfg
+        monkeypatch.setattr(cfg, "CONFIG_FILE", str(tmp_path / "c.json"))
+        cfg.set_automation({"enabled": False})
+        assert cfg.load_config()["automation"]["enabled"] is False
+
+    def test_unknown_keys_ignored(self, tmp_path, monkeypatch):
+        from ravensdr import config as cfg
+        monkeypatch.setattr(cfg, "CONFIG_FILE", str(tmp_path / "c.json"))
+        auto = cfg.set_automation({"bogus": True})
+        assert "bogus" not in auto
+
+
+class TestLastPresetMemory:
+    def test_last_preset_round_trips(self, tmp_path, monkeypatch):
+        """Dedicated modes must be remembered too, not just audio presets."""
+        from ravensdr import config as cfg
+        monkeypatch.setattr(cfg, "CONFIG_FILE", str(tmp_path / "c.json"))
+        cfg.set_last_preset("ism-ert-912")
+        assert cfg.load_config()["last_preset"] == "ism-ert-912"
+        assert cfg.get_startup_preset() == "ism-ert-912"
+
+    def test_pinned_default_wins_over_last(self, tmp_path, monkeypatch):
+        from ravensdr import config as cfg
+        monkeypatch.setattr(cfg, "CONFIG_FILE", str(tmp_path / "c.json"))
+        cfg.set_last_preset("aprs-144390")
+        c = cfg.load_config()
+        c["startup"]["default_preset"] = "noaa-seattle"
+        cfg.save_config(c)
+        assert cfg.get_startup_preset() == "noaa-seattle"

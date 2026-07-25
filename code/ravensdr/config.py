@@ -22,7 +22,17 @@ DEFAULT_CONFIG = {
         "auto_tune": True,
         "default_preset": None,   # preset id to pin; None = resume last tuned
     },
-    "last_preset": None,          # preset id, updated on each audio-preset tune
+    "last_preset": None,          # preset id, updated on every tune (any mode)
+    # Master switch for automation that TAKES THE SDR on its own initiative.
+    # With this off the node only ever does what the operator asked: schedulers
+    # still predict and report (satellite passes are still listed), they just
+    # don't preempt the dongle out from under the current preset.
+    "automation": {
+        "enabled": True,
+        "apt": True,        # NOAA satellite pass recording
+        "wefax": True,      # HF weather-fax broadcasts
+        "adsb_scan": True,  # opportunistic ADS-B scanning between tunes
+    },
     # Runtime-tunable NPU/analysis settings, editable from the Settings tab.
     # Defaults mirror the original module constants so behaviour is unchanged
     # until the user overrides them.
@@ -146,8 +156,47 @@ def get_startup_preset(config=None):
     return startup.get("default_preset") or config.get("last_preset")
 
 
+
+def get_automation(config=None):
+    """Return the automation block with defaults applied."""
+    if config is None:
+        config = load_config()
+    auto = dict(DEFAULT_CONFIG["automation"])
+    auto.update(config.get("automation") or {})
+    return auto
+
+
+def is_automation_enabled(task, config=None):
+    """True if `task` (apt/wefax/adsb_scan) may seize the SDR on its own.
+
+    The master switch wins: turning automation off disables every task without
+    having to clear each flag.
+    """
+    auto = get_automation(config)
+    if not auto.get("enabled", True):
+        return False
+    return bool(auto.get(task, True))
+
+
+def set_automation(patch):
+    """Merge a partial automation update and persist it."""
+    config = load_config()
+    auto = get_automation(config)
+    for key, value in (patch or {}).items():
+        if key in DEFAULT_CONFIG["automation"]:
+            auto[key] = bool(value)
+    config["automation"] = auto
+    save_config(config)
+    return auto
+
 def set_last_preset(preset_id):
-    """Remember the last audio preset tuned, for resume-on-restart."""
+    """Remember the last preset tuned, for resume-on-restart.
+
+    Recorded for EVERY mode, not just audio ones. Dedicated modes (ISM, APRS,
+    pager, ACARS, AIS, ADS-B) used to return early without recording, so a
+    restart resurrected whatever audio preset preceded them — the node appeared
+    to swap itself back to a default.
+    """
     config = load_config()
     if config.get("last_preset") == preset_id:
         return config

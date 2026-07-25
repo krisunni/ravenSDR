@@ -51,6 +51,15 @@
             </div>
             <span id="c2-fault" class="c2-fault hidden"></span>
         </div>
+        <!-- Automation: whether schedulers may seize the SDR on their own.
+             Off = the radio only ever does what the operator asked. -->
+        <div class="automation-config" title="Allow satellite/WEFAX/ADS-B schedulers to take the SDR">
+            <label class="auto-switch">
+                <input type="checkbox" id="automation-enabled" checked>
+                <span>Auto</span>
+            </label>
+            <span id="automation-status" class="secondary-indicator"></span>
+        </div>
         <button id="settings-toggle" class="btn btn-sm btn-advanced" title="NPU & alert settings">⚙ Settings</button>
         <div id="connection-banner" class="banner hidden">Connecting...</div>
         <div id="error-banner" class="banner banner-error hidden">
@@ -513,6 +522,29 @@
             </div>
         </div>
 
+        <!-- APRS Panel (multimon-ng AFSK1200) -->
+        <div id="aprs-panel" class="hidden">
+            <div class="panel-header">
+                <label>APRS Stations (144.390)</label>
+                <span id="aprs-count" class="flight-count">0 stations</span>
+            </div>
+            <div id="aprs-status">Listening for APRS packets…</div>
+            <div class="sei-table-wrap">
+                <table class="sei-emitter-table">
+                    <thead>
+                        <tr>
+                            <th>Station</th>
+                            <th>Type</th>
+                            <th>Position</th>
+                            <th>Info</th>
+                            <th>Last Heard</th>
+                        </tr>
+                    </thead>
+                    <tbody id="aprs-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- ACARS Panel (acarsdec) -->
         <div id="acars-panel" class="hidden">
             <div class="panel-header">
@@ -545,6 +577,7 @@
     <script src="/static/classifier.js"></script>
     <script src="/static/sei.js"></script>
     <script src="/static/ism.js"></script>
+    <script src="/static/aprs.js"></script>
     <script src="/static/acars.js"></script>
     <script src="/static/pager.js"></script>
     <script src="/static/settings.js"></script>

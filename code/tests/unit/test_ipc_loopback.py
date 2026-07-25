@@ -202,3 +202,20 @@ class TestLinkResilience:
             link.stop()
         finally:
             srv.stop()
+
+
+class TestDisconnectIsQuiet:
+    def test_client_disconnect_logs_no_traceback(self, server, sock_path, caplog):
+        """A UI going away is routine — green sockets raise EOFError where plain
+        ones return b"", and that must not surface as an error."""
+        import logging
+        link = _link(sock_path)
+        link.start()
+        assert _wait_for(lambda: server.client_count == 1)
+
+        with caplog.at_level(logging.ERROR, logger="ravensdr.ipc_server"):
+            link.stop()
+            assert _wait_for(lambda: server.client_count == 0)
+
+        assert not [r for r in caplog.records if r.exc_info], \
+            "disconnect produced a traceback"

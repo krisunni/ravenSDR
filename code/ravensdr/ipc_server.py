@@ -3,11 +3,19 @@
 # Listens on a Unix socket, dispatches `req` messages through a CommandRegistry,
 # and broadcasts `ev` messages to every connected UI.
 #
-# Deliberately uses REAL threads and REAL sockets — no eventlet. The radio
-# process exists precisely to host blocking work (rtl_fm pipe reads, Hailo
-# inference, decoder stdout) that used to stall the UI's single-threaded eventlet
-# hub and take the whole console down with it. Keeping this side eventlet-free
-# means a blocking read here can never freeze anything a browser talks to.
+# Threading/socket model: this module imports `socket` and `threading` plainly,
+# so it adapts to whichever implementation the host process is running.
+#
+#   - In the standalone radio daemon (phase 18 endpoint) those are the real
+#     stdlib modules: real threads, real sockets, no eventlet anywhere.
+#   - Today the radio half still lives inside the monkey-patched app, so both
+#     are eventlet's green versions.
+#
+# Both are self-consistent and safe — green threads blocking in recv() yield to
+# the hub rather than stalling it. What must NEVER happen is mixing the two (a
+# real OS thread touching green primitives), which is the failure documented in
+# emit_bridge.py. The one behavioural difference worth knowing: a green socket
+# raises EOFError where a plain socket returns b"" — both are handled below.
 
 import logging
 import os
@@ -139,6 +147,13 @@ class IpcServer:
                     conn.sendall(encode(reply))
         except ProtocolError as e:
             log.warning("dropping UI connection: %s", e)
+        except EOFError:
+            # eventlet's green socket raises EOFError on a closed peer where a
+            # plain socket returns b"". The radio currently runs inside the
+            # monkey-patched app, so `socket` here is green and a normal UI
+            # disconnect took this path — logging a traceback for an entirely
+            # routine event. Both shapes mean the same thing: peer went away.
+            pass
         except OSError:
             pass
         finally:

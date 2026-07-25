@@ -354,14 +354,23 @@ class Tuner:
     def _stop_rtlfm(self):
         self._stop_event.set()
         pid = self._pid
-        if self._process:
-            for pipe in (self._process.stdout, self._process.stderr):
-                try:
-                    pipe.close()
-                except Exception:
-                    pass
-        # Kill every pid we spawned, not just the current one — see _spawned_pids.
-        # Snapshot first: _kill_pid yields, so the set can be mutated underneath us.
+
+        # ORDER MATTERS: kill the process BEFORE closing its pipes.
+        #
+        # _read_loop runs on a real OS thread blocked in stdout.read(4096), and
+        # CPython's BufferedReader holds an internal lock for the duration of
+        # that call. Closing the pipe first has to wait for that lock, so if no
+        # bytes are coming the close never returns — and because _stop_rtlfm is
+        # driven from the eventlet hub's thread, the ENTIRE app freezes (every
+        # HTTP request, every Socket.IO frame), needing a restart.
+        #
+        # This stayed hidden while every preset used squelch 0, because rtl_fm
+        # then streams FM hiss continuously and read() always returns promptly.
+        # A squelched preset on a quiet channel emits nothing at all, so the
+        # read blocks indefinitely and the deadlock is certain.
+        #
+        # Killing first makes read() return EOF, which releases the lock and lets
+        # the close proceed.
         for spawned in sorted(self._spawned_pids):
             _kill_pid(spawned)
             if spawned == pid:
@@ -370,6 +379,13 @@ class Tuner:
                 log.warning("Reaped orphaned rtl_fm (pid %d) — it was holding the "
                             "SDR and would have blocked later tunes", spawned)
             self._spawned_pids.discard(spawned)
+
+        if self._process:
+            for pipe in (self._process.stdout, self._process.stderr):
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
         self._process = None
         self._pid = None
         if self._thread is not None:

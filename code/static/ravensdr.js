@@ -21,6 +21,7 @@
     let ismPanel = null;
     let acarsPanel = null;
     let pagerPanel = null;
+    let aprsPanel = null;
 
     // ── DOM refs ──
     const modeBadge = document.getElementById("mode-badge");
@@ -80,6 +81,9 @@
         if (window.IsmPanel && !ismPanel) {
             ismPanel = new window.IsmPanel(socket);
         }
+        if (window.AprsPanel) {
+            aprsPanel = new window.AprsPanel(socket);
+        }
         if (window.AcarsPanel && !acarsPanel) {
             acarsPanel = new window.AcarsPanel(socket);
         }
@@ -119,6 +123,11 @@
     socket.on("status", function (data) {
         updateStatus(data);
         if (data.sdr) renderSdrC2(data.sdr);
+        if (data.automation) renderAutomation(data.automation);
+    });
+
+    socket.on("automation", function (data) {
+        renderAutomation(data);
     });
 
     // SDR command & control: commanded vs actual, plus the transition.
@@ -206,6 +215,44 @@
     // The radio is separate hardware with a real switching delay, so the console
     // reports what it was COMMANDED to do, what it is ACTUALLY doing, and the
     // transition between the two.
+    // ── Automation master switch ──
+    // Reflects whether schedulers (satellite passes, WEFAX, ADS-B scan) are
+    // allowed to seize the SDR. Paused means the radio only does what you ask.
+    function renderAutomation(auto) {
+        var box = document.getElementById("automation-enabled");
+        var wrap = box && box.closest(".automation-config");
+        var status = document.getElementById("automation-status");
+        if (!box || !auto) return;
+        var on = auto.enabled !== false;
+        box.checked = on;
+        if (wrap) wrap.classList.toggle("is-paused", !on);
+        if (status) {
+            status.textContent = on ? "" : "paused";
+            status.title = on
+                ? "Schedulers may take the SDR for satellite passes and WEFAX"
+                : "Schedulers will not take the SDR; passes are still predicted";
+        }
+    }
+
+    function wireAutomationToggle() {
+        var box = document.getElementById("automation-enabled");
+        if (!box) return;
+        box.addEventListener("change", function () {
+            fetch("/api/automation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled: box.checked }),
+            })
+                .then(function (r) { return r.json(); })
+                .then(renderAutomation)
+                .catch(function () { box.checked = !box.checked; });
+        });
+        fetch("/api/automation")
+            .then(function (r) { return r.json(); })
+            .then(renderAutomation)
+            .catch(function () { /* radio may be down; leave default */ });
+    }
+
     function renderSdrC2(snap) {
         if (!snap) return;
         const prev = sdrC2;
@@ -359,6 +406,10 @@
                 var isIsm = preset.mode === "ism";
                 if (ismPanel) {
                     if (isIsm) { ismPanel.show(); } else { ismPanel.hide(); }
+                }
+                var isAprs = preset.mode === "aprs";
+                if (aprsPanel) {
+                    if (isAprs) { aprsPanel.show(); } else { aprsPanel.hide(); }
                 }
                 var isAcars = preset.mode === "acars";
                 if (acarsPanel) {
@@ -597,6 +648,7 @@
                 if (wefaxPanel) wefaxPanel.hide();
                 if (meteorPanel) meteorPanel.hide();
                 if (ismPanel) ismPanel.hide();
+                if (aprsPanel) aprsPanel.hide();
                 if (acarsPanel) acarsPanel.hide();
                 if (pagerPanel) pagerPanel.hide();
                 document.getElementById("transcript-section").style.display = "";
@@ -800,6 +852,9 @@
         }
         mapVisible = false;
     }
+
+    // ── Automation switch ──
+    wireAutomationToggle();
 
     // ── Secondary Dongle Config ──
 

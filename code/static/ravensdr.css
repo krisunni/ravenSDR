@@ -847,3 +847,26 @@ select {
     overflow-x: auto;
     border-left: 2px solid var(--accent);
 }
+
+/* ── Automation master switch ── */
+.automation-config {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+}
+
+.auto-switch {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+}
+
+.auto-switch input { cursor: pointer; }
+
+/* Paused is a deliberate operator choice, so it reads as a state, not an error. */
+.automation-config.is-paused .auto-switch { color: var(--yellow); }

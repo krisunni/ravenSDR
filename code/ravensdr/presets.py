@@ -195,6 +195,65 @@ PRESETS = [
         "note": "POCSAG/FLEX pager text via multimon-ng. Edit freq per local paging channel.",
         "expected_modulation": "FSK",
     },
+    # ── APRS packet (rtl_fm | multimon-ng AFSK1200) ──
+    {
+        # Stations beacon position/weather/telemetry on a schedule, so unlike the
+        # voice repeaters this channel carries data continuously.
+        "id": "aprs-144390",
+        "label": "APRS 144.390",
+        "freq": "144.390M",
+        "mode": "aprs",
+        "category": "packet",
+        "squelch": 0,
+        "note": "APRS packet — station positions, weather and telemetry",
+        "expected_modulation": "AFSK1200",
+    },
+    # ── King County analog voice (unencrypted, conventional) ──
+    # Seattle/KC police+fire moved to PSERN (encrypted P25 Phase II) and are not
+    # receivable. These conventional FM channels are. Squelch is deliberately
+    # non-zero: with -l 0 rtl_fm passes full-scale FM hiss (~1440 RMS, ~3x the
+    # transcriber's silence gate), so the NPU transcribes static into "(roaring)"
+    # instead of idling. Squelch mutes the noise floor at the source.
+    {
+        "id": "amr-ems-dispatch",
+        "label": "AMR EMS Dispatch",
+        "freq": "158.835M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 25,
+        "note": "American Medical Response Seattle — private ambulance dispatch, analog FM",
+        "expected_modulation": "FM",
+    },
+    {
+        "id": "amr-ems-alt",
+        "label": "AMR Seattle (alt)",
+        "freq": "155.220M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 25,
+        "note": "AMR Seattle secondary (103.5 PL is transmit-only)",
+        "expected_modulation": "FM",
+    },
+    {
+        "id": "kc-mars-interop",
+        "label": "KC Mutual Aid (MARS)",
+        "freq": "155.190M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 25,
+        "note": "King County Mutual Aid Radio System — interop, active during incidents",
+        "expected_modulation": "FM",
+    },
+    {
+        "id": "kc-sar-f2",
+        "label": "KC Search & Rescue F-2",
+        "freq": "154.965M",
+        "mode": "fm",
+        "category": "public_safety",
+        "squelch": 25,
+        "note": "King County SAR F-2 (F-3 is 153.755)",
+        "expected_modulation": "FM",
+    },
     # ── Science ──
     {
         "id": "meteor-scatter",
@@ -207,6 +266,23 @@ PRESETS = [
         "expected_modulation": "FM",
     },
     # ── Broadcast ──
+    {
+        # Travellers' Information Station: a short automated voice loop that
+        # repeats continuously, so it suits the continuous segmenter the way NOAA
+        # weather radio does. NOTE: 1650 kHz is medium wave — the V4 tunes it
+        # directly via its internal upconverter (no -D direct sampling), but the
+        # 137 MHz V-dipole is far too short to hear it. Needs an HF/longwire
+        # antenna, same caveat as the WEFAX presets.
+        "id": "redmond-tis-1650",
+        "label": "Redmond Community 1650",
+        "freq": "1650k",
+        "mode": "am",
+        "category": "broadcast",
+        "squelch": 0,
+        "continuous": True,
+        "note": "TIS/HAR community info loop — needs an HF antenna (MW band)",
+        "expected_modulation": "AM",
+    },
     {
         "id": "kexp-fm",
         "label": "KEXP 90.3",
@@ -240,6 +316,40 @@ PRESETS = [
         "expected_modulation": "OOK/FSK",
     },
     {
+        # Itron ERT meters sit near 912.6 MHz. rtl_433 defaults to 250 kHz of
+        # bandwidth, so the 915.00M preset only covers ~914.88-915.13 and never
+        # hears them. Unlike Gridstream (which yields identity only), ERT
+        # SCM/IDM frames carry actual consumption values.
+        "id": "ism-ert-912",
+        "label": "Utility Meters (ERT)",
+        "freq": "912.60M",
+        "mode": "ism",
+        "category": "ism",
+        "squelch": 0,
+        "note": "Itron ERT water/gas/electric — SCM/SCMplus/IDM consumption reads",
+        "expected_modulation": "OOK/FSK",
+    },
+    {
+        "id": "ism-tpms-315",
+        "label": "TPMS 315 MHz",
+        "freq": "315.00M",
+        "mode": "ism",
+        "category": "ism",
+        "squelch": 0,
+        "note": "Tire pressure sensors from passing vehicles — 25 protocols enabled",
+        "expected_modulation": "OOK/FSK",
+    },
+    {
+        "id": "ism-security-345",
+        "label": "Security Sensors 345 MHz",
+        "freq": "345.00M",
+        "mode": "ism",
+        "category": "ism",
+        "squelch": 0,
+        "note": "Honeywell/DSC door, window and smoke sensors",
+        "expected_modulation": "OOK",
+    },
+    {
         "id": "ism-915",
         "label": "ISM 915 MHz",
         "freq": "915.00M",
@@ -261,6 +371,7 @@ CATEGORY_LABELS = {
     "science": "Science",
     "public_safety": "Public Safety",
     "ism": "ISM / Sensors",
+    "packet": "Packet / APRS",
     "broadcast": "Broadcast",
 }
 

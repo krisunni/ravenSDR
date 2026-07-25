@@ -451,9 +451,14 @@ class Transcriber:
     def _make_segmenter(self):
         """Choose segmenter based on current preset configuration."""
         preset = self._current_preset or {}
-        if preset.get("parser") == "noaa" and preset.get("squelch", -1) == 0:
-            log.info("Using continuous segmenter (%.0fs chunks) for NOAA broadcast",
-                     CONTINUOUS_SEGMENT_S)
+        # Continuous broadcasts have no silence gaps for VAD to split on, so they
+        # need time-based segmentation. NOAA weather radio qualifies by its
+        # parser; any other always-on loop (e.g. a TIS/HAR community station)
+        # opts in explicitly with "continuous": True.
+        is_noaa_loop = preset.get("parser") == "noaa" and preset.get("squelch", -1) == 0
+        if is_noaa_loop or preset.get("continuous"):
+            log.info("Using continuous segmenter (%.0fs chunks) for %s",
+                     CONTINUOUS_SEGMENT_S, preset.get("label", "broadcast"))
             return ContinuousSegmenter()
         return VoiceActivitySegmenter()
 
