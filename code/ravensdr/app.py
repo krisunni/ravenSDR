@@ -28,6 +28,7 @@ from ravensdr.ism_receiver import IsmReceiver
 from ravensdr.acars_receiver import AcarsReceiver, correlate_with_adsb
 from ravensdr.pager_receiver import PagerReceiver
 from ravensdr.aprs_receiver import AprsReceiver
+from ravensdr.observation_log import ObservationLog
 from ravensdr.adsb_correlator import extract_callsigns, match_flights
 from ravensdr.noaa_parser import WeatherAccumulator, detect_priority_alert
 from ravensdr.apt_scheduler import AptScheduler
@@ -154,6 +155,13 @@ if ADSB_ENABLED:
 # ── AIS Receiver ──
 ais_receiver = AisReceiver(device_index=0)
 
+# ── Durable emitter history ──
+# Decoder tables are in-memory with a TTL, so a meter that beacons every 15
+# minutes disappears between transmissions and everything is lost on restart.
+# This records first/last-seen and counts per ID so devices can be tracked over
+# days rather than minutes.
+observations = ObservationLog().load()
+
 # ── ISM sensor receiver (rtl_433) ──
 ism_receiver = IsmReceiver(device_index=0)
 
@@ -163,6 +171,9 @@ def _ism_on_record(record, is_new):
 
     Called from rtl_433's REAL reader thread — emit via the bridge.
     """
+    observations.observe("ism", record.get("id"),
+                         meta={"model": record.get("model")},
+                         rssi=record.get("rssi"))
     emit_safe("ism_device", record)
 
 
@@ -211,6 +222,9 @@ def _aprs_on_record(record, is_new):
 
     Called from multimon-ng's REAL reader thread — emit via the bridge.
     """
+    observations.observe("aprs", record.get("source"),
+                         meta={"model": record.get("type"),
+                               "dest": record.get("dest")})
     emit_safe("aprs_packet", record)
 
 
@@ -637,7 +651,11 @@ def signal_meter_loop():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    # Version-stamp static URLs: Flask caches /static for 12h, so a shipped
+    # JS/CSS fix would otherwise not reach an already-open console until a hard
+    # refresh. A stale ravensdr.js is not cosmetic — the old one force-tuned the
+    # radio on every page load.
+    return render_template("index.html", version=VERSION)
 
 
 @app.route("/api/presets")
@@ -1117,7 +1135,7 @@ def api_ais_vessels():
 
 @app.route("/api/ism/devices")
 def api_ism_devices():
-    return jsonify(ism_receiver.get_devices())
+    return jsonify(_with_history("ism", ism_receiver.get_devices(), "id"))
 
 
 @app.route("/api/acars/messages")
@@ -1125,9 +1143,39 @@ def api_acars_messages():
     return jsonify(acars_receiver.get_messages())
 
 
+
+def _with_history(source, records, key_field):
+    """Attach durable first-seen/count to live decoder records.
+
+    The live table only knows about the current TTL window; the history is what
+    shows a device has been around for days.
+    """
+    out = []
+    for rec in records:
+        entry = observations.get(source, rec.get(key_field))
+        merged = dict(rec)
+        if entry:
+            merged["first_seen"] = entry.get("first_seen")
+            merged["count"] = entry.get("count")
+            merged["best_rssi"] = entry.get("best_rssi")
+        out.append(merged)
+    return out
+
+
+@app.route("/api/observations")
+def api_observations():
+    """Durable sighting history: first/last seen and counts per emitter."""
+    source = request.args.get("source")
+    limit = request.args.get("limit", type=int)
+    return jsonify({
+        "stats": observations.stats(),
+        "entries": observations.entries(source=source, limit=limit),
+    })
+
+
 @app.route("/api/aprs/stations")
 def api_aprs_stations():
-    return jsonify(aprs_receiver.get_stations())
+    return jsonify(_with_history("aprs", aprs_receiver.get_stations(), "source"))
 
 
 @app.route("/api/pager/pages")
@@ -1587,7 +1635,8 @@ def ism_broadcast_loop():
     while not _signal_stop.is_set():
         eventlet.sleep(3)
         if ism_receiver.is_running:
-            socketio.emit("ism_update", ism_receiver.get_devices())
+            socketio.emit("ism_update",
+                          _with_history("ism", ism_receiver.get_devices(), "id"))
 
 
 def acars_broadcast_loop():
@@ -1603,7 +1652,8 @@ def aprs_broadcast_loop():
     while not _signal_stop.is_set():
         eventlet.sleep(3)
         if aprs_receiver.is_running:
-            socketio.emit("aprs_update", aprs_receiver.get_stations())
+            socketio.emit("aprs_update",
+                          _with_history("aprs", aprs_receiver.get_stations(), "source"))
 
 
 def pager_broadcast_loop():
@@ -1714,6 +1764,7 @@ def _do_shutdown(signum=None):
     log.info("Shutting down (triggered by %s)...", sig_name)
 
     _signal_stop.set()
+    observations.maybe_save(force=True)
     ipc_server.stop()
     aprs_receiver.stop()
     input_source.stop()

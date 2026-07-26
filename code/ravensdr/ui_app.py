@@ -111,7 +111,7 @@ def _command(cmd, args=None):
 @app.route("/")
 def index():
     """The console. Must render even with the radio down."""
-    return render_template("index.html")
+    return render_template("index.html", version=VERSION)
 
 
 @app.route("/api/link")

@@ -53,7 +53,7 @@
         if (this.devices.length === 0) {
             var row = document.createElement("tr");
             var td = document.createElement("td");
-            td.colSpan = 5;
+            td.colSpan = 7;
             td.className = "sei-no-data";
             td.textContent = "No ISM devices heard yet";
             row.appendChild(td);
@@ -70,6 +70,8 @@
                 String(d.id != null ? d.id : ""),
                 fmtReadings(d),
                 d.rssi != null ? d.rssi + " dB" : "—",
+                d.count != null ? String(d.count) : "—",
+                fmtFirstSeen(d.first_seen),
                 d.seen ? new Date(d.seen * 1000).toLocaleTimeString() : "—",
             ].forEach(function (text) {
                 var cell = document.createElement("td");
@@ -85,7 +87,7 @@
             detail.className = "ism-raw-row";
             if (!self._expanded[key]) detail.classList.add("hidden");
             var cell = document.createElement("td");
-            cell.colSpan = 5;
+            cell.colSpan = 7;
             var pre = document.createElement("pre");
             pre.className = "ism-raw";
             pre.textContent = JSON.stringify(d.raw || d, null, 2);

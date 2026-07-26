@@ -46,6 +46,19 @@
         return parts.join(" · ") || "—";
     }
 
+
+    // Durable history: how long this emitter has been around, not just this
+    // TTL window. A device seen once an hour ago reads very differently from
+    // one that has beaconed 400 times since yesterday.
+    function fmtFirstSeen(v) {
+        if (!v) return "—";
+        var d = new Date(v * 1000);
+        var age = (Date.now() / 1000) - v;
+        if (age > 86400) return Math.floor(age / 86400) + "d ago";
+        if (age > 3600) return Math.floor(age / 3600) + "h ago";
+        return d.toLocaleTimeString();
+    }
+
     AprsPanel.prototype._render = function () {
         var countEl = document.getElementById("aprs-count");
         if (countEl) countEl.textContent = this.stations.length + " stations";
@@ -57,7 +70,7 @@
         if (this.stations.length === 0) {
             var row = document.createElement("tr");
             var td = document.createElement("td");
-            td.colSpan = 5;
+            td.colSpan = 7;
             td.className = "sei-no-data";
             td.textContent = "No APRS stations heard yet";
             row.appendChild(td);
@@ -74,6 +87,8 @@
                 s.type || "—",
                 fmtPosition(s),
                 fmtInfo(s),
+                s.count != null ? String(s.count) : "—",
+                fmtFirstSeen(s.first_seen),
                 s.seen ? new Date(s.seen * 1000).toLocaleTimeString() : "—",
             ].forEach(function (text) {
                 var cell = document.createElement("td");
@@ -88,7 +103,7 @@
             detail.className = "ism-raw-row";
             if (!self._expanded[key]) detail.classList.add("hidden");
             var cell = document.createElement("td");
-            cell.colSpan = 5;
+            cell.colSpan = 7;
             var pre = document.createElement("pre");
             pre.className = "ism-raw";
             pre.textContent = s.raw || JSON.stringify(s, null, 2);

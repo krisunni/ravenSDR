@@ -177,15 +177,35 @@
                 categories = data.categories;
                 renderCategoryTabs();
                 if (Object.keys(categories).length > 0) {
-                    // Default to Weather tab and auto-tune NOAA Seattle
-                    var defaultCat = categories["weather"] ? "weather" : Object.keys(categories)[0];
-                    selectCategory(defaultCat);
-                    var noaa = presets.find(function (p) { return p.id === "noaa-seattle"; });
-                    if (noaa) {
-                        tunePreset(noaa.id);
-                    }
+                    adoptRadioState();
                 }
             });
+    }
+
+    // Reflect what the radio is ALREADY doing; never impose a preset on load.
+    //
+    // This used to force-tune NOAA Seattle every time the page opened, which
+    // yanked the dongle away from whatever was running and — because tuning
+    // records last_preset — also destroyed the saved preset, so a restart could
+    // never resume where the operator left off. The console is a view of the
+    // hardware, not a command issued by opening a browser tab.
+    function adoptRadioState() {
+        var defaultCat = categories["weather"] ? "weather" : Object.keys(categories)[0];
+        fetch("/api/sdr/state")
+            .then(function (r) { return r.json(); })
+            .then(function (snap) {
+                var actual = snap && (snap.actual || snap.commanded);
+                if (actual && actual.id) {
+                    currentPresetId = actual.id;
+                    selectCategory(actual.category || defaultCat);
+                    if (snap) renderSdrC2(snap);
+                    return;
+                }
+                // Radio is idle. Show a tab, but leave the hardware alone —
+                // resuming on boot is the server's job (startup.auto_tune).
+                selectCategory(defaultCat);
+            })
+            .catch(function () { selectCategory(defaultCat); });
     }
 
     function renderCategoryTabs() {
