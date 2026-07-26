@@ -198,7 +198,11 @@
                 if (actual && actual.id) {
                     currentPresetId = actual.id;
                     selectCategory(actual.category || defaultCat);
-                    if (snap) renderSdrC2(snap);
+                    renderSdrC2(snap);
+                    // The C2 snapshot carries only a brief preset view, so look
+                    // up the full record — mode drives which tracker is shown.
+                    var full = presets.find(function (p) { return p.id === actual.id; });
+                    updatePanelsForPreset(full || actual);
                     return;
                 }
                 // Radio is idle. Show a tab, but leave the hardware alone —
@@ -367,6 +371,145 @@
         });
     }
 
+    // Show/hide the panels belonging to a preset.
+    //
+    // Extracted from the tune response handler so it can ALSO run when the
+    // console adopts hardware state on load. It previously ran only on an
+    // explicit tune, so opening the page while the radio was already on an
+    // ISM/APRS/ACARS preset picked the right tab but never showed the tracker
+    // table — the panel stayed hidden until you re-clicked the preset.
+    function updatePanelsForPreset(preset) {
+        preset = preset || {};
+        // Manage panels based on preset category
+        var isWeather = preset.category === "weather";
+        var isWefax = preset.category === "wefax";
+        var isScience = preset.category === "science";
+        var isBroadcast = preset.category === "broadcast";
+        if (weatherPanel) {
+            if (isWeather) {
+                weatherPanel.show();
+            } else {
+                weatherPanel.hide();
+            }
+        }
+        if (satellitePanel) {
+            if (isWeather) {
+                satellitePanel.show();
+            } else {
+                satellitePanel.hide();
+            }
+        }
+        if (wefaxPanel) {
+            if (isWefax) {
+                wefaxPanel.show();
+            } else {
+                wefaxPanel.hide();
+            }
+        }
+        if (meteorPanel) {
+            if (isScience) {
+                meteorPanel.show();
+            } else {
+                meteorPanel.hide();
+            }
+        }
+        // Refresh classifier panel status on tune
+        if (classifierPanel) {
+            classifierPanel._fetchStatus();
+        }
+
+        var isIsm = preset.mode === "ism";
+        if (ismPanel) {
+            if (isIsm) { ismPanel.show(); } else { ismPanel.hide(); }
+        }
+        var isAprs = preset.mode === "aprs";
+        if (aprsPanel) {
+            if (isAprs) { aprsPanel.show(); } else { aprsPanel.hide(); }
+        }
+        var isAcars = preset.mode === "acars";
+        if (acarsPanel) {
+            if (isAcars) { acarsPanel.show(); } else { acarsPanel.hide(); }
+        }
+        var isPager = preset.mode === "pager";
+        if (pagerPanel) {
+            if (isPager) { pagerPanel.show(); } else { pagerPanel.hide(); }
+        }
+
+        // Manage map panel based on preset + config
+        var isAviation = preset.category === "aviation";
+        var isAdsbOnly = preset.mode === "adsb";
+        var isAisOnly = preset.mode === "ais";
+        var isMapMode = isAdsbOnly || isAisOnly;
+
+        // Sections only relevant when actively receiving audio
+        var audioSections = [
+            "signal-section", "stats-section", "classifier-panel",
+            "sei-panel", "control-section", "advanced-panel",
+            "audio-section", "tuned-section",
+        ];
+        var hasAudio = !isWefax && !isScience && !isAdsbOnly && !isAisOnly && !isIsm && !isAcars && !isPager;
+
+        audioSections.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.style.display = hasAudio ? "" : "none";
+        });
+
+        // WEFAX tab: show chart panel, hide transcript
+        if (isWefax) {
+            hideMapPanel();
+            document.getElementById("transcript-section").style.display = "none";
+            return;
+        }
+
+        // Science tab: show meteor panel, hide transcript
+        if (isScience) {
+            hideMapPanel();
+            document.getElementById("transcript-section").style.display = "none";
+            return;
+        }
+
+        // ISM tab: show sensor table, hide transcript + map
+        if (isIsm) {
+            hideMapPanel();
+            document.getElementById("transcript-section").style.display = "none";
+            return;
+        }
+
+        // ACARS: show message feed, hide transcript + map (even though aviation)
+        if (isAcars) {
+            hideMapPanel();
+            document.getElementById("transcript-section").style.display = "none";
+            return;
+        }
+
+        // Pager: show message feed, hide transcript + map
+        if (isPager) {
+            hideMapPanel();
+            document.getElementById("transcript-section").style.display = "none";
+            return;
+        }
+
+        if (isAisOnly) {
+            showMapPanel(true);
+            document.getElementById("transcript-section").style.display = "none";
+            return;
+        }
+
+        if (!adsbEnabled || !isAviation) {
+            hideMapPanel();
+            document.getElementById("transcript-section").style.display = "";
+            return;
+        }
+
+        if (isAdsbOnly) {
+            showMapPanel(true);
+            document.getElementById("transcript-section").style.display = "none";
+        } else {
+            showMapPanel(false);
+            document.getElementById("transcript-section").style.display = "";
+        }
+    }
+
     function tunePreset(presetId) {
         var eb = document.getElementById("error-banner");
         if (eb) eb.classList.add("hidden");
@@ -384,135 +527,7 @@
                 currentPresetId = presetId;
                 renderPresetButtons(activeCategory);
 
-                // Manage panels based on preset category
-                var preset = data.preset || {};
-                var isWeather = preset.category === "weather";
-                var isWefax = preset.category === "wefax";
-                var isScience = preset.category === "science";
-                var isBroadcast = preset.category === "broadcast";
-                if (weatherPanel) {
-                    if (isWeather) {
-                        weatherPanel.show();
-                    } else {
-                        weatherPanel.hide();
-                    }
-                }
-                if (satellitePanel) {
-                    if (isWeather) {
-                        satellitePanel.show();
-                    } else {
-                        satellitePanel.hide();
-                    }
-                }
-                if (wefaxPanel) {
-                    if (isWefax) {
-                        wefaxPanel.show();
-                    } else {
-                        wefaxPanel.hide();
-                    }
-                }
-                if (meteorPanel) {
-                    if (isScience) {
-                        meteorPanel.show();
-                    } else {
-                        meteorPanel.hide();
-                    }
-                }
-                // Refresh classifier panel status on tune
-                if (classifierPanel) {
-                    classifierPanel._fetchStatus();
-                }
-
-                var isIsm = preset.mode === "ism";
-                if (ismPanel) {
-                    if (isIsm) { ismPanel.show(); } else { ismPanel.hide(); }
-                }
-                var isAprs = preset.mode === "aprs";
-                if (aprsPanel) {
-                    if (isAprs) { aprsPanel.show(); } else { aprsPanel.hide(); }
-                }
-                var isAcars = preset.mode === "acars";
-                if (acarsPanel) {
-                    if (isAcars) { acarsPanel.show(); } else { acarsPanel.hide(); }
-                }
-                var isPager = preset.mode === "pager";
-                if (pagerPanel) {
-                    if (isPager) { pagerPanel.show(); } else { pagerPanel.hide(); }
-                }
-
-                // Manage map panel based on preset + config
-                var isAviation = preset.category === "aviation";
-                var isAdsbOnly = preset.mode === "adsb";
-                var isAisOnly = preset.mode === "ais";
-                var isMapMode = isAdsbOnly || isAisOnly;
-
-                // Sections only relevant when actively receiving audio
-                var audioSections = [
-                    "signal-section", "stats-section", "classifier-panel",
-                    "sei-panel", "control-section", "advanced-panel",
-                    "audio-section", "tuned-section",
-                ];
-                var hasAudio = !isWefax && !isScience && !isAdsbOnly && !isAisOnly && !isIsm && !isAcars && !isPager;
-
-                audioSections.forEach(function (id) {
-                    var el = document.getElementById(id);
-                    if (el) el.style.display = hasAudio ? "" : "none";
-                });
-
-                // WEFAX tab: show chart panel, hide transcript
-                if (isWefax) {
-                    hideMapPanel();
-                    document.getElementById("transcript-section").style.display = "none";
-                    return;
-                }
-
-                // Science tab: show meteor panel, hide transcript
-                if (isScience) {
-                    hideMapPanel();
-                    document.getElementById("transcript-section").style.display = "none";
-                    return;
-                }
-
-                // ISM tab: show sensor table, hide transcript + map
-                if (isIsm) {
-                    hideMapPanel();
-                    document.getElementById("transcript-section").style.display = "none";
-                    return;
-                }
-
-                // ACARS: show message feed, hide transcript + map (even though aviation)
-                if (isAcars) {
-                    hideMapPanel();
-                    document.getElementById("transcript-section").style.display = "none";
-                    return;
-                }
-
-                // Pager: show message feed, hide transcript + map
-                if (isPager) {
-                    hideMapPanel();
-                    document.getElementById("transcript-section").style.display = "none";
-                    return;
-                }
-
-                if (isAisOnly) {
-                    showMapPanel(true);
-                    document.getElementById("transcript-section").style.display = "none";
-                    return;
-                }
-
-                if (!adsbEnabled || !isAviation) {
-                    hideMapPanel();
-                    document.getElementById("transcript-section").style.display = "";
-                    return;
-                }
-
-                if (isAdsbOnly) {
-                    showMapPanel(true);
-                    document.getElementById("transcript-section").style.display = "none";
-                } else {
-                    showMapPanel(false);
-                    document.getElementById("transcript-section").style.display = "";
-                }
+                updatePanelsForPreset(data.preset || {});
             });
     }
 

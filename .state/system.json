@@ -1,7 +1,7 @@
 {
   "name": "ravenSDR",
   "description": "Real-time RF Signal Transcription Pipeline \u2014 RTL-SDR \u2192 Edge AI Inference (Hailo-8L NPU) \u2192 Live Web Interface",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "status": "running",
   "license": "AGPL-3.0",
   "stack": {

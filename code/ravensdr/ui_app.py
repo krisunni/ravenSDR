@@ -23,7 +23,7 @@ import os
 import urllib.error
 import urllib.request
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, make_response, render_template, request
 from flask_socketio import SocketIO
 
 from ravensdr.ipc import resolve_socket_path
@@ -35,7 +35,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("ravensdr.ui")
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 UI_PORT = int(os.environ.get("RAVENSDR_UI_PORT", "5001"))
 # Base URL of the radio process's legacy HTTP API, used only for routes that
@@ -108,10 +108,39 @@ def _command(cmd, args=None):
 
 # ── Pages ──
 
+
+def _register_asset_helper(flask_app, fallback_version):
+    """Expose asset() to templates: /static/x.js?v=<mtime>.
+
+    Keyed on the file's modification time rather than the app version, so ANY
+    edit to a JS/CSS file invalidates the browser copy automatically. Relying on
+    a manual version bump is what let a stale ravensdr.js keep running after a
+    fix shipped — and a stale one is not cosmetic here: an old build force-tuned
+    the radio on every page load.
+    """
+    import os as _os
+
+    @flask_app.template_global("asset")
+    def _asset(filename):
+        path = _os.path.join(flask_app.static_folder, filename)
+        try:
+            stamp = str(int(_os.path.getmtime(path)))
+        except OSError:
+            stamp = fallback_version
+        return f"/static/{filename}?v={stamp}"
+
+
+_register_asset_helper(app, VERSION)
+
 @app.route("/")
 def index():
     """The console. Must render even with the radio down."""
-    return render_template("index.html", version=VERSION)
+    # The page must never be cached: it carries the asset URLs, so a cached
+    # copy would keep pointing at old JS/CSS no matter how well those are
+    # versioned. The assets themselves stay cacheable — their URLs change.
+    resp = make_response(render_template("index.html", version=VERSION))
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
 
 
 @app.route("/api/link")

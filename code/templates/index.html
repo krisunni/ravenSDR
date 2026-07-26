@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ravenSDR Console</title>
-    <link rel="stylesheet" href="/static/ravensdr.css?v={{ version }}">
-    <link rel="stylesheet" href="/static/map.css?v={{ version }}">
-    <link rel="stylesheet" href="/static/satellite.css?v={{ version }}">
-    <link rel="stylesheet" href="/static/wefax.css?v={{ version }}">
-    <link rel="stylesheet" href="/static/meteor.css?v={{ version }}">
-    <link rel="stylesheet" href="/static/classifier.css?v={{ version }}">
-    <link rel="stylesheet" href="/static/sei.css?v={{ version }}">
-    <link rel="stylesheet" href="/static/settings.css?v={{ version }}">
+    <link rel="stylesheet" href="{{ asset('ravensdr.css') }}">
+    <link rel="stylesheet" href="{{ asset('map.css') }}">
+    <link rel="stylesheet" href="{{ asset('satellite.css') }}">
+    <link rel="stylesheet" href="{{ asset('wefax.css') }}">
+    <link rel="stylesheet" href="{{ asset('meteor.css') }}">
+    <link rel="stylesheet" href="{{ asset('classifier.css') }}">
+    <link rel="stylesheet" href="{{ asset('sei.css') }}">
+    <link rel="stylesheet" href="{{ asset('settings.css') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css" />
 </head>
 <body>
@@ -573,18 +573,18 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-rotatedmarker@0.2.0/leaflet.rotatedMarker.js"></script>
-    <script src="/static/map.js?v={{ version }}"></script>
-    <script src="/static/weather.js?v={{ version }}"></script>
-    <script src="/static/satellite.js?v={{ version }}"></script>
-    <script src="/static/wefax.js?v={{ version }}"></script>
-    <script src="/static/meteor.js?v={{ version }}"></script>
-    <script src="/static/classifier.js?v={{ version }}"></script>
-    <script src="/static/sei.js?v={{ version }}"></script>
-    <script src="/static/ism.js?v={{ version }}"></script>
-    <script src="/static/aprs.js?v={{ version }}"></script>
-    <script src="/static/acars.js?v={{ version }}"></script>
-    <script src="/static/pager.js?v={{ version }}"></script>
-    <script src="/static/settings.js?v={{ version }}"></script>
-    <script src="/static/ravensdr.js?v={{ version }}"></script>
+    <script src="{{ asset('map.js') }}"></script>
+    <script src="{{ asset('weather.js') }}"></script>
+    <script src="{{ asset('satellite.js') }}"></script>
+    <script src="{{ asset('wefax.js') }}"></script>
+    <script src="{{ asset('meteor.js') }}"></script>
+    <script src="{{ asset('classifier.js') }}"></script>
+    <script src="{{ asset('sei.js') }}"></script>
+    <script src="{{ asset('ism.js') }}"></script>
+    <script src="{{ asset('aprs.js') }}"></script>
+    <script src="{{ asset('acars.js') }}"></script>
+    <script src="{{ asset('pager.js') }}"></script>
+    <script src="{{ asset('settings.js') }}"></script>
+    <script src="{{ asset('ravensdr.js') }}"></script>
 </body>
 </html>

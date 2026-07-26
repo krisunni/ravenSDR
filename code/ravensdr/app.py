@@ -8,7 +8,8 @@ import signal
 import sys
 import threading
 
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import (Flask, Response, jsonify, make_response, render_template,
+                   request, stream_with_context)
 from flask_socketio import SocketIO
 
 from ravensdr.audio_router import audio_stream_generator
@@ -89,7 +90,7 @@ def _make_logging_thread_safe():
 _make_logging_thread_safe()
 log = logging.getLogger(__name__)
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 # ── Flask + Socket.IO ──
 app = Flask(
@@ -649,13 +650,42 @@ def signal_meter_loop():
 
 # ── REST Routes ──
 
+
+def _register_asset_helper(flask_app, fallback_version):
+    """Expose asset() to templates: /static/x.js?v=<mtime>.
+
+    Keyed on the file's modification time rather than the app version, so ANY
+    edit to a JS/CSS file invalidates the browser copy automatically. Relying on
+    a manual version bump is what let a stale ravensdr.js keep running after a
+    fix shipped — and a stale one is not cosmetic here: an old build force-tuned
+    the radio on every page load.
+    """
+    import os as _os
+
+    @flask_app.template_global("asset")
+    def _asset(filename):
+        path = _os.path.join(flask_app.static_folder, filename)
+        try:
+            stamp = str(int(_os.path.getmtime(path)))
+        except OSError:
+            stamp = fallback_version
+        return f"/static/{filename}?v={stamp}"
+
+
+_register_asset_helper(app, VERSION)
+
 @app.route("/")
 def index():
     # Version-stamp static URLs: Flask caches /static for 12h, so a shipped
     # JS/CSS fix would otherwise not reach an already-open console until a hard
     # refresh. A stale ravensdr.js is not cosmetic — the old one force-tuned the
     # radio on every page load.
-    return render_template("index.html", version=VERSION)
+    # The page must never be cached: it carries the asset URLs, so a cached
+    # copy would keep pointing at old JS/CSS no matter how well those are
+    # versioned. The assets themselves stay cacheable — their URLs change.
+    resp = make_response(render_template("index.html", version=VERSION))
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
 
 
 @app.route("/api/presets")
