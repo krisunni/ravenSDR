@@ -139,3 +139,36 @@ class TestSampleTrimming:
         path = collector.collect_sample(_iq(32768), "FM", 1, snr_db=20)
         img = spectrogram_to_image(iq_to_spectrogram(np.load(path)))
         assert img.shape == (224, 224)
+
+
+class TestSoftmaxOnLogits:
+    """The exported graph ends at a Linear layer, so the NPU returns LOGITS.
+
+    train.py uses CrossEntropyLoss, which applies softmax internally — the
+    exported model therefore does NOT. Treating raw logits as probabilities made
+    the 0.7 confidence threshold meaningless.
+    """
+
+    def test_softmax_normalises(self):
+        from ravensdr.signal_classifier import _softmax
+        p = _softmax([2.0, 1.0, 0.1])
+        assert abs(float(p.sum()) - 1.0) < 1e-5
+        assert p.argmax() == 0
+
+    def test_softmax_handles_large_logits(self):
+        """Shifted for stability — naive exp() would overflow."""
+        from ravensdr.signal_classifier import _softmax
+        p = _softmax([1000.0, 999.0, 1.0])
+        assert np.isfinite(p).all()
+        assert abs(float(p.sum()) - 1.0) < 1e-5
+
+    def test_softmax_preserves_ranking(self):
+        from ravensdr.signal_classifier import _softmax
+        logits = [0.5, 3.0, -2.0, 1.0]
+        assert list(np.argsort(_softmax(logits))) == list(np.argsort(logits))
+
+    def test_confidence_becomes_meaningful(self):
+        """A confident logit vector should exceed the 0.7 gate; a flat one not."""
+        from ravensdr.signal_classifier import _softmax
+        assert _softmax([8.0, 1.0, 1.0]).max() > 0.7
+        assert _softmax([1.0, 1.0, 1.05]).max() < 0.7

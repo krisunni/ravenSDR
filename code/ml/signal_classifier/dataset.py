@@ -15,6 +15,20 @@ import numpy as np
 
 # Spectrogram parameters (match signal_classifier.py)
 FFT_SIZE = 256
+
+# Window length for a custom capture, in IQ samples.
+#
+# MUST match what the runtime classifies. signal_classifier.classify_iq is fed
+# ~24000-sample chunks, which make a (186, 256) spectrogram; truncating training
+# samples to 1024 makes a (7, 256) one that is then stretched to the same 224
+# rows. Measured on one capture: mean pixel difference 30/255 and correlation
+# only 0.49 — the model would be trained on a visibly different distribution
+# from the one it sees in production, which costs accuracy no matter how well
+# training itself goes.
+#
+# RadioML records are natively 1024 samples, so mixing that corpus in requires
+# setting this to 1024 and accepting the shorter runtime window to match.
+RUNTIME_SAMPLE_LEN = 24000
 FFT_HOP = FFT_SIZE // 2
 SPECTROGRAM_SIZE = 224
 
@@ -150,7 +164,7 @@ def load_radioml(dataset_path):
     return iq, labels, Z
 
 
-def load_custom_samples(data_dir, class_name):
+def load_custom_samples(data_dir, class_name, sample_len=RUNTIME_SAMPLE_LEN):
     """Load custom IQ samples from .npy files in a directory.
 
     Args:
@@ -170,14 +184,15 @@ def load_custom_samples(data_dir, class_name):
             try:
                 iq = np.load(path)
                 if np.iscomplexobj(iq) and len(iq) >= FFT_SIZE:
-                    samples.append(iq[:1024])  # truncate to 1024 samples
+                    samples.append(iq[:sample_len])
             except Exception:
                 pass
 
     return samples
 
 
-def build_dataset(radioml_path=None, custom_dirs=None, augment=True, seed=42):
+def build_dataset(radioml_path=None, custom_dirs=None, augment=True, seed=42,
+                  sample_len=RUNTIME_SAMPLE_LEN):
     """Build combined dataset of spectrograms and labels.
 
     Args:
@@ -237,7 +252,7 @@ def build_dataset(radioml_path=None, custom_dirs=None, augment=True, seed=42):
             if class_name not in class_names:
                 continue
 
-            samples = load_custom_samples(data_dir, class_name)
+            samples = load_custom_samples(data_dir, class_name, sample_len)
             class_idx = class_names.index(class_name)
 
             for iq in samples:
@@ -295,6 +310,11 @@ if __name__ == "__main__":
     parser.add_argument("--radioml", type=str, help="Path to RadioML HDF5 file")
     parser.add_argument("--custom-dir", type=str, help="Directory with custom class subdirs")
     parser.add_argument("--output", type=str, default="data/dataset.npz", help="Output path")
+    parser.add_argument("--sample-len", type=int, default=RUNTIME_SAMPLE_LEN,
+                        help="IQ samples per training window. Must match the "
+                             "runtime window (%d) or the model is trained on a "
+                             "different distribution than it infers on. Use 1024 "
+                             "only when mixing in RadioML." % RUNTIME_SAMPLE_LEN)
     args = parser.parse_args()
 
     custom_dirs = {}
@@ -304,9 +324,15 @@ if __name__ == "__main__":
             if os.path.isdir(d):
                 custom_dirs[class_name] = d
 
+    if args.radioml and args.sample_len != 1024:
+        print("WARNING: RadioML records are 1024 samples but --sample-len is %d."
+              % args.sample_len)
+        print("         Mixing the two trains on inconsistent window lengths.")
+
     images, labels, class_names = build_dataset(
         radioml_path=args.radioml,
         custom_dirs=custom_dirs if custom_dirs else None,
+        sample_len=args.sample_len,
     )
 
     if len(images) > 0:

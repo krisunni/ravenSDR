@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 # SEI parameters
 EMBEDDING_DIM = 128
+HAILO_TIMEOUT_MS = 10000
 MATCH_THRESHOLD = 0.85          # cosine similarity threshold for match
 IQ_WINDOW_SIZE = 1024           # IQ samples per inference window
 EMA_ALPHA = 0.1                 # exponential moving average for centroid updates
@@ -107,6 +108,9 @@ class SEIModel:
         self._backend = "none"
         self._model = None
         self._vdevice = None
+        self._configured = None
+        self._bindings = None
+        self._input_shape = ()
         self._lock = threading.Lock()
         self.match_threshold = MATCH_THRESHOLD  # runtime-tunable via apply_settings
 
@@ -128,12 +132,23 @@ class SEIModel:
     def _init_hailo(self, hef_path):
         """Initialize Hailo-8L inference model for SEI."""
         try:
-            from hailo_platform import HEF, VDevice
+            from hailo_platform import (HEF, VDevice, FormatType,
+                                        HailoSchedulingAlgorithm)
             hef = HEF(hef_path)
-            self._vdevice = VDevice()
-            self._model = self._vdevice.create_infer_model(hef)
+            # ROUND_ROBIN so this can coexist with Whisper and the classifier;
+            # a bare VDevice() cannot share the NPU and simply fails to acquire.
+            params = VDevice.create_params()
+            params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+            self._vdevice = VDevice(params)
+            self._model = self._vdevice.create_infer_model(hef_path)
+            self._model.input().set_format_type(FormatType.FLOAT32)
+            self._model.output().set_format_type(FormatType.FLOAT32)
+            self._configured = self._model.configure()
+            self._bindings = self._configured.create_bindings()
+            self._input_shape = tuple(self._model.input().shape)
             self._backend = "hailo"
-            log.info("SEI model loaded on Hailo-8L: %s", hef_path)
+            log.info("SEI model loaded on Hailo-8L: %s (input %s)",
+                     hef_path, self._input_shape)
         except Exception as e:
             log.warning("SEI model: Hailo init failed (%s), using CPU fallback", e)
             self._backend = "cpu"
@@ -234,17 +249,30 @@ class SEIModel:
     def _infer_hailo(self, iq_window):
         """Run Hailo inference to get embedding."""
         try:
-            # Convert complex IQ to 2-channel float32 (I, Q)
-            input_data = np.stack([
-                iq_window.real.astype(np.float32),
-                iq_window.imag.astype(np.float32),
-            ], axis=0)
-            input_data = np.expand_dims(input_data, axis=0)  # batch dim: (1, 2, 1024)
+            # HailoRT has no InferModel.infer() — see signal_classifier for the
+            # same defect. Real API: configure/create_bindings/set_buffer/run.
+            i = iq_window.real.astype(np.float32)
+            q = iq_window.imag.astype(np.float32)
+
+            # Hailo has no native 1D convolution, so a SEINet compiled for the
+            # NPU must be reshaped to 2D (Conv1d k=7 -> Conv2d k=(1,7)), making
+            # the input (1, 1, N, 2) NHWC rather than the (1, 2, N) the CPU path
+            # uses. Adapt to whatever the loaded HEF actually declares instead
+            # of assuming, so either compile works.
+            if len(self._input_shape) == 4:
+                input_data = np.stack([i, q], axis=-1)[None, None, :, :]
+            else:
+                input_data = np.stack([i, q], axis=0)[None, :, :]
+            input_data = np.ascontiguousarray(input_data.astype(np.float32))
 
             with self._lock:
-                output = self._model.infer(input_data)
+                out_buf = np.zeros(self._model.output().shape, dtype=np.float32)
+                self._bindings.input().set_buffer(input_data)
+                self._bindings.output().set_buffer(out_buf)
+                self._configured.run([self._bindings], HAILO_TIMEOUT_MS)
+                raw = self._bindings.output().get_buffer()
 
-            embedding = output[0].flatten()[:EMBEDDING_DIM]
+            embedding = np.asarray(raw).flatten()[:EMBEDDING_DIM]
             return l2_normalize(embedding.astype(np.float32))
         except Exception as e:
             log.warning("SEI Hailo inference failed: %s", e)

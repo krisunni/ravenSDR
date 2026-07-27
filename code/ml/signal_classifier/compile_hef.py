@@ -52,8 +52,15 @@ def compile_hef(args):
         cal_set = []
         for img in cal_images:
             img_f = img.astype(np.float32) / 255.0
-            img_3ch = np.stack([img_f, img_f, img_f], axis=0)
-            cal_set.append(np.expand_dims(img_3ch, 0))
+            # NHWC, not NCHW. The ONNX graph is NCHW (PyTorch's layout) and the
+            # DFC inserts a transpose for it, but optimize() wants calibration
+            # data in the NETWORK INPUT layout, which for HailoRT is NHWC.
+            # Feeding (N,3,224,224) here calibrates the quantiser against a
+            # transposed image, so the scales come out wrong and the compiled
+            # model underperforms for reasons that look like a training problem.
+            # Runtime feeds (1,224,224,3) float 0..1 — match it exactly.
+            img_3ch = np.stack([img_f, img_f, img_f], axis=-1)   # (224,224,3)
+            cal_set.append(np.expand_dims(img_3ch, 0))           # (1,224,224,3)
         calib_dataset = np.concatenate(cal_set, axis=0)
     else:
         print("WARNING: No calibration data — using random data (accuracy may degrade)")

@@ -60,6 +60,14 @@ COLLECT_MIN_INTERVAL_S = 2.0     # per class — diversity beats 10 copies a sec
 # the model trains.
 COLLECT_SAMPLE_LEN = 24000
 
+HAILO_TIMEOUT_MS = 10000
+
+
+def _softmax(x):
+    """Convert logits to probabilities. Shifted for numerical stability."""
+    e = np.exp(np.asarray(x, dtype=np.float64) - np.max(x))
+    return (e / e.sum()).astype(np.float32)
+
 
 def iq_to_spectrogram(iq_samples, fft_size=FFT_SIZE, hop=FFT_HOP):
     """Convert complex IQ samples to a power spectrogram in dBm.
@@ -143,6 +151,8 @@ class SignalClassifier:
         self.collect_label = None
         self._model = None
         self._vdevice = None
+        self._configured = None
+        self._bindings = None
         self._running = False
         self._lock = threading.Lock()
         self.confidence_threshold = CONFIDENCE_THRESHOLD  # runtime-tunable
@@ -169,12 +179,27 @@ class SignalClassifier:
             self._backend = "cpu"
 
     def _init_hailo(self, hef_path):
-        """Initialize Hailo-8L inference model."""
+        """Initialize Hailo-8L inference model.
+
+        The VDevice MUST be created with ROUND_ROBIN scheduling. Whisper already
+        holds the NPU (transcriber.py), and a bare VDevice() cannot share the
+        device with it — the second one to start simply fails to acquire.
+        """
         try:
-            from hailo_platform import HEF, VDevice
+            from hailo_platform import (HEF, VDevice, FormatType,
+                                        HailoSchedulingAlgorithm)
             hef = HEF(hef_path)
-            self._vdevice = VDevice()
-            self._model = self._vdevice.create_infer_model(hef)
+            params = VDevice.create_params()
+            params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+            self._vdevice = VDevice(params)
+            self._model = self._vdevice.create_infer_model(hef_path)
+            # Feed float32 so the 0..1 range the model was calibrated on is
+            # preserved; the runtime otherwise expects quantised uint8 and the
+            # scale would be off by 255x.
+            self._model.input().set_format_type(FormatType.FLOAT32)
+            self._model.output().set_format_type(FormatType.FLOAT32)
+            self._configured = self._model.configure()
+            self._bindings = self._configured.create_bindings()
             self._backend = "hailo"
             log.info("Signal classifier loaded on Hailo-8L: %s", hef_path)
         except Exception as e:
@@ -392,19 +417,35 @@ class SignalClassifier:
             (modulation_name, confidence, probabilities) or None
         """
         try:
-            # Expand to 3 channels (ImageNet-pretrained model expects RGB)
-            input_data = np.stack([img, img, img], axis=-1).astype(np.uint8)
-            input_data = np.expand_dims(input_data, axis=0)  # batch dim
+            # HailoRT has NO InferModel.infer(). The real API is
+            # configure() -> create_bindings() -> set_buffer() -> run(), as the
+            # working Whisper path does. Calling .infer() raised AttributeError,
+            # which the except below swallowed — so the NPU path was dead code
+            # that silently degraded to CPU while still reporting "hailo".
+            #
+            # Layout is NHWC (HailoRT's convention), float 0..1 to match how the
+            # model is calibrated. Three identical channels because the network
+            # is ImageNet-pretrained and expects RGB.
+            input_data = np.stack([img, img, img], axis=-1).astype(np.float32) / 255.0
+            input_data = np.expand_dims(input_data, axis=0)      # (1,224,224,3)
+            input_data = np.ascontiguousarray(input_data)
 
             with self._lock:
-                output = self._model.infer(input_data)
+                out_buf = np.zeros(self._model.output().shape, dtype=np.float32)
+                self._bindings.input().set_buffer(input_data)
+                self._bindings.output().set_buffer(out_buf)
+                self._configured.run([self._bindings], HAILO_TIMEOUT_MS)
+                raw = self._bindings.output().get_buffer()
 
-            # Output is softmax probabilities
-            probs = output[0].flatten()
-            if len(probs) < len(self._classes):
+            logits = np.asarray(raw).flatten()
+            if len(logits) < len(self._classes):
                 return None
 
-            probs = probs[:len(self._classes)]
+            # The exported graph ends at the final Linear layer, so these are
+            # LOGITS, not probabilities — train.py uses CrossEntropyLoss, which
+            # applies softmax internally. Treating them as probabilities made the
+            # 0.7 confidence threshold meaningless.
+            probs = _softmax(logits[:len(self._classes)])
             idx = int(np.argmax(probs))
             confidence = float(probs[idx])
             modulation = self._classes[idx]
