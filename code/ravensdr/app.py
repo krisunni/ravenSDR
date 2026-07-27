@@ -729,6 +729,11 @@ def _apply_tune(preset):
     # (ISM/APRS/pager/ACARS/AIS/ADS-B) go unrecorded, so a restart came back on a
     # stale audio preset instead of where the operator left it.
     set_last_preset(preset.get("id"))
+
+    # The preset's declared modulation is ground truth for corpus collection —
+    # the operator tuned here deliberately. Set before any mode branch, all of
+    # which return early.
+    signal_classifier.collect_label = preset.get("expected_modulation")
     # Start weather accumulation fresh when the station changes
     if input_source.current_preset is None or \
             input_source.current_preset.get("id") != preset.get("id"):
@@ -1370,8 +1375,11 @@ def api_training_stats():
     the panel shows this as read-only guidance, not a live trainer.
     """
     import os as _os2
-    data_dir = _os2.path.join(_os2.path.dirname(__file__), "data")
-    collected_dir = _os2.path.join(data_dir, "collected")
+    # Use the classifier's own COLLECTED_DIR. This route used to look under
+    # code/ravensdr/data/collected while the classifier wrote to
+    # code/ml/signal_classifier/data/collected, so the panel always read 0.
+    from ravensdr.signal_classifier import COLLECTED_DIR as _collected
+    collected_dir = _collected
     per_emitter = []
     total_files = 0
     total_bytes = 0
@@ -1397,7 +1405,8 @@ def api_training_stats():
         "collected_samples": total_files,
         "collected_bytes": total_bytes,
         "per_emitter": per_emitter,
-        "collection_available": False,
+        "collection_available": True,
+        "classifier_corpus": signal_classifier.collection_stats(),
         "note": ("On-device: curate fingerprints, label emitters, tune thresholds. "
                  "Model retrain + Hailo HEF compile run offline on x86; load the "
                  "new .hef to update the weights."),

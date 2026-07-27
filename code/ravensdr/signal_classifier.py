@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import threading
+import time
 
 import numpy as np
 
@@ -33,6 +34,22 @@ CHUNK_SAMPLES = 240000           # 100ms at 2.4 MHz sample rate
 COLLECTED_DIR = os.path.join(
     os.path.dirname(__file__), "..", "ml", "signal_classifier", "data", "collected"
 )
+
+# Corpus collection, labelled from the PRESET rather than from the classifier.
+#
+# The original trigger only saved a sample when the classifier's own output
+# already matched the preset — which is circular: a trained classifier is needed
+# to collect the data required to train one. Worse, with no HEF the CPU fallback
+# can only ever emit WFM/FM/CW/AM/SSB, so ADSB, WEFAX, NOAA_APT, P25 and DMR
+# could never be collected at all. Result after months of running: one file.
+#
+# The operator's tuning choice IS ground truth. Tuned to a preset declaring
+# expected_modulation, every detected transmission on that channel is a labelled
+# sample regardless of what the untrained classifier believes. That breaks the
+# deadlock and needs no model.
+COLLECT_MIN_SNR_DB = 10.0        # below this it may be noise, not a transmission
+COLLECT_MAX_PER_CLASS = 5000     # bound the corpus; the SD card is not infinite
+COLLECT_MIN_INTERVAL_S = 2.0     # per class — diversity beats 10 copies a second
 
 
 def iq_to_spectrogram(iq_samples, fft_size=FFT_SIZE, hop=FFT_HOP):
@@ -108,6 +125,13 @@ class SignalClassifier:
         self.hef_path = hef_path
         self._classes = MODULATION_CLASSES[:]
         self._backend = "none"
+        self._collect_last_ts = {}      # label -> last save time (rate limit)
+        self._collect_counts = {}       # label -> files on disk (cap)
+        self._collected_total = 0
+        self._collect_skipped_snr = 0
+        # Ground-truth label for collection, set from the tuned preset's
+        # expected_modulation. None disables collection entirely.
+        self.collect_label = None
         self._model = None
         self._vdevice = None
         self._running = False
@@ -235,6 +259,69 @@ class SignalClassifier:
 
         return classification
 
+
+    def collect_sample(self, iq_samples, label, frequency_hz, snr_db=None):
+        """Save a labelled IQ sample, using the preset as ground truth.
+
+        Returns the path written, or None if the sample was declined. Never
+        raises — collection must not be able to break reception.
+        """
+        if not label or label == "unknown":
+            return None
+        if snr_db is not None and snr_db < COLLECT_MIN_SNR_DB:
+            self._collect_skipped_snr += 1
+            return None
+
+        now = time.time()
+        last = self._collect_last_ts.get(label, 0.0)
+        if now - last < COLLECT_MIN_INTERVAL_S:
+            return None
+
+        save_dir = os.path.join(COLLECTED_DIR, label)
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+            if self._collect_counts.get(label) is None:
+                self._collect_counts[label] = len(
+                    [f for f in os.listdir(save_dir) if f.endswith(".npy")])
+            if self._collect_counts[label] >= COLLECT_MAX_PER_CLASS:
+                return None
+
+            ts = datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y%m%d_%H%M%S_%f")
+            path = os.path.join(save_dir, f"{ts}_{frequency_hz}.npy")
+            np.save(path, iq_samples)
+        except OSError as e:
+            log.warning("Could not write training sample: %s", e)
+            return None
+
+        self._collect_last_ts[label] = now
+        self._collect_counts[label] += 1
+        self._collected_total += 1
+        return path
+
+    def collection_stats(self):
+        """Per-class corpus counts, read from disk so restarts stay accurate."""
+        per_class = {}
+        total = 0
+        if os.path.isdir(COLLECTED_DIR):
+            for name in sorted(os.listdir(COLLECTED_DIR)):
+                sub = os.path.join(COLLECTED_DIR, name)
+                if not os.path.isdir(sub):
+                    continue
+                n = len([f for f in os.listdir(sub) if f.endswith(".npy")])
+                if n:
+                    per_class[name] = n
+                    total += n
+        return {
+            "dir": os.path.normpath(COLLECTED_DIR),
+            "total": total,
+            "per_class": per_class,
+            "collected_this_run": self._collected_total,
+            "skipped_low_snr": self._collect_skipped_snr,
+            "min_snr_db": COLLECT_MIN_SNR_DB,
+            "max_per_class": COLLECT_MAX_PER_CLASS,
+        }
+
     def classify_segment(self, segment):
         """Classify a transmission segment from IQSegmenter and forward to SEI.
 
@@ -247,7 +334,14 @@ class SignalClassifier:
         result = self.classify_iq(
             segment.iq_samples,
             frequency_hz=segment.frequency_hz,
+            expected_modulation=self.collect_label,
         )
+
+        # A segment is a DETECTED transmission with a measured SNR — the best
+        # training sample available. Label it from the preset, not the model.
+        if self.collect_label:
+            self.collect_sample(segment.iq_samples, self.collect_label,
+                                segment.frequency_hz, snr_db=segment.snr_db)
 
         # Forward to SEI with full segment metadata
         if result is not None and self._sei_model is not None:
