@@ -78,6 +78,134 @@ def is_signal_present(pcm_bytes):
     return compute_rms(pcm_bytes) > _silence_threshold
 
 
+# Adaptive VAD: gate on level ABOVE the noise floor, not an absolute RMS.
+#
+# Why the absolute threshold does not work
+# ----------------------------------------
+# rtl_fm with squelch disabled (-l 0) emits full-scale FM hiss when nobody is
+# transmitting. Measured on a silent 2m repeater: RMS 1342-1523 (median 1439),
+# i.e. ~3x the 500 gate, so 0% of frames were ever rejected. The NPU therefore
+# transcribed static continuously and Whisper — asked to transcribe a roaring
+# noise — emitted "(roaring)" and "(Groans)", which the hallucination filter then
+# discarded. Measured over 75 minutes: 280 chunks processed, 273 filtered (97.5%
+# waste), 1764 tokens spent on nothing.
+#
+# The noise floor also moves with gain, frequency and antenna, so no fixed number
+# can be right everywhere. What IS stable is the *margin* between speech and the
+# local floor, so this tracks the floor and gates on dB above it — mirroring the
+# approach iq_segmenter.IQSegmenter already uses successfully in the IQ domain.
+
+VAD_THRESHOLD_DB = 8.0          # speech must exceed the floor by this much
+VAD_NOISE_WINDOW = 200          # frames of history for the floor estimate (~20s)
+VAD_MIN_FLOOR_FRAMES = 10       # need this many before the estimate is trusted
+VAD_ABSOLUTE_FLOOR_RMS = 30     # below this it is digital silence, never speech
+# How long the floor may stay frozen before we assume the estimate is wrong.
+# Must be much longer than any plausible transmission — a net or a ragchew can
+# run for minutes, and relearning mid-over would teach the floor the speech
+# level and shut the gate. 3 minutes at 100ms frames.
+VAD_STALE_FLOOR_FRAMES = 1800
+
+_vad_threshold_db = VAD_THRESHOLD_DB
+
+
+def rms_to_db(rms):
+    """Convert a linear 16-bit RMS to dB. Floored to avoid log(0)."""
+    return float(20.0 * np.log10(max(float(rms), 1e-6)))
+
+
+class NoiseFloorTracker:
+    """Rolling noise floor over frame RMS, in dB, by low-percentile statistics.
+
+    A LOW PERCENTILE, not a mean or a median. Each alternative fails:
+
+      mean   — speech drags it upward, raising the floor until nothing exceeds
+               it and the gate goes deaf.
+      median — fine when transmissions are rare (which is why IQSegmenter can
+               use one), but during an over the channel is busy more than half
+               the time, so the median becomes the SPEECH level and every frame
+               then reads as "at the floor". Caught by test_short_pause_no_split.
+
+    The 10th percentile over a ~20s window lands on the quiet gaps that real
+    audio always has — between words, between overs — so the floor tracks hiss
+    even mid-conversation. A perfectly constant tone has no gaps and cannot be
+    distinguished from noise by level alone; that is inherent to level-based VAD,
+    not a defect here.
+    """
+
+    FLOOR_PERCENTILE = 10
+
+    def __init__(self, window=VAD_NOISE_WINDOW, min_frames=VAD_MIN_FLOOR_FRAMES,
+                 stale_frames=VAD_STALE_FLOOR_FRAMES):
+        self._window = window
+        self._min_frames = min_frames
+        self._stale_frames = stale_frames
+        self._history = []
+        self._floor_db = None
+        self._frozen_frames = 0
+
+    def update(self, rms):
+        """Feed one frame's RMS; returns the current floor in dB (or None).
+
+        Frames already judged to be signal do NOT teach the floor. Without this,
+        a long transmission (a net, a ragchew) fills the whole window with
+        speech, the percentile climbs into the speech itself, and the gate closes
+        mid-over — the same way it swallowed continuous broadcast audio.
+
+        The stale-guard keeps that from becoming permanent: if the floor is never
+        re-learned for a full window, the estimate is stale (the band changed, or
+        it locked on during a transmission), so learning resumes unconditionally.
+        """
+        if self._floor_db is not None and self.is_signal(rms):
+            self._frozen_frames += 1
+            if self._frozen_frames <= self._stale_frames:
+                return self._floor_db
+            # Stale — fall through and relearn rather than stay deaf forever.
+        else:
+            self._frozen_frames = 0
+
+        self._history.append(rms_to_db(rms))
+        if len(self._history) > self._window:
+            self._history = self._history[-self._window:]
+        if len(self._history) >= self._min_frames:
+            self._floor_db = float(np.percentile(self._history,
+                                                 self.FLOOR_PERCENTILE))
+        return self._floor_db
+
+    def excess_db(self, rms):
+        """How far this frame sits above the floor. 0.0 while still learning."""
+        if self._floor_db is None:
+            return 0.0
+        # float() throughout: numpy scalars leak np.float64/np.bool_ into the
+        # public API, and np.bool_(False) is not False, which silently breaks
+        # identity checks in callers and tests.
+        return float(rms_to_db(rms) - self._floor_db)
+
+    def is_signal(self, rms, threshold_db=None):
+        """True if this frame is loud enough, relative to the local floor."""
+        rms = float(rms)
+        if rms < VAD_ABSOLUTE_FLOOR_RMS:
+            return False        # digital silence — no floor estimate can save it
+        if self._floor_db is None:
+            # Until the floor settles, fall back to the absolute gate rather than
+            # passing everything through to the NPU.
+            return bool(rms > _silence_threshold)
+        threshold = _vad_threshold_db if threshold_db is None else threshold_db
+        return bool(self.excess_db(rms) >= threshold)
+
+    @property
+    def noise_floor_db(self):
+        return self._floor_db
+
+    @property
+    def ready(self):
+        return self._floor_db is not None
+
+    def reset(self):
+        self._history = []
+        self._floor_db = None
+        self._frozen_frames = 0
+
+
 import re
 
 # Whisper hallucinates these on noise/static — filter them out.
@@ -143,6 +271,15 @@ class VoiceActivitySegmenter:
         self._pending = b""
         self._silence_frames = 0
         self._holdoff_frames = int(VAD_HOLDOFF_MS / 100)
+        # Shared floor estimate: the same measurement decides both where to split
+        # and whether a segment is worth transcribing. With a fixed threshold on
+        # an unsquelched channel, hiss never counted as silence, so nothing ever
+        # split on silence and every segment ran to the 15s maximum.
+        self.noise = NoiseFloorTracker()
+
+    def should_transcribe(self, chunk):
+        """True if this segment stands far enough above the local noise floor."""
+        return self.noise.is_signal(compute_rms(chunk))
 
     def feed(self, pcm: bytes) -> list[bytes]:
         """Feed PCM data, return list of complete segments (may be empty)."""
@@ -171,7 +308,14 @@ class VoiceActivitySegmenter:
             self._pending += frame
             buf_seconds = len(self._pending) / (SAMPLE_RATE * 2)
 
-            if rms < VAD_SILENCE_THRESHOLD:
+            self.noise.update(rms)
+            # "Silence" means near the floor, not below a fixed number — on a
+            # noisy channel the floor itself sits well above VAD_SILENCE_THRESHOLD.
+            if self.noise.ready:
+                is_quiet = self.noise.excess_db(rms) < _vad_threshold_db
+            else:
+                is_quiet = rms < VAD_SILENCE_THRESHOLD
+            if is_quiet:
                 self._silence_frames += 1
             else:
                 self._silence_frames = 0
@@ -207,6 +351,15 @@ class ContinuousSegmenter:
     Used instead of VAD when the broadcast has no silence gaps.
     """
 
+    def should_transcribe(self, chunk):
+        """Continuous broadcasts are transcribed wholesale — absolute gate only.
+
+        These presets (NOAA weather radio, a TIS loop) carry speech by design and
+        have no silence gaps, so a floor-relative test would reject the very
+        content we tuned in for.
+        """
+        return is_signal_present(chunk)
+
     def __init__(self, segment_s=CONTINUOUS_SEGMENT_S, overlap_s=CONTINUOUS_OVERLAP_S):
         self._segment_bytes = int(segment_s * SAMPLE_RATE * 2)  # 16-bit PCM
         self._overlap_bytes = int(overlap_s * SAMPLE_RATE * 2)
@@ -238,8 +391,10 @@ class Transcriber:
         self._thread = None
         self._current_preset = None
         self._whisper_model = None
-        self._transcript_callback = None  # called with text on each transcript
-        self._weather_callback = None     # called with parsed NOAA data
+        self._transcript_callback = None   # called with text on each transcript
+        self._weather_callback = None      # called with parsed NOAA data
+        # Rebuild the segmenter on the next loop pass (set by set_preset).
+        self._segmenter_dirty = True
 
         # Inference stats
         self._stats = {
@@ -247,6 +402,8 @@ class Transcriber:
             "chunks_processed": 0,
             "chunks_skipped_silence": 0,
             "chunks_filtered": 0,
+            "noise_floor_db": None,
+            "vad_threshold_db": VAD_THRESHOLD_DB,
             "last_filtered_text": None,
             "last_filtered_reason": None,
             "total_tokens": 0,
@@ -366,7 +523,16 @@ class Transcriber:
             self._backend = "none"
 
     def set_preset(self, preset):
+        """Change the active preset and force the segmenter to be rebuilt.
+
+        The inference loops build their segmenter ONCE before looping, so without
+        this flag a preset change could never switch strategy: tuning from a
+        voice preset to a continuous broadcast (NOAA, KUOW, a TIS loop) kept the
+        VAD segmenter, whose floor-relative gate has no quiet gap to measure
+        against and so rejected the programme audio wholesale.
+        """
         self._current_preset = preset
+        self._segmenter_dirty = True
 
     def set_transcript_callback(self, callback):
         """Set callback(text) called on each non-empty transcript."""
@@ -378,10 +544,12 @@ class Transcriber:
 
     def apply_settings(self, settings):
         """Apply runtime settings from the Settings tab (see config.py)."""
-        global _silence_threshold
+        global _silence_threshold, _vad_threshold_db
         try:
             _silence_threshold = float(settings.get(
                 "silence_threshold", _silence_threshold))
+            _vad_threshold_db = float(settings.get(
+                "vad_threshold_db", _vad_threshold_db))
         except (TypeError, ValueError):
             pass
 
@@ -472,6 +640,10 @@ class Transcriber:
             except Exception:
                 continue
 
+            if self._segmenter_dirty:
+                segmenter = self._make_segmenter()
+                self._segmenter_dirty = False
+
             # Signal level from raw data
             if len(data) >= 4096:
                 rms = compute_rms(data[-4096:])
@@ -484,7 +656,7 @@ class Transcriber:
             # Feed into segmenter — get back segments (VAD or time-based)
             segments = segmenter.feed(data)
             for chunk in segments:
-                if not is_signal_present(chunk):
+                if not segmenter.should_transcribe(chunk):
                     self._stats["chunks_skipped_silence"] += 1
                     continue
 
@@ -567,6 +739,10 @@ class Transcriber:
                             except Exception:
                                 continue
 
+                            if self._segmenter_dirty:
+                                segmenter = self._make_segmenter()
+                                self._segmenter_dirty = False
+
                             # Signal level from raw data
                             if len(data) >= 4096:
                                 rms = compute_rms(data[-4096:])
@@ -574,12 +750,20 @@ class Transcriber:
                                 self.emit_fn("signal_level", {
                                     "rms": round(rms, 1),
                                     "freq": preset.get("freq", ""),
+                                    "noise_floor_db": (
+                                        round(segmenter.noise.noise_floor_db, 1)
+                                        if getattr(segmenter, "noise", None)
+                                        and segmenter.noise.ready else None),
                                 })
+                                self._stats["noise_floor_db"] = (
+                                    round(segmenter.noise.noise_floor_db, 1)
+                                    if getattr(segmenter, "noise", None)
+                                    and segmenter.noise.ready else None)
 
                             # Feed into segmenter (VAD or continuous)
                             vad_segments = segmenter.feed(data)
                             for chunk in vad_segments:
-                                if not is_signal_present(chunk):
+                                if not segmenter.should_transcribe(chunk):
                                     self._stats["chunks_skipped_silence"] += 1
                                     continue
 

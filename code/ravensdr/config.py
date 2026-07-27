@@ -44,7 +44,8 @@ DEFAULT_CONFIG = {
         # Model / pipeline thresholds (see the owning module for meaning).
         "sei_match_threshold": 0.85,      # sei_model.MATCH_THRESHOLD
         "segmenter_threshold_db": 10,     # iq_segmenter.DEFAULT_THRESHOLD_DB
-        "silence_threshold": 500,         # transcriber.SILENCE_THRESHOLD
+        "silence_threshold": 500,         # transcriber.SILENCE_THRESHOLD (absolute fallback)
+        "vad_threshold_db": 8.0,          # transcriber.VAD_THRESHOLD_DB — dB over noise floor
         "classifier_confidence": 0.7,     # signal_classifier.CONFIDENCE_THRESHOLD
     },
 }

@@ -45,6 +45,10 @@ PRESETS = [
         "mode": "wbfm",
         "category": "broadcast",
         "squelch": 0,
+        # Broadcast FM never stops transmitting, so there is no quiet
+        # gap for a floor-relative VAD to measure against — the floor
+        # would settle inside the programme audio and gate it all out.
+        "continuous": True,
         "stream_url": "https://npr-ice.streamguys1.com/live.mp3",
         "note": "NPR Seattle",
         "expected_modulation": "WFM",
@@ -290,6 +294,10 @@ PRESETS = [
         "mode": "wbfm",
         "category": "broadcast",
         "squelch": 0,
+        # Broadcast FM never stops transmitting, so there is no quiet
+        # gap for a floor-relative VAD to measure against — the floor
+        # would settle inside the programme audio and gate it all out.
+        "continuous": True,
         "note": "KEXP Seattle",
         "expected_modulation": "WFM",
     },
