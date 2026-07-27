@@ -32,6 +32,10 @@ DEFAULT_CONFIG = {
         "apt": True,        # NOAA satellite pass recording
         "wefax": True,      # HF weather-fax broadcasts
         "adsb_scan": True,  # opportunistic ADS-B scanning between tunes
+        # Background IQ collection for the training corpus. OFF by default: it
+        # seizes the dongle on a rotation, and one dongle cannot stream IQ and
+        # demodulate audio at once, so the node stops listening while it runs.
+        "iq_collect": False,
     },
     # Runtime-tunable NPU/analysis settings, editable from the Settings tab.
     # Defaults mirror the original module constants so behaviour is unchanged

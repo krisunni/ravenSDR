@@ -119,3 +119,23 @@ class TestCollectionStats:
     def test_empty_corpus_reports_zero(self, collector):
         stats = collector.collection_stats()
         assert stats["total"] == 0 and stats["per_class"] == {}
+
+
+class TestSampleTrimming:
+    def test_saved_sample_is_trimmed_to_runtime_window(self, collector):
+        """Storing the raw rtl_sdr read wastes 32x what training reads."""
+        iq = _iq(32768)
+        path = collector.collect_sample(iq, "FM", 1, snr_db=20)
+        assert len(np.load(path)) == sc.COLLECT_SAMPLE_LEN
+
+    def test_short_sample_is_not_padded(self, collector):
+        iq = _iq(4096)
+        path = collector.collect_sample(iq, "FM", 1, snr_db=20)
+        assert len(np.load(path)) == 4096
+
+    def test_trimmed_sample_still_makes_a_full_image(self, collector):
+        from ravensdr.signal_classifier import (iq_to_spectrogram,
+                                                spectrogram_to_image)
+        path = collector.collect_sample(_iq(32768), "FM", 1, snr_db=20)
+        img = spectrogram_to_image(iq_to_spectrogram(np.load(path)))
+        assert img.shape == (224, 224)

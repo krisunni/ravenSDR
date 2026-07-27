@@ -50,6 +50,15 @@ COLLECTED_DIR = os.path.join(
 COLLECT_MIN_SNR_DB = 10.0        # below this it may be noise, not a transmission
 COLLECT_MAX_PER_CLASS = 5000     # bound the corpus; the SD card is not infinite
 COLLECT_MIN_INTERVAL_S = 2.0     # per class — diversity beats 10 copies a second
+# Samples are trimmed to the RUNTIME window before saving. rtl_sdr hands over
+# 32768-sample reads, but inference classifies 24000-sample chunks and
+# dataset.py truncates to 1024 — so storing the raw read wastes 32x the space
+# training actually reads. 24000 keeps the corpus aligned with what the model
+# will see in production, which matters: training on 1024-sample spectrograms
+# (7 FFT frames stretched to 224 rows) and inferring on 24000 (186 frames
+# squeezed to 224) is a domain mismatch that costs accuracy no matter how well
+# the model trains.
+COLLECT_SAMPLE_LEN = 24000
 
 
 def iq_to_spectrogram(iq_samples, fft_size=FFT_SIZE, hop=FFT_HOP):
@@ -289,7 +298,7 @@ class SignalClassifier:
             ts = datetime.datetime.now(datetime.timezone.utc).strftime(
                 "%Y%m%d_%H%M%S_%f")
             path = os.path.join(save_dir, f"{ts}_{frequency_hz}.npy")
-            np.save(path, iq_samples)
+            np.save(path, np.asarray(iq_samples[:COLLECT_SAMPLE_LEN]))
         except OSError as e:
             log.warning("Could not write training sample: %s", e)
             return None

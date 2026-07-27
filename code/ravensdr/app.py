@@ -30,6 +30,8 @@ from ravensdr.acars_receiver import AcarsReceiver, correlate_with_adsb
 from ravensdr.pager_receiver import PagerReceiver
 from ravensdr.aprs_receiver import AprsReceiver
 from ravensdr.observation_log import ObservationLog
+from ravensdr.iq_collector import IQCollector
+from ravensdr.iq_collect_scheduler import IQCollectScheduler
 from ravensdr.adsb_correlator import extract_callsigns, match_flights
 from ravensdr.noaa_parser import WeatherAccumulator, detect_priority_alert
 from ravensdr.apt_scheduler import AptScheduler
@@ -40,7 +42,7 @@ from ravensdr.meteor_detector import MeteorDetector, METEOR_ENABLED, METEOR_DUAL
 from ravensdr.meteor_analyzer import MeteorAnalyzer
 from ravensdr.signal_classifier import SignalClassifier, iq_to_spectrogram, spectrogram_to_image
 from ravensdr.sei_model import SEIModel
-from ravensdr.iq_segmenter import IQSegmenter
+from ravensdr.iq_segmenter import IQSegmenter, compute_power_db
 from ravensdr.config import (
     load_config, save_config, get_secondary_task, set_secondary_task,
     get_startup_preset, set_last_preset, get_settings, update_settings,
@@ -964,6 +966,127 @@ sdr_arbiter = SdrArbiter(
 )
 
 
+
+# ── Background IQ collection (training corpus) ──
+# The IQ pipeline never ran: pyrtlsdr cannot load against the RTL-SDR Blog
+# driver, and rtl_fm gives audio, not IQ. rtl_sdr(1) streams raw IQ, so a
+# rotation across bands can build a labelled corpus while the node is otherwise
+# idle. Gated behind automation ("iq_collect", off by default) because it takes
+# the dongle — no audio is produced for the band being collected.
+# Rejects only a dead/disconnected receiver — a quiet band still collects,
+# because the preset is the label and we deliberately tuned here.
+COLLECT_MIN_POWER_DB = -60.0
+
+_iq_collect_segmenter = IQSegmenter(
+    sample_rate=2400000,
+    on_segment=lambda seg: signal_classifier.classify_segment(seg),
+)
+
+
+def _on_collect_iq(iq_samples, frequency_hz):
+    """Feed captured IQ to the segmenter AND collect directly.
+
+    Runs on the collector's real thread.
+
+    Two paths, because they fail in opposite conditions:
+
+    - The segmenter finds bursts against a noise floor, which is right for a
+      quiet voice channel but useless on a CONTINUOUS carrier: NOAA weather
+      radio never stops, so it becomes the floor itself and its SNR reads ~0.
+      Measured: 5 collection slots produced 2 candidates, both rejected as low
+      SNR, and the corpus stayed empty.
+    - Direct collection ignores detection entirely. It is sound here because the
+      LABEL comes from the preset, not from detecting anything — we already know
+      what modulation this band carries. The per-class rate limit throttles it.
+
+    The power check only rejects a dead receiver, not a quiet band. Band choice
+    is what determines label quality: rotate onto a dead frequency and you
+    collect noise filed under that modulation.
+    """
+    _iq_collect_segmenter.set_frequency(frequency_hz)
+    _iq_collect_segmenter.feed(iq_samples)
+
+    label = signal_classifier.collect_label
+    if not label:
+        return
+    if compute_power_db(iq_samples) < COLLECT_MIN_POWER_DB:
+        return          # receiver dead or disconnected, not merely quiet
+    signal_classifier.collect_sample(iq_samples, label, frequency_hz)
+
+
+iq_collector = IQCollector(device_index=0, on_iq=_on_collect_iq)
+
+
+def _collect_bands():
+    """Bands worth collecting: presets that declare a modulation to label with."""
+    seen = {}
+    for preset in get_presets():
+        label = preset.get("expected_modulation")
+        freq = preset.get("freq", "")
+        if not label or label == "unknown" or preset.get("mode") == "adsb":
+            continue
+        hz = _freq_to_hz(freq)
+        if hz and label not in seen:
+            seen[label] = {"id": preset["id"], "freq_hz": hz, "label": label}
+    return list(seen.values())
+
+
+def _freq_to_hz(freq):
+    """Parse a preset frequency string ('162.550M', '8682.0k') into Hz."""
+    try:
+        text = str(freq).strip()
+        if text.upper().endswith("M"):
+            return int(float(text[:-1]) * 1e6)
+        if text.lower().endswith("k"):
+            return int(float(text[:-1]) * 1e3)
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def _start_collect_slot(band):
+    """Take the dongle and start capturing IQ for one band."""
+    if input_source.apt_mode or input_source.wefax_mode:
+        return False        # a scheduled pass outranks corpus building
+    input_source.stop()
+    signal_classifier.collect_label = band["label"]
+    ok = iq_collector.start(band["freq_hz"])
+    if ok:
+        log.info("IQ collect: %s @ %.3f MHz (label %s)",
+                 band["id"], band["freq_hz"] / 1e6, band["label"])
+        emit_safe("iq_collect", iq_collect_scheduler.snapshot())
+    return ok
+
+
+def _stop_collect_slot(band):
+    iq_collector.stop()
+    emit_safe("iq_collect", iq_collect_scheduler.snapshot())
+    # Hand the radio back to whatever the operator had tuned.
+    preset = input_source.current_preset
+    if preset:
+        sdr_arbiter.request(preset)
+
+
+iq_collect_scheduler = IQCollectScheduler(
+    bands=_collect_bands(),
+    start_slot=_start_collect_slot,
+    stop_slot=_stop_collect_slot,
+    is_enabled=lambda: is_automation_enabled("iq_collect"),
+    sleep_fn=eventlet.sleep,
+    on_change=lambda snap: emit_safe("iq_collect", snap),
+)
+
+
+@app.route("/api/iq-collect")
+def api_iq_collect():
+    """Status of the background corpus rotation."""
+    snap = iq_collect_scheduler.snapshot()
+    snap["corpus"] = signal_classifier.collection_stats()
+    snap["capturing"] = iq_collector.is_running
+    snap["bytes_read"] = iq_collector.bytes_read
+    return jsonify(snap)
+
+
 @app.route("/api/automation", methods=["GET", "POST"])
 def api_automation():
     """Read or update which automation may seize the SDR."""
@@ -1803,6 +1926,7 @@ def _do_shutdown(signum=None):
     log.info("Shutting down (triggered by %s)...", sig_name)
 
     _signal_stop.set()
+    iq_collect_scheduler.stop()
     observations.maybe_save(force=True)
     ipc_server.stop()
     aprs_receiver.stop()
@@ -1910,6 +2034,7 @@ if __name__ == "__main__":
     socketio.start_background_task(emit_bridge_loop)
     # Single worker that owns every SDR switch, serialized and coalescing.
     sdr_arbiter.start(spawn_fn=socketio.start_background_task)
+    iq_collect_scheduler.start(spawn_fn=socketio.start_background_task)
     # Serve the radio half of the UI/radio boundary (phase 18).
     try:
         ipc_server.start()
