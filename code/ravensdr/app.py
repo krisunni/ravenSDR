@@ -8,6 +8,8 @@ import signal
 import sys
 import threading
 
+import numpy as np
+
 from flask import (Flask, Response, jsonify, make_response, render_template,
                    request, stream_with_context)
 from flask_socketio import SocketIO
@@ -976,6 +978,9 @@ sdr_arbiter = SdrArbiter(
 # Rejects only a dead/disconnected receiver — a quiet band still collects,
 # because the preset is the label and we deliberately tuned here.
 COLLECT_MIN_POWER_DB = -60.0
+# Above this crest factor the channel is idle between bursts, so direct
+# collection would store silence. Continuous carriers measured 1.5-3.6.
+COLLECT_BURSTY_CREST = 5.0
 
 _iq_collect_segmenter = IQSegmenter(
     sample_rate=2400000,
@@ -1011,23 +1016,50 @@ def _on_collect_iq(iq_samples, frequency_hz):
         return
     if compute_power_db(iq_samples) < COLLECT_MIN_POWER_DB:
         return          # receiver dead or disconnected, not merely quiet
+
+    # Crest factor separates a steady carrier from a channel that is idle
+    # between packets. Measured: WFM 1.5 and FM 3.1 (continuous) against APRS
+    # 10.2 and pager 11.1 (bursty). Collecting a bursty channel directly stores
+    # mostly silence under a real modulation label, so those bands are left to
+    # the segmenter, which extracts the transmission itself.
+    mag = np.abs(iq_samples)
+    median = float(np.median(mag))
+    crest = float(np.max(mag)) / median if median > 1e-6 else 0.0
+    if crest > COLLECT_BURSTY_CREST:
+        return          # segmenter-gated; see classify_segment
     signal_classifier.collect_sample(iq_samples, label, frequency_hz)
 
 
 iq_collector = IQCollector(device_index=0, on_iq=_on_collect_iq)
 
 
-def _collect_bands():
+# Below this the node cannot hear anything: the antenna is a VHF dipole, so HF
+# reception needs hardware that is not attached. Collecting there yields receiver
+# noise filed under a real modulation — measured: 30 "WEFAX" samples from
+# 8.682 MHz and 30 "AM" from 1.65 MHz, all noise. Training on that teaches the
+# model that WEFAX looks like static, which is worse than having no samples.
+HF_CUTOFF_HZ = 30_000_000
+
+
+def _collect_bands(include_hf=False):
     """Bands worth collecting: presets that declare a modulation to label with."""
     seen = {}
+    skipped_hf = []
     for preset in get_presets():
         label = preset.get("expected_modulation")
         freq = preset.get("freq", "")
         if not label or label == "unknown" or preset.get("mode") == "adsb":
             continue
         hz = _freq_to_hz(freq)
-        if hz and label not in seen:
-            seen[label] = {"id": preset["id"], "freq_hz": hz, "label": label}
+        if not hz or label in seen:
+            continue
+        if hz < HF_CUTOFF_HZ and not include_hf:
+            skipped_hf.append(f"{preset['id']} ({hz/1e6:.3f} MHz)")
+            continue
+        seen[label] = {"id": preset["id"], "freq_hz": hz, "label": label}
+    if skipped_hf:
+        log.info("IQ collect: skipping HF bands (no HF antenna): %s",
+                 ", ".join(skipped_hf))
     return list(seen.values())
 
 
