@@ -25,7 +25,7 @@ class IQCollectScheduler:
 
     def __init__(self, bands, start_slot, stop_slot, is_enabled,
                  dwell_s=DEFAULT_DWELL_S, idle_s=DEFAULT_IDLE_S,
-                 sleep_fn=None, on_change=None):
+                 sleep_fn=None, on_change=None, dwell_fn=None):
         """
         bands       — list of {"id", "freq_hz", "label"} to rotate through
         start_slot  — fn(band) -> bool, takes the dongle and begins capture
@@ -40,6 +40,12 @@ class IQCollectScheduler:
         self.idle_s = idle_s
         self._sleep = sleep_fn or time.sleep
         self._on_change = on_change or (lambda snapshot: None)
+        # Optional per-band dwell. Equal dwell starves bursty channels: a
+        # continuous carrier yields a sample every couple of seconds while an
+        # idle one yields only when somebody transmits, so equal time produces a
+        # ~10:1 class imbalance and a classifier that mostly predicts the
+        # majority class.
+        self._dwell_fn = dwell_fn
 
         self._running = False
         self._index = 0
@@ -125,8 +131,15 @@ class IQCollectScheduler:
         self._last_error = None
         self._on_change(self.snapshot())
 
+        dwell = self.dwell_s
+        if self._dwell_fn is not None:
+            try:
+                dwell = max(MIN_DWELL_S, int(self._dwell_fn(band)))
+            except Exception:
+                log.exception("dwell_fn failed; using default")
+
         waited = 0
-        while self._running and waited < self.dwell_s:
+        while self._running and waited < dwell:
             if not self._is_enabled():
                 break               # operator paused mid-slot
             self._sleep(1)

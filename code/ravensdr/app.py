@@ -981,6 +981,7 @@ COLLECT_MIN_POWER_DB = -60.0
 # Above this crest factor the channel is idle between bursts, so direct
 # collection would store silence. Continuous carriers measured 1.5-3.6.
 COLLECT_BURSTY_CREST = 5.0
+IQ_COLLECT_DWELL_S = 60
 
 _iq_collect_segmenter = IQSegmenter(
     sample_rate=2400000,
@@ -1099,8 +1100,28 @@ def _stop_collect_slot(band):
         sdr_arbiter.request(preset)
 
 
+def _dwell_for_band(band):
+    """Give under-represented classes more time on air.
+
+    Bursty channels only yield a sample when somebody transmits, so equal dwell
+    produced a ~10:1 imbalance (WFM 376 vs APRS 38 after 2.6h). Weighting by how
+    far a class trails the leader lets the slow ones catch up overnight without
+    any hand-tuned per-band table, and it self-corrects as counts change.
+    """
+    counts = signal_classifier.collection_stats().get("per_class", {})
+    if not counts:
+        return IQ_COLLECT_DWELL_S
+    leader = max(counts.values())
+    mine = counts.get(band.get("label"), 0)
+    if leader <= 0 or mine >= leader * 0.5:
+        return IQ_COLLECT_DWELL_S
+    # Up to 4x for a class far behind the leader.
+    return min(IQ_COLLECT_DWELL_S * 4, int(IQ_COLLECT_DWELL_S * leader / max(mine, 1)))
+
+
 iq_collect_scheduler = IQCollectScheduler(
     bands=_collect_bands(),
+    dwell_fn=_dwell_for_band,
     start_slot=_start_collect_slot,
     stop_slot=_stop_collect_slot,
     is_enabled=lambda: is_automation_enabled("iq_collect"),

@@ -177,3 +177,43 @@ class TestRotation:
         h = _Harness()
         s = self._sched(h, dwell_s=0)
         assert s.dwell_s >= 5
+
+
+class TestAdaptiveDwell:
+    """Equal dwell starves bursty channels into a ~10:1 class imbalance."""
+
+    def _sched(self, h, dwell_fn):
+        return IQCollectScheduler(
+            _bands(), h.start_slot, h.stop_slot, h.is_enabled,
+            dwell_s=10, idle_s=0, sleep_fn=h.sleep, dwell_fn=dwell_fn)
+
+    def test_dwell_fn_overrides_the_default(self):
+        h = _Harness()
+        s = self._sched(h, lambda band: 8)   # above MIN_DWELL_S
+        s._running = True
+        s._run_slot(s.bands[0])
+        assert h.ticks == 8
+
+    def test_under_represented_band_gets_more_time(self):
+        h = _Harness()
+        weights = {"fm": 5, "air": 20}
+        s = self._sched(h, lambda band: weights[band["id"]])
+        s._running = True
+        s._run_slot(s.bands[0])
+        first = h.ticks
+        s._run_slot(s.bands[1])
+        assert h.ticks - first > first
+
+    def test_dwell_never_drops_below_the_floor(self):
+        h = _Harness()
+        s = self._sched(h, lambda band: 0)
+        s._running = True
+        s._run_slot(s.bands[0])
+        assert h.ticks >= 5
+
+    def test_raising_dwell_fn_falls_back_to_default(self):
+        h = _Harness()
+        s = self._sched(h, lambda band: (_ for _ in ()).throw(RuntimeError("x")))
+        s._running = True
+        s._run_slot(s.bands[0])
+        assert h.ticks == 10        # the configured default
