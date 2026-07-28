@@ -1167,6 +1167,19 @@ def api_iq_collect():
     return jsonify(snap)
 
 
+@app.route("/learn")
+def learn():
+    """Static explainer: how RF becomes a spectrogram becomes a classification.
+
+    Served from the node itself on the same port as the console — D3 is vendored
+    under static/vendor rather than pulled from a CDN, because the node is meant
+    to work air-gapped and a field kit with no uplink should still render this.
+    """
+    resp = make_response(render_template("learn.html", version=VERSION))
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
 @app.route("/api/automation", methods=["GET", "POST"])
 def api_automation():
     """Read or update which automation may seize the SDR."""

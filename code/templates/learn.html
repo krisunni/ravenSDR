@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ravenSDR — How it works</title>
+<link rel="stylesheet" href="{{ asset('learn.css') }}">
+</head>
+<body>
+
+<header class="learn-hero">
+  <h1>How ravenSDR works</h1>
+  <div class="sub">From a radio wave to a neural network, one step at a time.</div>
+  <a class="back" href="/">&larr; back to the console</a>
+</header>
+
+<main>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">1</span> A radio wave is a spinning arrow</h2>
+  <div class="lede">Everything else follows from this one picture.</div>
+
+  <p>Imagine spinning a jump rope. There are only <strong>three</strong> things you can
+  change about it, and every radio mode in the world is a way of wiggling one of them:</p>
+
+  <ul style="margin:12px 0 12px 22px; color:var(--text-dim)">
+    <li>how <strong>big</strong> the swing is &mdash; <em>amplitude</em></li>
+    <li>how <strong>fast</strong> it spins &mdash; <em>frequency</em></li>
+    <li><strong>where</strong> in the circle it is right now &mdash; <em>phase</em></li>
+  </ul>
+
+  <div class="fig">
+    <div class="fig-title">The spinning arrow, and the two numbers your dongle records</div>
+    <canvas id="c-vector" width="880" height="240"></canvas>
+    <div class="controls">
+      <button class="pill active" data-vec="slow">slow spin</button>
+      <button class="pill" data-vec="fast">fast spin</button>
+      <button class="pill" data-vec="big">bigger swing</button>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>I &mdash; how far across</span>
+      <span><i style="background:var(--green)"></i>Q &mdash; how far up</span>
+      <span><i style="background:var(--yellow)"></i>the arrow itself</span>
+    </div>
+    <div class="hint">Your SDR does not record "radio". It writes down the arrow's
+      position &mdash; two numbers &mdash; 2,400,000 times a second.</div>
+  </div>
+
+  <p>That is all <strong>IQ</strong> means. <code>I</code> is how far across the arrow
+  points, <code>Q</code> is how far up. Two numbers, and from them you can recover
+  everything: the length of the arrow is the <em>strength</em>, and how fast the angle
+  turns is the <em>frequency</em>.</p>
+
+  <div class="aside">
+    <strong>Why two numbers and not one?</strong> Because with only "how far across",
+    an arrow spinning clockwise looks identical to one spinning anticlockwise. You could
+    not tell a station <em>above</em> your dial from one <em>below</em> it. The second
+    number breaks the tie.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">2</span> Sending data by wiggling</h2>
+  <div class="lede">The four digital modes your node collects &mdash; watch what changes.</div>
+
+  <div class="fig">
+    <div class="fig-title">Sending the bits <span class="mono" style="color:var(--accent)">1 0 1 1 0</span></div>
+    <div class="controls">
+      <button class="pill active" data-mod="OOK">OOK &mdash; flashlight</button>
+      <button class="pill" data-mod="FSK">FSK &mdash; two notes</button>
+      <button class="pill" data-mod="MSK">MSK &mdash; sliding notes</button>
+      <button class="pill" data-mod="AFSK">AFSK &mdash; notes down a walkie-talkie</button>
+    </div>
+    <canvas id="c-mod" width="880" height="230"></canvas>
+    <div id="mod-explain" class="hint"></div>
+  </div>
+
+  <table class="data">
+    <thead><tr><th>Mode</th><th>Like&hellip;</th><th>What changes</th><th>On your node</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">OOK</td><td>a flashlight blinking</td><td>amplitude &mdash; on or off</td><td>door &amp; window sensors, 345&nbsp;MHz</td></tr>
+      <tr><td class="mono">FSK</td><td>whistling two notes</td><td>frequency &mdash; high or low</td><td>pagers, 152&nbsp;MHz</td></tr>
+      <tr><td class="mono">MSK</td><td>two notes, <em>slid</em> not jumped</td><td>frequency, smoothly</td><td>aircraft ACARS, 131.55&nbsp;MHz</td></tr>
+      <tr><td class="mono">AFSK1200</td><td>whistling into a walkie&#8209;talkie</td><td>audio tones, then FM</td><td>APRS packet, 144.39&nbsp;MHz</td></tr>
+    </tbody>
+  </table>
+
+  <div class="aside">
+    <strong>Why AFSK is the odd one.</strong> The radio has no idea it is carrying data
+    &mdash; it thinks somebody is talking. That is why decoding APRS takes two stages:
+    <code>rtl_fm</code> first undoes the FM to recover the "audio", and only then does
+    <code>multimon-ng</code> listen to the beeps. It is a modem shouting down a voice radio.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">3</span> Turning radio into a picture</h2>
+  <div class="lede">The trick that lets us use image AI on radio.</div>
+
+  <p>A list of two million number-pairs per second means nothing to a human, or to a
+  neural network. So we ask a different question, over and over: <em>how much energy is
+  there at each frequency, right now?</em> That is what an <strong>FFT</strong> does.</p>
+
+  <p>Stack those answers over time and you get a <strong>spectrogram</strong> &mdash; a
+  picture. Time runs down, frequency across, brightness is power.</p>
+
+  <div class="fig">
+    <div class="fig-title">Building a spectrogram, one FFT slice at a time</div>
+    <canvas id="c-spec" width="880" height="260"></canvas>
+    <div class="controls">
+      <button class="pill" id="spec-restart">replay</button>
+      <button class="pill active" data-spec="two">two carriers</button>
+      <button class="pill" data-spec="burst">bursty channel</button>
+      <button class="pill" data-spec="noise">noise only</button>
+    </div>
+    <div class="hint">Each row is one FFT. The picture builds downward as time passes &mdash;
+      exactly what your node does before every classification.</div>
+  </div>
+
+  <p>This is the pivot: <strong>we have turned a radio problem into an image problem</strong>,
+  and computers are extremely good at images.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">4</span> Teaching it to recognise them</h2>
+  <div class="lede">What "training" actually is.</div>
+
+  <p>Training is <strong>flashcards</strong>. Show the network a picture, let it guess,
+  tell it the right answer, nudge it slightly towards being right. Repeat a few hundred
+  thousand times.</p>
+
+  <div class="fig">
+    <div class="fig-title">One training step</div>
+    <svg id="s-train" viewBox="0 0 860 150" width="860" height="150"></svg>
+    <div class="controls"><button class="pill" id="train-step">show a card</button>
+      <button class="pill" id="train-auto">run</button></div>
+    <div class="hint" id="train-hint">The "answer on the back of the card" is the
+      <strong>label</strong> &mdash; and where it comes from decides everything.</div>
+  </div>
+
+  <p>Normally a human labels thousands of examples by hand. Your node gets them free:
+  when it tunes to 94.9&nbsp;MHz it <em>knows</em> that is WFM, so every sample collected
+  there is labelled automatically.</p>
+
+  <div class="fig">
+    <div class="fig-title">Learning curve &mdash; and the trap underneath it</div>
+    <svg id="s-curve" viewBox="0 0 860 260" width="860" height="260"></svg>
+    <div class="controls">
+      <button class="pill active" data-curve="good">healthy</button>
+      <button class="pill" data-curve="overfit">memorising</button>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>accuracy on cards it has seen</span>
+      <span><i style="background:var(--green)"></i>accuracy on cards it has never seen</span>
+    </div>
+    <div class="hint" id="curve-hint"></div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">5</span> Where it goes wrong</h2>
+  <div class="lede">Every problem we hit was a <em>data</em> problem, not a maths problem.</div>
+
+  <div class="fig">
+    <div class="fig-title">The classroom trap</div>
+    <svg id="s-confound" viewBox="0 0 860 200" width="860" height="200"></svg>
+    <div class="hint">Imagine every maths lesson happened in room&nbsp;A and every history
+      lesson in room&nbsp;B. A student could score 100% by learning
+      <strong>the rooms</strong> &mdash; and would be lost the moment you moved them.</div>
+  </div>
+
+  <div class="aside bad">
+    <strong>This happened to us.</strong> Every modulation was collected from exactly one
+    frequency &mdash; WFM only from 94.9, ACARS only from 131.55. The model scored
+    <strong>99.1%</strong> and may have learned nothing but which band it was looking at.
+    Fixed by collecting FM from 17 different frequencies, so the only thing those captures
+    share is the modulation itself.
+  </div>
+
+  <div class="fig">
+    <div class="fig-title">Class balance &mdash; live from this node</div>
+    <svg id="s-balance" viewBox="0 0 860 250" width="860" height="250"></svg>
+    <div class="hint" id="balance-hint">Loading live corpus&hellip;</div>
+  </div>
+
+  <div class="aside warn">
+    <strong>Why balance matters.</strong> If 40% of the flashcards say "WFM" and 2% say
+    "APRS", the network learns it can score well by guessing WFM constantly. It would be
+    right often and useless always.
+  </div>
+
+  <p>And the labels have to be <strong>true</strong>. We were recording static from an
+  antenna that cannot hear 8&nbsp;MHz and filing it under "WEFAX" &mdash; which would
+  teach the model that weather-fax looks like noise. Worse than having no examples at all.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">6</span> Onto the chip</h2>
+  <div class="lede">Why training happens elsewhere, and inference happens here.</div>
+
+  <div class="fig">
+    <div class="fig-title">The whole pipeline</div>
+    <svg id="s-pipeline" viewBox="0 0 860 250" width="860" height="250"></svg>
+    <div class="hint">Hover a stage. The Hailo NPU only ever runs the last one &mdash;
+      it is an inference accelerator and cannot train.</div>
+  </div>
+
+  <p>The trained model is PyTorch, which the NPU cannot read. So it is exported to
+  <strong>ONNX</strong> (a portable format), then the Hailo compiler turns it into a
+  <code>.hef</code> file. That step also <strong>quantises</strong> it &mdash; swapping
+  precise decimals for small integers, which is what makes the chip fast and power-thrifty.</p>
+
+  <div class="aside">
+    <strong>Why not train on the Pi?</strong> The Hailo compiler only runs on x86, and the
+    Pi is ARM. So the corpus is collected here, shipped to a VM to train and compile, and
+    only the finished <code>.hef</code> comes back.
+  </div>
+</section>
+
+<footer class="learn-foot">
+  ravenSDR &mdash; <a href="/">console</a> &middot;
+  <span class="mono" id="foot-stats">&mdash;</span>
+</footer>
+
+</main>
+
+<script src="{{ asset('vendor/d3.v7.min.js') }}"></script>
+<script src="{{ asset('learn.js') }}"></script>
+</body>
+</html>
