@@ -1190,4 +1190,54 @@
           });
     })();
 
+    // ── 12. the full cycle ───────────────────────────────────────────────
+    (function cycle() {
+        var svg = d3.select("#s-cycle");
+        if (svg.empty()) return;
+        var hint = document.getElementById("cycle-hint");
+        var steps = [
+            { x: 120, y: 70,  c: C.accent, t: "1 · collect", s: "Raspberry Pi",
+              d: "rtl_sdr streams raw IQ. The segmenter finds transmissions, the preset supplies the label. 10,083 kept — and 89,460 empty windows rejected." },
+            { x: 400, y: 70,  c: C.yellow, t: "2 · train", s: "x86 VM on Proxmox",
+              d: "MobileNetV2 fine-tuned, 10 epochs on 4 cores. val 0.9987 — on a random split, which we already know overstates it." },
+            { x: 680, y: 70,  c: C.yellow, t: "3 · export", s: "x86 VM",
+              d: "PyTorch to ONNX, 8.6 MB. Took four unrelated dependency failures to get out — none of them about the model." },
+            { x: 680, y: 190, c: C.green,  t: "4 · deploy", s: "back to the Pi",
+              d: "onnxruntime runs it on the Pi CPU at 57.8 ms per classification. No Hailo compiler needed to start using it." },
+            { x: 400, y: 190, c: C.green,  t: "5 · observe", s: "live",
+              d: "The classifier now labels real transmissions as the collector rotates bands. Predictions from unvalidated classes are flagged in the UI." },
+            { x: 120, y: 190, c: C.red,    t: "6 · find the flaw", s: "and go again",
+              d: "Held-out-frequency testing showed 3 of 6 classes cannot be trusted. That sends us back to step 1 for more frequencies — which is the loop." }
+        ];
+        steps.forEach(function (st, i) {
+            var g = svg.append("g").style("cursor", "pointer");
+            g.append("rect").attr("x", st.x - 78).attr("y", st.y - 26).attr("width", 156)
+             .attr("height", 56).attr("rx", 8).attr("fill", "#1c2430")
+             .attr("stroke", st.c).attr("stroke-width", 1.4);
+            g.append("text").attr("x", st.x).attr("y", st.y - 4).attr("text-anchor", "middle")
+             .attr("fill", st.c).style("font", "12px ui-monospace").text(st.t);
+            g.append("text").attr("x", st.x).attr("y", st.y + 14).attr("text-anchor", "middle")
+             .attr("fill", C.dim).style("font", "9px ui-monospace").text(st.s);
+            g.on("mouseenter", function () {
+                hint.textContent = st.d; hint.style.color = st.c;
+            });
+            g.append("title").text(st.d);
+        });
+        // arrows round the loop
+        [[198,70,322,70],[478,70,602,70],[680,30,680,164],
+         [602,190,478,190],[322,190,198,190]].forEach(function (a, i) {
+            var vertical = a[0] === a[2];
+            svg.append("path")
+               .attr("d", vertical ? "M" + a[0] + "," + (a[1]+66) + " L" + a[2] + "," + a[3]
+                                   : "M" + a[0] + "," + a[1] + " L" + a[2] + "," + a[3])
+               .attr("stroke", C.grid).attr("stroke-width", 1.5).attr("fill", "none");
+        });
+        svg.append("path").attr("d", "M120,164 C40,164 40,70 42,70")
+           .attr("stroke", C.red).attr("stroke-width", 1.5)
+           .attr("stroke-dasharray", "5 4").attr("fill", "none");
+        svg.append("text").attr("x", 430).attr("y", 248).attr("text-anchor", "middle")
+           .attr("fill", C.dim).style("font", "11px ui-monospace")
+           .text("the flaw found in step 6 is what step 1 collects for next time");
+    })();
+
 })();

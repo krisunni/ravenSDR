@@ -686,6 +686,92 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
   </div>
 </section>
 
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">12</span> The full cycle, as it actually went</h2>
+  <div class="lede">Collect here &rarr; train elsewhere &rarr; run it back here. What
+    broke on the way.</div>
+
+  <div class="fig">
+    <div class="fig-title">One complete loop</div>
+    <svg id="s-cycle" viewBox="0 0 860 260" width="860" height="260"></svg>
+    <div class="hint" id="cycle-hint">Hover a stage for what actually happened there.</div>
+  </div>
+
+  <h3 style="margin-top:22px;font-size:15px">The result</h3>
+  <table class="data">
+    <tbody>
+      <tr><td>Corpus collected</td><td class="mono">10,083 samples over ~24 h</td></tr>
+      <tr><td>Empty windows rejected</td><td class="mono">89,460</td></tr>
+      <tr><td>Training</td><td class="mono">10 epochs, ~4 CPU cores, val 0.9987</td></tr>
+      <tr><td>Model size</td><td class="mono">8.6 MB ONNX, 2.2M parameters</td></tr>
+      <tr><td>On the Pi</td><td class="mono">57.8 ms per classification, CPU</td></tr>
+      <tr><td>Held-back samples</td><td class="mono">71 / 72 correct</td></tr>
+      <tr style="background:#2a2213"><td><strong>Genuinely validated</strong></td>
+          <td class="mono">3 of 6 classes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="aside warn">
+    <strong>Why 71/72 is not the number that matters.</strong> Those samples came from
+    the same frequencies the model trained on. The number that counts is the
+    held-out-frequency test, and it says only FM, WFM and MSK generalise. OOK, FSK and
+    AFSK1200 were each observed on exactly one frequency, so nothing distinguishes
+    "learned the modulation" from "learned that band". The UI marks them as such.
+  </div>
+
+  <h3 style="margin-top:22px;font-size:15px">Running it without the NPU</h3>
+  <p>Compiling for the Hailo needs its Dataflow Compiler &mdash; x86-only and behind a
+  login. Rather than wait, the same trained network runs on the Pi's CPU through
+  <code>onnxruntime</code>. Identical predictions, just slower. The backend order is:</p>
+<pre>Hailo NPU        →  a few ms      (needs a compiled .hef)
+trained ONNX CPU →  57.8 ms       ← running now
+heuristics       →  instant, and can only ever say WFM/FM/CW/AM/SSB</pre>
+
+  <p>One subtlety that fails silently if you get it wrong: <code>torch.onnx.export</code>
+  records <strong>NCHW</strong>, while HailoRT expects <strong>NHWC</strong>. Same model,
+  different memory convention. Feed the wrong one and you get confident nonsense rather
+  than an error, so each backend builds its own tensor.</p>
+
+  <h3 style="margin-top:22px;font-size:15px">Four failures that had nothing to do with ML</h3>
+  <p>Worth showing, because this is what "deploying a model" actually consists of:</p>
+  <table class="data">
+    <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">No module named 'onnxscript'</td>
+          <td>torch 2.13 defaults to the dynamo exporter</td>
+          <td><code>dynamo=False</code> — the legacy exporter needs none of that chain</td></tr>
+      <tr><td class="mono">ml_dtypes has no bfloat16</td>
+          <td>onnx_ir wanted a newer ml_dtypes</td>
+          <td>pin and reinstall</td></tr>
+      <tr><td class="mono">onnx has no __version__</td>
+          <td>the package itself was left corrupted by a force-install</td>
+          <td>clean reinstall of onnx</td></tr>
+      <tr><td class="mono">onnxruntime has no InferenceSession</td>
+          <td>same collateral damage on the VM</td>
+          <td>verify on the Pi instead — the machine that matters</td></tr>
+      <tr><td class="mono">Killed (OOM)</td>
+          <td>9353 images as float32 x3 = 5.6 GB on a 6 GB VM</td>
+          <td>hold uint8 (0.47 GB), expand per batch</td></tr>
+      <tr><td class="mono">NumPy needs X86_V2</td>
+          <td>Proxmox default CPU model is kvm64 — no SSE4.2</td>
+          <td><code>cpu=host</code>, and a full stop/start, not a reset</td></tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:22px;font-size:15px">What the next lap changes</h3>
+  <ul style="margin:10px 0 10px 22px;color:var(--text-dim)">
+    <li>More frequencies for FSK and OOK, so they can be validated at all. AFSK1200
+      cannot be &mdash; 144.390 is the only APRS channel in North America.</li>
+    <li>An <code>unknown</code> class with negative examples, so the model can decline
+      instead of forcing every signal into one of six.</li>
+    <li>Compile to <code>.hef</code> once the DFC is available, dropping 57.8 ms to a
+      few, and freeing the CPU.</li>
+    <li>Then the sweep &mdash; and only then, because a classifier that cannot say
+      "I don't know" will label every unknown transmitter as something.</li>
+  </ul>
+</section>
+
 <footer class="learn-foot">
   ravenSDR &mdash; <a href="/">console</a> &middot;
   <span class="mono" id="foot-stats">&mdash;</span>

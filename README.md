@@ -119,7 +119,7 @@ ahead of time to `.hef` files. It cannot train.
 | Workload | Status | Notes |
 |---|---|---|
 | Whisper tiny (encoder + decoder) | **running on NPU** | ~32 ms encode, RTF ~0.03-0.16 |
-| Signal classifier (MobileNetV2) | CPU fallback | needs a compiled `.hef` |
+| Signal classifier (MobileNetV2) | **running on CPU via onnxruntime** | 57.8 ms/classification; a `.hef` would cut this to a few ms |
 | SEI emitter fingerprinting | CPU fallback | needs a compiled `.hef`, and Conv1d reshaped to Conv2d |
 
 Notes that cost real debugging time:
@@ -154,7 +154,31 @@ is aarch64.
 | `code/ml/signal_classifier/export_onnx.py` | PyTorch → ONNX |
 | `code/ml/signal_classifier/compile_hef.py` | ONNX → `.hef` (needs x86 + DFC) |
 | `code/ml/signal_classifier/evaluate.py` | Accuracy, per-class P/R/F1, confusion matrix |
+| `code/ml/signal_classifier/validate_confound.py` | Held-out-**frequency** test: does it know the modulation or the band? |
+| `code/ml/signal_classifier/prune_corpus.py` | Re-apply the signal-presence gate to samples already on disk |
 | `code/ml/sei/*` | Same chain for the SEI embedding model |
+
+### Current model status
+
+Trained on 10,083 samples collected by the node itself over ~24 h.
+
+| | |
+|---|---|
+| Classes | 6 — FM, WFM, MSK, OOK, FSK, AFSK1200 |
+| **Genuinely validated** | **3** — FM, WFM, MSK |
+| Unproven | OOK, FSK, AFSK1200 — each observed on only one frequency |
+| Held-back accuracy | 71/72 (same frequencies — overstates it) |
+| On the Pi | 57.8 ms per classification, CPU via onnxruntime |
+
+A class collected from a single frequency cannot be distinguished from "the model
+learned what that band looks like". `validate_confound.py` tests this by holding
+whole frequencies out of training — the only way to tell. The UI marks unproven
+predictions rather than presenting every label as equally sound, and 144.390 is
+the only APRS channel in North America, so AFSK1200 can never be validated here.
+
+Anything outside the six classes is still forced into one of them: a softmax
+always picks something. An `unknown` class trained with negative examples is the
+next step, and a prerequisite for any spectrum sweep.
 
 Two constraints that decide whether a trained model is any good:
 
