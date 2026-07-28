@@ -223,6 +223,11 @@ answered with a 200 but the renderer never leaves `about:blank`. See
 
 [View project status dashboard](https://krisunni.github.io/ravenSDR/dashboard/) — components, features, tasks, and changelog.
 
+[Architecture](https://krisunni.github.io/ravenSDR/dashboard/architecture.html) — system,
+process-split and model-lifecycle diagrams, plus console screenshots. Diagrams are
+pre-rendered to SVG by `code/scripts/render_diagrams.py`, so a mermaid syntax error fails
+the build rather than the published page.
+
 Version history is in [CHANGELOG.md](CHANGELOG.md); the dashboard renders the same
 data from `.state/`.
 

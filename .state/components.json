@@ -3,12 +3,21 @@
     {
       "id": "tuner",
       "name": "Tuner (RTL-FM Process Manager)",
-      "description": "Manages rtl_fm subprocess lifecycle — start/stop/retune, reads raw PCM from stdout, distributes to audio and whisper queues",
+      "description": "Manages rtl_fm subprocess lifecycle \u2014 start/stop/retune, reads raw PCM from stdout, distributes to audio and whisper queues",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "subprocess", "rtl_fm", "threading"],
-      "dependencies": ["rtl-sdr"],
-      "plans": ["implementation-plans/phase-2-input-source.md"],
+      "technology": [
+        "Python",
+        "subprocess",
+        "rtl_fm",
+        "threading"
+      ],
+      "dependencies": [
+        "rtl-sdr"
+      ],
+      "plans": [
+        "implementation-plans/phase-2-input-source.md"
+      ],
       "owner": null
     },
     {
@@ -17,20 +26,36 @@
       "description": "Pulls live audio from public internet streams (LiveATC, NOAA) via ffmpeg subprocess, converts to 16kHz mono PCM for the pipeline",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "subprocess", "ffmpeg"],
-      "dependencies": ["ffmpeg"],
-      "plans": ["implementation-plans/phase-2-input-source.md"],
+      "technology": [
+        "Python",
+        "subprocess",
+        "ffmpeg"
+      ],
+      "dependencies": [
+        "ffmpeg"
+      ],
+      "plans": [
+        "implementation-plans/phase-2-input-source.md"
+      ],
       "owner": null
     },
     {
       "id": "input-source",
       "name": "Input Source Abstraction",
-      "description": "Unified interface wrapping Tuner (SDR) and StreamSource (web stream) behind a common PCM queue — downstream components are source-agnostic",
+      "description": "Unified interface wrapping Tuner (SDR) and StreamSource (web stream) behind a common PCM queue \u2014 downstream components are source-agnostic",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "queue"],
-      "dependencies": ["tuner", "stream-source"],
-      "plans": ["implementation-plans/phase-2-input-source.md"],
+      "technology": [
+        "Python",
+        "queue"
+      ],
+      "dependencies": [
+        "tuner",
+        "stream-source"
+      ],
+      "plans": [
+        "implementation-plans/phase-2-input-source.md"
+      ],
       "owner": null
     },
     {
@@ -39,9 +64,20 @@
       "description": "Reads PCM from whisper queue, accumulates 10-second chunks (160k samples), runs silence detection, performs Whisper inference on Hailo-8L NPU via encoder/decoder HEF pipeline with repetition penalty, or faster-whisper CPU fallback",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "numpy", "torch", "hailo_platform", "transformers", "faster-whisper"],
-      "dependencies": ["input-source"],
-      "plans": ["implementation-plans/phase-3-transcriber.md"],
+      "technology": [
+        "Python",
+        "numpy",
+        "torch",
+        "hailo_platform",
+        "transformers",
+        "faster-whisper"
+      ],
+      "dependencies": [
+        "input-source"
+      ],
+      "plans": [
+        "implementation-plans/phase-3-transcriber.md"
+      ],
       "owner": null,
       "notes": "Hailo inference implemented 2026-02-24. Uses VDevice/InferModel API with whisper-tiny encoder (10s) + decoder (32 tokens). mel.py provides log-mel spectrogram. Models downloaded via scripts/download_models.sh."
     },
@@ -51,42 +87,76 @@
       "description": "Reads PCM from audio queue, wraps in streaming WAV headers, serves as chunked HTTP response for browser audio playback",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "Flask", "WAV"],
-      "dependencies": ["input-source"],
-      "plans": ["implementation-plans/phase-4-audio-router.md"],
+      "technology": [
+        "Python",
+        "Flask",
+        "WAV"
+      ],
+      "dependencies": [
+        "input-source"
+      ],
+      "plans": [
+        "implementation-plans/phase-4-audio-router.md"
+      ],
       "owner": null
     },
     {
       "id": "flask-app",
       "name": "Flask Application (Backend API)",
-      "description": "Flask + Flask-SocketIO server — REST API routes for tuning/control, WebSocket events for real-time transcript/status/signal delivery, thread orchestration",
+      "description": "Flask + Flask-SocketIO server \u2014 REST API routes for tuning/control, WebSocket events for real-time transcript/status/signal delivery, thread orchestration",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "Flask", "Flask-SocketIO", "eventlet"],
-      "dependencies": ["input-source", "transcriber", "audio-router", "presets"],
-      "plans": ["implementation-plans/phase-5-backend-api.md"],
+      "technology": [
+        "Python",
+        "Flask",
+        "Flask-SocketIO",
+        "eventlet"
+      ],
+      "dependencies": [
+        "input-source",
+        "transcriber",
+        "audio-router",
+        "presets"
+      ],
+      "plans": [
+        "implementation-plans/phase-5-backend-api.md"
+      ],
       "owner": null
     },
     {
       "id": "frontend",
       "name": "Frontend (Console UI)",
-      "description": "Single-page web interface — preset selector, signal meter, audio player, transcript feed, squelch/gain controls. Vanilla JS + Web Audio API + Socket.IO client",
+      "description": "Single-page web interface \u2014 preset selector, signal meter, audio player, transcript feed, squelch/gain controls. Vanilla JS + Web Audio API + Socket.IO client",
       "type": "frontend",
       "status": "done",
-      "technology": ["HTML", "CSS", "Vanilla JS", "Web Audio API", "Socket.IO client"],
-      "dependencies": ["flask-app"],
-      "plans": ["implementation-plans/phase-6-frontend.md"],
+      "technology": [
+        "HTML",
+        "CSS",
+        "Vanilla JS",
+        "Web Audio API",
+        "Socket.IO client"
+      ],
+      "dependencies": [
+        "flask-app"
+      ],
+      "plans": [
+        "implementation-plans/phase-6-frontend.md"
+      ],
       "owner": null
     },
     {
       "id": "presets",
       "name": "Frequency Presets",
-      "description": "Preset definitions for SDR frequencies and web stream URLs — weather, aviation, marine, public safety, broadcast categories for the Redmond/Seattle area",
+      "description": "Preset definitions for SDR frequencies and web stream URLs \u2014 weather, aviation, marine, public safety, broadcast categories for the Redmond/Seattle area",
       "type": "backend",
       "status": "done",
-      "technology": ["Python"],
+      "technology": [
+        "Python"
+      ],
       "dependencies": [],
-      "plans": ["implementation-plans/phase-7-presets.md"],
+      "plans": [
+        "implementation-plans/phase-7-presets.md"
+      ],
       "owner": null
     },
     {
@@ -95,7 +165,11 @@
       "description": "Log-mel spectrogram computation for Hailo Whisper encoder input. 80 mel bins, STFT n_fft=400, hop=160, 10s chunks (1000 frames). Uses pre-computed mel_filters.npz.",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "torch", "numpy"],
+      "technology": [
+        "Python",
+        "torch",
+        "numpy"
+      ],
       "dependencies": [],
       "plans": [],
       "owner": null,
@@ -104,24 +178,37 @@
     {
       "id": "noaa-parser",
       "name": "NOAA Weather Parser",
-      "description": "Structured parser for NWS weather radio broadcasts — extracts temperature, wind, humidity, visibility, marine forecasts, and priority alerts (warnings/watches) from Whisper transcripts using regex patterns",
+      "description": "Structured parser for NWS weather radio broadcasts \u2014 extracts temperature, wind, humidity, visibility, marine forecasts, and priority alerts (warnings/watches) from Whisper transcripts using regex patterns",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "regex"],
-      "dependencies": ["transcriber"],
-      "plans": ["implementation-plans/phase-12-noaa-weather-radio.md"],
+      "technology": [
+        "Python",
+        "regex"
+      ],
+      "dependencies": [
+        "transcriber"
+      ],
+      "plans": [
+        "implementation-plans/phase-12-noaa-weather-radio.md"
+      ],
       "owner": null,
       "notes": "Added 2026-03-01. code/ravensdr/noaa_parser.py"
     },
     {
       "id": "apt-scheduler",
       "name": "APT Pass Scheduler",
-      "description": "Satellite pass prediction for NOAA-15/19 using PyEphem orbital mechanics and Celestrak TLEs. 24h lookahead, 20° minimum elevation filter, background scheduling loop with 10-minute advance notification via Socket.IO",
+      "description": "Satellite pass prediction for NOAA-15/19 using PyEphem orbital mechanics and Celestrak TLEs. 24h lookahead, 20\u00b0 minimum elevation filter, background scheduling loop with 10-minute advance notification via Socket.IO",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "ephem", "threading"],
+      "technology": [
+        "Python",
+        "ephem",
+        "threading"
+      ],
       "dependencies": [],
-      "plans": ["implementation-plans/phase-13-noaa-apt-satellite-imaging.md"],
+      "plans": [
+        "implementation-plans/phase-13-noaa-apt-satellite-imaging.md"
+      ],
       "owner": null,
       "notes": "Added 2026-03-01. code/ravensdr/apt_scheduler.py"
     },
@@ -131,9 +218,19 @@
       "description": "Records NOAA APT satellite passes using rtl_fm (137 MHz wideband FM, 60k sample rate, 11025 Hz output) piped to sox for WAV conversion, then decodes with noaa-apt CLI to PNG. Manages image storage and history",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "subprocess", "rtl_fm", "sox", "noaa-apt"],
-      "dependencies": ["input-source"],
-      "plans": ["implementation-plans/phase-13-noaa-apt-satellite-imaging.md"],
+      "technology": [
+        "Python",
+        "subprocess",
+        "rtl_fm",
+        "sox",
+        "noaa-apt"
+      ],
+      "dependencies": [
+        "input-source"
+      ],
+      "plans": [
+        "implementation-plans/phase-13-noaa-apt-satellite-imaging.md"
+      ],
       "owner": null,
       "notes": "Added 2026-03-01. code/ravensdr/apt_decoder.py"
     },
@@ -143,9 +240,14 @@
       "description": "Parses NMC Point Reyes and NOJ Kodiak broadcast schedules, selects optimal HF frequency based on time of day, triggers recording jobs at scheduled broadcast times with 5-minute advance notification",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "threading"],
+      "technology": [
+        "Python",
+        "threading"
+      ],
       "dependencies": [],
-      "plans": ["implementation-plans/phase-14-weatherfax-wefax.md"],
+      "plans": [
+        "implementation-plans/phase-14-weatherfax-wefax.md"
+      ],
       "owner": null,
       "notes": "Added 2026-03-16. code/ravensdr/wefax_scheduler.py"
     },
@@ -155,9 +257,20 @@
       "description": "Records HF WEFAX broadcasts using rtl_fm with Q-branch direct sampling (-D 2) and USB demodulation, decodes with fldigi via Xvfb headless. Structured PNG output with station/frequency/chart metadata",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "subprocess", "rtl_fm", "fldigi", "Xvfb", "sox"],
-      "dependencies": ["input-source"],
-      "plans": ["implementation-plans/phase-14-weatherfax-wefax.md"],
+      "technology": [
+        "Python",
+        "subprocess",
+        "rtl_fm",
+        "fldigi",
+        "Xvfb",
+        "sox"
+      ],
+      "dependencies": [
+        "input-source"
+      ],
+      "plans": [
+        "implementation-plans/phase-14-weatherfax-wefax.md"
+      ],
       "owner": null,
       "notes": "Added 2026-03-16. code/ravensdr/wefax_receiver.py"
     },
@@ -167,9 +280,19 @@
       "description": "Forward scatter power monitor using rtl_fm on carrier frequency. Rolling 30s baseline, threshold-based burst detection, duration filtering (50ms-30s), underdense/overdense trail classification. Supports dual dongle mode for 24/7 monitoring",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "numpy", "subprocess", "rtl_fm", "threading"],
-      "dependencies": ["input-source"],
-      "plans": ["implementation-plans/phase-15-meteor-scatter-detection.md"],
+      "technology": [
+        "Python",
+        "numpy",
+        "subprocess",
+        "rtl_fm",
+        "threading"
+      ],
+      "dependencies": [
+        "input-source"
+      ],
+      "plans": [
+        "implementation-plans/phase-15-meteor-scatter-detection.md"
+      ],
       "owner": null,
       "notes": "Added 2026-03-16. code/ravensdr/meteor_detector.py"
     },
@@ -179,11 +302,414 @@
       "description": "Shower calendar with 7 major annual showers, active shower correlation on detections, hourly/daily rate calculation, session statistics with peak rate and underdense/overdense ratio",
       "type": "backend",
       "status": "done",
-      "technology": ["Python", "JSON"],
-      "dependencies": ["meteor-detector"],
-      "plans": ["implementation-plans/phase-15-meteor-scatter-detection.md"],
+      "technology": [
+        "Python",
+        "JSON"
+      ],
+      "dependencies": [
+        "meteor-detector"
+      ],
+      "plans": [
+        "implementation-plans/phase-15-meteor-scatter-detection.md"
+      ],
       "owner": null,
       "notes": "Added 2026-03-16. code/ravensdr/meteor_analyzer.py"
+    },
+    {
+      "id": "ui-app",
+      "name": "UI Process (ui_app)",
+      "description": "Flask + Socket.IO front half. Holds no hardware, so the console loads and stays responsive while the radio process is restarting or dead.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "Flask",
+        "Flask-SocketIO",
+        "eventlet"
+      ],
+      "dependencies": [
+        "ipc",
+        "radio-link"
+      ],
+      "plans": [],
+      "owner": null,
+      "notes": "Phase 18. Retiring the radio process's own Flask app is still outstanding."
+    },
+    {
+      "id": "ipc",
+      "name": "IPC Framing (ipc)",
+      "description": "Newline-delimited JSON framing shared by both sides of the UI/radio split.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "JSON",
+        "Unix domain socket"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "ipc-server",
+      "name": "IPC Server (ipc_server)",
+      "description": "Radio-side command surface. Accepts tune/stop/status requests over the Unix socket and streams events back.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "socketserver"
+      ],
+      "dependencies": [
+        "ipc",
+        "sdr-arbiter"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "radio-link",
+      "name": "Radio Link (radio_link)",
+      "description": "UI-side client for the radio process, with reconnect and a LINK UP/DOWN indicator surfaced in the console header.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "Unix domain socket"
+      ],
+      "dependencies": [
+        "ipc"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "sdr-arbiter",
+      "name": "SDR Arbiter (sdr_arbiter)",
+      "description": "Single owner of the dongle. A queue-of-one that coalesces redundant tune requests and exposes commanded vs actual state as LOCKED / SWITCHING / FAULT, plus adopt() for whatever the hardware is already doing.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "threading"
+      ],
+      "dependencies": [
+        "tuner"
+      ],
+      "plans": [],
+      "owner": null,
+      "notes": "The console header renders this directly \u2014 the transition is visible, not inferred."
+    },
+    {
+      "id": "emit-bridge",
+      "name": "Emit Bridge (emit_bridge)",
+      "description": "Hands Socket.IO emits from real threads to a green thread. eventlet makes logging locks green, so a real thread touching them raises greenlet.error and dies.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "eventlet",
+        "queue"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "subprocess-decoder",
+      "name": "Subprocess Decoder Base",
+      "description": "Shared lifecycle for the external decoders: spawn, per-record TTL, stderr capture, and distinguishing a busy dongle from a missing binary.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "subprocess"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "adsb-receiver",
+      "name": "ADS-B Receiver",
+      "description": "dump1090 aircraft tracking feeding the shared map.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "dump1090"
+      ],
+      "dependencies": [
+        "subprocess-decoder"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "ais-receiver",
+      "name": "AIS Receiver",
+      "description": "Marine vessel tracking plotted alongside aircraft.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "rtl_ais"
+      ],
+      "dependencies": [
+        "subprocess-decoder"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "aprs-receiver",
+      "name": "APRS Receiver",
+      "description": "AFSK1200 packet decode on 144.390 MHz \u2014 positions, weather and telemetry.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "multimon-ng"
+      ],
+      "dependencies": [
+        "subprocess-decoder"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "acars-receiver",
+      "name": "ACARS Receiver",
+      "description": "VHF aircraft messaging via acarsdec, correlated against tracked ADS-B flights.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "acarsdec"
+      ],
+      "dependencies": [
+        "subprocess-decoder",
+        "adsb-correlator"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "ism-receiver",
+      "name": "ISM Receiver (rtl_433)",
+      "description": "315/345/433/915 MHz sensor traffic \u2014 weather stations, TPMS, utility meters, door and window sensors \u2014 with every reported field surfaced.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "rtl_433"
+      ],
+      "dependencies": [
+        "subprocess-decoder"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "pager-receiver",
+      "name": "Pager Receiver (POCSAG/FLEX)",
+      "description": "rtl_fm piped into multimon-ng. Numeric payloads containing the unassigned BCD codes [ and ] are labelled undecodable rather than shown as messages.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "multimon-ng",
+        "rtl_fm"
+      ],
+      "dependencies": [
+        "subprocess-decoder"
+      ],
+      "plans": [],
+      "owner": null,
+      "notes": "Counting digits does not detect a bad numeric decode \u2014 the noise is ~75% digits."
+    },
+    {
+      "id": "adsb-correlator",
+      "name": "ADS-B Correlator",
+      "description": "Matches spoken and ACARS callsigns against tracked flights.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python"
+      ],
+      "dependencies": [
+        "adsb-receiver"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "signal-classifier",
+      "name": "Signal Classifier",
+      "description": "MobileNetV2 over IQ spectrograms. Backend order is Hailo NPU, then trained ONNX on the CPU (~58 ms), then hand-written heuristics.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "onnxruntime",
+        "numpy",
+        "HailoRT"
+      ],
+      "dependencies": [
+        "iq-segmenter"
+      ],
+      "plans": [],
+      "owner": null,
+      "notes": "Three of six classes are validated across frequencies; the rest are marked unproven in the UI because each was seen on only one."
+    },
+    {
+      "id": "sei-model",
+      "name": "SEI Model",
+      "description": "Specific-emitter identification \u2014 a 1D CNN with attention fingerprinting transmitters from raw IQ.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "numpy",
+        "HailoRT"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "iq-collector",
+      "name": "IQ Collector",
+      "description": "Captures raw IQ windows via rtl_sdr, gated on spectral peak-to-median so empty channels never enter the corpus.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "rtl_sdr",
+        "numpy"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "iq-collect-scheduler",
+      "name": "IQ Collection Scheduler",
+      "description": "Rotates the dongle across bands to build a labelled corpus, balanced by class rather than frequency, with dwell weighted toward under-represented classes.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "threading"
+      ],
+      "dependencies": [
+        "iq-collector",
+        "sdr-arbiter"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "iq-segmenter",
+      "name": "IQ Segmenter",
+      "description": "Splits the IQ stream into windows and decides which carry a transmission.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "numpy"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "iq-capture",
+      "name": "IQ Capture",
+      "description": "Direct pyrtlsdr IQ path with FM/AM/WFM demodulation, squelch and de-emphasis; falls back to rtl_fm when pyrtlsdr is unavailable.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "pyrtlsdr",
+        "numpy"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "observation-log",
+      "name": "Observation Log",
+      "description": "Durable emitter and decoder history \u2014 first/last seen and counts \u2014 surviving restarts.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "JSON"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "config",
+      "name": "Config",
+      "description": "Persisted runtime settings: thresholds, keyword watchlist, last preset and startup behaviour.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python",
+        "JSON"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "weather-accumulator",
+      "name": "Weather Accumulator",
+      "description": "Votes across NOAA's broadcast loop to extract location, temperature, high/low, conditions and wind \u2014 robust to whisper-tiny garble no single chunk survives.",
+      "type": "backend",
+      "status": "done",
+      "technology": [
+        "Python"
+      ],
+      "dependencies": [
+        "noaa-parser"
+      ],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "learn",
+      "name": "Learn Explainer (/learn)",
+      "description": "Twelve-section animated walkthrough from radio wave to classification, with a stepped execution trace of real captured values and figures read live from the node. D3 is vendored for air-gapped operation.",
+      "type": "frontend",
+      "status": "done",
+      "technology": [
+        "HTML",
+        "D3.js",
+        "Canvas"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null
+    },
+    {
+      "id": "ui-snapshot",
+      "name": "UI Snapshot Harness",
+      "description": "Renders the console and /learn in real Chromium at five viewport sizes, screenshots every view, and reports horizontal overflow, small text and small tap targets.",
+      "type": "tooling",
+      "status": "done",
+      "technology": [
+        "Python",
+        "Chrome DevTools Protocol"
+      ],
+      "dependencies": [],
+      "plans": [],
+      "owner": null,
+      "notes": "Snapshots the served page and drives it over file:// \u2014 Chromium 150 on this Pi cannot commit an HTTP navigation."
     }
   ]
 }

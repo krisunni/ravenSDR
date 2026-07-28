@@ -15,6 +15,7 @@
             <a href="index.html" class="active">Overview</a>
             <a href="system.html">System</a>
             <a href="components.html">Components</a>
+            <a href="architecture.html">Architecture</a>
             <a href="features.html">Features</a>
             <a href="tasks.html">Tasks</a>
             <a href="changelog.html">Changelog</a>
@@ -49,8 +50,16 @@
         </section>
 
         <section class="section" id="demo-section" style="text-align:center;">
-            <h2>Demo</h2>
-            <img src="../code/static/demo-screenshot.png" alt="ravenSDR demo — live RF transcription" style="max-width:100%; border-radius:8px; border:1px solid var(--border);">
+            <h2>Console</h2>
+            <img src="screenshots/console-model.png" alt="ravenSDR console — Model view showing the training corpus by class"
+                 style="max-width:100%; border-radius:8px; border:1px solid var(--border);">
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.7rem">
+                The Model view: training corpus by class, annotated with how many distinct
+                frequencies each was collected on. Amber bars were seen on one frequency
+                only, so nothing distinguishes "learned the modulation" from "learned that
+                band" &mdash; they are marked unproven on purpose.
+                <a href="architecture.html">More screenshots and the architecture diagrams &rarr;</a>
+            </p>
         </section>
 
         <section class="section">

@@ -141,11 +141,9 @@
         renderRadioLink(data);
     });
 
-    socket.on("signal_classified", function (data) {
-        // Surfaced on the tab so you can see the model working without
-        // sitting on the Classify view.
-        setBadge("classify", (data && data.modulation) || "", "live");
-    });
+    // No modulation on the Classify tab. It changes several times a second and
+    // strobed there; the label belongs in the panel, where there is room for the
+    // confidence and frequency that make it mean anything.
 
     socket.on("signal_level", function (data) {
         updateSignalMeter(data.rms);

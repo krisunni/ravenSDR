@@ -3,9 +3,9 @@
     {
       "id": "system-architecture",
       "name": "System Architecture",
-      "description": "High-level data flow from RF input through transcription to browser",
+      "description": "End to end: one dongle arbitrated between voice, digital decoders and IQ collection, across a UI/radio process split",
       "type": "flowchart",
-      "mermaid": "graph TD\n    A[RTL-SDR Blog V4] -->|USB| B[rtl_fm subprocess]\n    C[LiveATC / NOAA streams] -->|HTTP| D[ffmpeg subprocess]\n    B -->|16kHz PCM| E[InputSource Abstraction]\n    D -->|16kHz PCM| E\n    E -->|whisper_pipe| F[Transcriber - Hailo-8L / faster-whisper]\n    E -->|audio_pipe| G[Audio Router - HTTP WAV Stream]\n    F -->|transcript_queue| H[Socket.IO Push]\n    G -->|/audio-stream| I[Browser Audio Player]\n    H -->|WebSocket| J[Browser Transcript Feed]\n    I --> K[ravenSDR Console UI]\n    J --> K"
+      "mermaid": "graph TD\n    SDR[RTL-SDR Blog V4] -->|USB| ARB[SDR Arbiter<br/>queue-of-one, LOCKED/SWITCHING/FAULT]\n    STREAM[Web streams] -->|HTTP| FF[ffmpeg]\n\n    ARB --> TUNE[rtl_fm / iq_capture]\n    ARB --> DEC[Digital decoders]\n    ARB --> COLL[IQ collector]\n\n    TUNE -->|16k PCM| SRC[InputSource]\n    FF -->|16k PCM| SRC\n    SRC --> VAD[Adaptive VAD<br/>gates on level above noise floor]\n    VAD --> WH[Whisper<br/>Hailo-8L, CPU fallback]\n    SRC --> AUD[Audio Router]\n\n    DEC --> D1[ADS-B / ACARS / APRS / AIS]\n    DEC --> D2[ISM rtl_433 / POCSAG pager]\n    DEC --> D3[NOAA APT / WEFAX / meteor]\n\n    SRC --> SEG[IQ Segmenter] --> CLF[Signal Classifier<br/>MobileNetV2 spectrograms]\n    SEG --> SEI[SEI fingerprinting]\n    COLL --> CORPUS[(Labelled corpus<br/>labels from tuned preset)]\n\n    WH --> RADIO\n    AUD --> RADIO\n    D1 --> RADIO\n    D2 --> RADIO\n    D3 --> RADIO\n    CLF --> RADIO\n    SEI --> RADIO\n    RADIO[radio process<br/>owns all hardware] -->|NDJSON over Unix socket| UI[ui process<br/>Flask + Socket.IO]\n    UI -->|WebSocket + HTTP| BROWSER[Console: 6 tabbed views]"
     },
     {
       "id": "input-mode-selection",
@@ -17,9 +17,23 @@
     {
       "id": "thread-model",
       "name": "Thread Model",
-      "description": "Four concurrent threads in the Flask application",
+      "description": "Where green threads and real threads meet, and the rule that keeps them apart",
       "type": "flowchart",
-      "mermaid": "graph LR\n    T1[Thread 1: Flask/SocketIO Main] --> HTTP[HTTP + WebSocket]\n    T2[Thread 2: _read_loop] --> PCM[Read rtl_fm/ffmpeg stdout]\n    T3[Thread 3: _inference_loop] --> WHI[Whisper on PCM chunks]\n    T4[Thread 4: signal_meter_loop] --> RMS[Sample RMS every 500ms]"
+      "mermaid": "graph LR\n    subgraph green[UI process \u2014 eventlet green threads]\n      SIO[Socket.IO handlers]\n      HTTP[Flask routes]\n      DRAIN[emit drain loop]\n    end\n    subgraph real[Radio process \u2014 real OS threads]\n      TUN[tuner reader]\n      DECT[decoder readers]\n      INF[inference workers]\n      SCHED[schedulers]\n    end\n    TUN --> BR[ThreadSafeEmitter<br/>real queue]\n    DECT --> BR\n    INF --> BR\n    SCHED --> BR\n    BR --> DRAIN --> SIO\n    RULE[Real threads must never touch<br/>green logging locks or socketio.emit \u2014<br/>eventlet makes those locks green and<br/>a real thread raises greenlet.error]\n    BR -.- RULE"
+    },
+    {
+      "id": "process-split",
+      "name": "UI / Radio Process Split",
+      "description": "Why the console still loads when the radio is dead",
+      "type": "flowchart",
+      "mermaid": "graph TB\n    B[Browser] -->|HTTP + WebSocket| UI\n\n    subgraph uip[ui process \u2014 no hardware]\n      UI[ui_app<br/>Flask + Socket.IO]\n      RL[radio_link client<br/>reconnects, shows LINK UP/DOWN]\n    end\n\n    UI --> RL\n    RL <-->|NDJSON over /run/ravensdr.sock| IS\n\n    subgraph rp[radio process \u2014 owns the hardware]\n      IS[ipc_server<br/>command surface]\n      AR[sdr_arbiter<br/>single owner of the dongle]\n      HW[tuner, decoders, Hailo, IQ collection]\n    end\n\n    IS --> AR --> HW\n\n    X[Radio process dies or restarts] -.->|console stays up,<br/>LINK goes DOWN| UI"
+    },
+    {
+      "id": "ml-cycle",
+      "name": "Model Lifecycle",
+      "description": "Collect on the node, train off it, run it back \u2014 and the validation step that decides whether any of it is trustworthy",
+      "type": "flowchart",
+      "mermaid": "graph LR\n    A[Band rotation<br/>class-balanced dwell] --> B[IQ windows<br/>gated on spectral<br/>peak-to-median]\n    B --> C[(Corpus<br/>labelled from<br/>the tuned preset)]\n    C --> D[Train off-node on x86<br/>MobileNetV2 transfer learning]\n    D --> E{Held-out-FREQUENCY<br/>validation}\n    E -->|generalises| F[Trusted class]\n    E -->|collapses| G[Learned the band,<br/>not the modulation]\n    G -->|collect more frequencies| A\n    D --> H[Export ONNX] --> I[onnxruntime on the Pi<br/>~58 ms]\n    I --> J[Live classification<br/>unproven classes flagged in the UI]\n    H -.->|Hailo DFC is x86-only<br/>and login-gated| K[.hef \u2014 pending]"
     }
   ]
 }

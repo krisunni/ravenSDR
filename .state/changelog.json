@@ -89,6 +89,21 @@
           "type": "changed",
           "description": "/learn section 10 renamed from 'Explaining this in an interview' to 'Engineering decisions, and what they cost' \u2014 the content is the evidence, not notes about it",
           "date": "2026-07-28"
+        },
+        {
+          "type": "added",
+          "date": "2026-07-28",
+          "description": "Architecture page on the dashboard: system, thread-model, process-split and model-lifecycle diagrams, plus console screenshots. Diagrams are pre-rendered to SVG by code/scripts/render_diagrams.py rather than rendered by mermaid at page load \u2014 that would mean either a 3.5MB vendored bundle or a CDN dependency that takes the diagrams with it when blocked, and a syntax error now fails the build instead of the published page"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "The Classify tab strobed: the modulation was repainted on every classification, up to ~3/sec, and consecutive windows often disagree. The label is gone from the tab entirely \u2014 it belongs in the panel, where there is room for the confidence and frequency that make it mean anything"
+        },
+        {
+          "type": "changed",
+          "date": "2026-07-28",
+          "description": "Dashboard data caught up with three releases of drift: 25 components added (arbiter, IPC and process split, all six digital decoders, the ML path), the system diagram replaced (it stopped at 'RTL-SDR to rtl_fm to Whisper to browser' and predated the split, every decoder and the model), and the Demo screenshot replaced \u2014 it showed the pre-tab console"
         }
       ]
     },

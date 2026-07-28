@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ravenSDR — Architecture</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .diagram-card {
+            background: var(--bg-elevated, #161b22);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.4rem;
+            margin-bottom: 1.6rem;
+        }
+        .diagram-card h3 { margin: 0 0 0.3rem; font-size: 1.05rem; }
+        .diagram-card .dg-desc {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        /* Diagrams are wider than a phone; let each scroll in its own box
+           rather than dragging the page sideways. */
+        .diagram-scroll { overflow-x: auto; }
+        .diagram-scroll object { min-width: 520px; }
+
+        .shot-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.1rem;
+        }
+        .shot {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--bg-elevated, #161b22);
+        }
+        .shot img { display: block; width: 100%; height: auto; }
+        .shot figcaption {
+            padding: 0.7rem 0.9rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border);
+        }
+        .shot figcaption b { color: var(--text-primary, #e6edf3); }
+        .shot-note {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <div class="nav-brand">ravenSDR</div>
+        <div class="nav-links">
+            <a href="index.html">Overview</a>
+            <a href="system.html">System</a>
+            <a href="components.html">Components</a>
+            <a href="architecture.html" class="active">Architecture</a>
+            <a href="features.html">Features</a>
+            <a href="tasks.html">Tasks</a>
+            <a href="changelog.html">Changelog</a>
+            <a href="attributions.html">Attributions</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        <header class="hero">
+            <h1>Architecture</h1>
+            <p class="hero-sub">How one dongle is shared between voice, digital decoders
+                and machine learning — and how the console survives the radio dying</p>
+        </header>
+
+        <section class="section">
+            <h2>Diagrams</h2>
+            <div id="diagrams"></div>
+        </section>
+
+        <section class="section">
+            <h2>Console</h2>
+            <p class="shot-note">
+                Captured from a running node. Every figure shown is read from that node's
+                own API — no mock data, which is why the decoder panels are empty where
+                nothing had been heard yet.
+            </p>
+            <div class="shot-grid" id="shots"></div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>ravenSDR &mdash; RF Signal Transcription Pipeline</p>
+    </footer>
+
+    <script>
+        // Diagrams are pre-rendered to SVG by code/scripts/render_diagrams.py.
+        // Rendering mermaid at page load would mean either a 3.5 MB vendored
+        // bundle or a CDN dependency that takes the diagrams with it when it is
+        // blocked — and a syntax error would surface here rather than at build.
+        const SHOTS = [
+            ['console-listen.png', 'Listen',
+             'Tuned status, signal and audio in one strip; transcript below.'],
+            ['console-classify.png', 'Classify',
+             'Live spectrogram waterfall, the model\u2019s call, and the standing warning about which classes are unproven.'],
+            ['console-model.png', 'Model',
+             'Corpus by class, with the distinct-frequency count that decides whether a class can be validated at all. Amber bars were seen on one frequency only.'],
+            ['console-phone.png', 'Phone, 390px',
+             'The same six views, verified at 1440 / 1280 / 834 / 390 / 360px.'],
+            ['learn-hero.png', '/learn',
+             'The on-node explainer, opening with figures read live from the Pi serving it.'],
+            ['learn-spectrogram.png', '/learn \u2014 spectrogram',
+             'Building a spectrogram one FFT slice at a time \u2014 the step that turns a radio problem into an image problem.']
+        ];
+
+        async function load() {
+            const shots = document.getElementById('shots');
+            SHOTS.forEach(([file, title, caption]) => {
+                const fig = document.createElement('figure');
+                fig.className = 'shot';
+                fig.innerHTML =
+                    `<a href="screenshots/${file}" target="_blank" rel="noopener">
+                       <img src="screenshots/${file}" alt="${title}" loading="lazy">
+                     </a>
+                     <figcaption><b>${title}</b> &mdash; ${caption}</figcaption>`;
+                shots.appendChild(fig);
+            });
+
+            const host = document.getElementById('diagrams');
+            let data;
+            try {
+                data = await fetch('../.state/diagrams.json').then(r => r.json());
+            } catch (e) {
+                host.innerHTML = '<p class="shot-note">Could not load diagram data.</p>';
+                return;
+            }
+
+            for (const d of data.diagrams) {
+                const card = document.createElement('div');
+                card.className = 'diagram-card';
+                card.innerHTML =
+                    `<h3>${d.name}</h3>
+                     <div class="dg-desc">${d.description || ''}</div>
+                     <div class="diagram-scroll">
+                       <object type="image/svg+xml" data="diagrams/${d.id}.svg"
+                               aria-label="${d.name}" style="max-width:100%;"></object>
+                     </div>`;
+                host.appendChild(card);
+            }
+        }
+        load();
+    </script>
+</body>
+</html>
