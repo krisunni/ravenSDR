@@ -217,3 +217,55 @@ class TestAdaptiveDwell:
         s._running = True
         s._run_slot(s.bands[0])
         assert h.ticks == 10        # the configured default
+
+
+class TestClassBalancedRotation:
+    """A flat rotation gives each FREQUENCY equal airtime, not each CLASS.
+
+    FM is carried by 17 presets and APRS by one, so a flat list collected FM 17x
+    faster and drove the live corpus to a 20.9x imbalance (FM 1191, APRS 57) —
+    which teaches a model to guess the majority class.
+    """
+
+    def _bands_uneven(self):
+        return ([{"id": "fm%d" % i, "freq_hz": 160_000_000 + i, "label": "FM"}
+                 for i in range(5)] +
+                [{"id": "aprs", "freq_hz": 144_390_000, "label": "AFSK1200"}])
+
+    def _sched(self, h):
+        return IQCollectScheduler(
+            self._bands_uneven(), h.start_slot, h.stop_slot, h.is_enabled,
+            dwell_s=5, idle_s=0, sleep_fn=h.sleep)
+
+    def test_each_class_gets_one_slot_per_rotation(self):
+        h = _Harness()
+        s = self._sched(h)
+        s._running = True
+        for _ in range(6):                      # three full rotations of 2 classes
+            label = s._labels[s._index]
+            band = s._groups[label][s._cursor[label] % len(s._groups[label])]
+            s._cursor[label] += 1
+            s._index = (s._index + 1) % len(s._labels)
+            s._run_slot(band)
+        labels = [b for b in h.started]
+        fm = len([x for x in labels if x.startswith("fm")])
+        aprs = len([x for x in labels if x == "aprs"])
+        assert fm == aprs, "classes must get equal slots, got FM=%d APRS=%d" % (fm, aprs)
+
+    def test_frequency_advances_within_a_class(self):
+        """Diversity is still wanted — just spread across rotations."""
+        h = _Harness()
+        s = self._sched(h)
+        seen = []
+        for _ in range(3):
+            band = s._groups["FM"][s._cursor["FM"] % 5]
+            s._cursor["FM"] += 1
+            seen.append(band["id"])
+        assert len(set(seen)) == 3, "same frequency reused every rotation"
+
+    def test_snapshot_reports_frequencies_per_class(self):
+        h = _Harness()
+        s = self._sched(h)
+        snap = s.snapshot()
+        assert snap["frequencies_per_class"] == {"FM": 5, "AFSK1200": 1}
+        assert snap["classes"] == ["AFSK1200", "FM"]

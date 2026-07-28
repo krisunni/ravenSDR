@@ -32,7 +32,20 @@ class IQCollectScheduler:
         stop_slot   — fn(band), releases the dongle
         is_enabled  — fn() -> bool, consulted before EVERY slot
         """
+        # Group by modulation, and visit one frequency PER CLASS per rotation.
+        #
+        # A flat list gives each frequency equal airtime, which sounds fair but
+        # is not: FM is carried by 17 presets and APRS by one, so a flat rotation
+        # collected FM 17x faster and drove the corpus to a 20.9x imbalance
+        # (FM 1191 vs AFSK1200 57). Frequency diversity within a class is still
+        # wanted — it stops the model learning the band instead of the modulation
+        # — so the frequency representing each class advances every rotation.
         self.bands = list(bands)
+        self._groups = {}
+        for b in self.bands:
+            self._groups.setdefault(b.get("label"), []).append(b)
+        self._labels = sorted(self._groups)
+        self._cursor = {lab: 0 for lab in self._labels}
         self._start_slot = start_slot
         self._stop_slot = stop_slot
         self._is_enabled = is_enabled
@@ -62,6 +75,8 @@ class IQCollectScheduler:
             "enabled": bool(self._is_enabled()),
             "current_band": self._current,
             "bands": [b["id"] for b in self.bands],
+            "classes": self._labels,
+            "frequencies_per_class": {k: len(v) for k, v in self._groups.items()},
             "dwell_s": self.dwell_s,
             "idle_s": self.idle_s,
             "rotations": self._rotations,
@@ -72,12 +87,12 @@ class IQCollectScheduler:
     # ── Lifecycle ──
 
     def start(self, spawn_fn):
-        if self._running or not self.bands:
+        if self._running or not self._labels:
             return False
         self._running = True
         spawn_fn(self._loop)
-        log.info("IQ collect scheduler started (%d bands, %ds dwell)",
-                 len(self.bands), self.dwell_s)
+        log.info("IQ collect scheduler started (%d classes over %d frequencies, "
+                 "%ds dwell)", len(self._labels), len(self.bands), self.dwell_s)
         return True
 
     def stop(self):
@@ -102,8 +117,13 @@ class IQCollectScheduler:
                 self._sleep(5)
                 continue
 
-            band = self.bands[self._index]
-            self._index = (self._index + 1) % len(self.bands)
+            label = self._labels[self._index]
+            group = self._groups[label]
+            # Next frequency for this class, advancing each time we return to it.
+            band = group[self._cursor[label] % len(group)]
+            self._cursor[label] += 1
+
+            self._index = (self._index + 1) % len(self._labels)
             if self._index == 0:
                 self._rotations += 1
 
