@@ -65,7 +65,39 @@ COLLECT_MIN_INTERVAL_S = 2.0     # per class — diversity beats 10 copies a sec
 # the model trains.
 COLLECT_SAMPLE_LEN = 24000
 
+# Minimum spectral peak-to-median ratio for a window to count as carrying a
+# signal. Crest factor alone is not enough: it measures burstiness, so steady
+# NOISE looks exactly like a steady carrier and passed the gate. Measured across
+# the corpus against a known-noise reference (HF captured on an antenna that
+# cannot hear that band, ratio 124):
+#
+#     FM 14170 (115x)   FSK 8599 (70x)   WFM 2012 (16x)
+#     MSK 376 (3x)      OOK 244 (2x)     known noise 124
+#
+# The 345 MHz "OOK" class sat at 2x noise with 0% of windows containing a burst —
+# 685 samples of empty channel labelled as a modulation. 300 admits everything
+# with demonstrable signal and rejects that.
+COLLECT_MIN_PEAK_RATIO = 300.0
+
 HAILO_TIMEOUT_MS = 10000
+
+
+def spectral_peak_ratio(iq_samples, nfft=8192):
+    """Peak-to-median power across frequency.
+
+    A real carrier concentrates energy into a few bins; empty noise is flat. Bin
+    0 is forced to the median because the RTL-SDR's DC spike is an artifact of
+    the receiver, not of anything on the air.
+    """
+    seg = np.asarray(iq_samples[:nfft])
+    if len(seg) < 64:
+        return 0.0
+    power = np.abs(np.fft.fft(seg)) ** 2
+    med = float(np.median(power))
+    if med <= 0:
+        return 0.0
+    power[0] = med
+    return float(power.max() / med)
 
 
 def _softmax(x):
@@ -151,6 +183,7 @@ class SignalClassifier:
         self._collect_counts = {}       # label -> files on disk (cap)
         self._collected_total = 0
         self._collect_skipped_snr = 0
+        self._collect_skipped_empty = 0
         # Ground-truth label for collection, set from the tuned preset's
         # expected_modulation. None disables collection entirely.
         self.collect_label = None
@@ -325,6 +358,10 @@ class SignalClassifier:
             self._collect_skipped_snr += 1
             return None
 
+        if spectral_peak_ratio(iq_samples) < COLLECT_MIN_PEAK_RATIO:
+            self._collect_skipped_empty += 1
+            return None
+
         now = time.time()
         last = self._collect_last_ts.get(label, 0.0)
         if now - last < COLLECT_MIN_INTERVAL_S:
@@ -371,6 +408,8 @@ class SignalClassifier:
             "per_class": per_class,
             "collected_this_run": self._collected_total,
             "skipped_low_snr": self._collect_skipped_snr,
+            "skipped_empty": self._collect_skipped_empty,
+            "min_peak_ratio": COLLECT_MIN_PEAK_RATIO,
             "min_snr_db": COLLECT_MIN_SNR_DB,
             "max_per_class": COLLECT_MAX_PER_CLASS,
         }

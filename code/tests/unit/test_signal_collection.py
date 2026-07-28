@@ -23,8 +23,19 @@ def collector(tmp_path, monkeypatch):
     return SignalClassifier(emit_fn=lambda *a, **k: None)
 
 
-def _iq(n=1024):
-    return (np.random.randn(n) + 1j * np.random.randn(n)).astype(np.complex64)
+def _iq(n=1024, signal=True):
+    """A capture with an actual carrier in it.
+
+    Pure noise is now correctly REJECTED by the spectral signal-presence gate —
+    that gate exists because 685 windows of empty 345 MHz channel had been
+    collected and labelled OOK. Tests that want a sample kept must therefore
+    provide something that looks like a signal.
+    """
+    noise = (np.random.randn(n) + 1j * np.random.randn(n)) * 0.25
+    if not signal:
+        return noise.astype(np.complex64)
+    t = np.arange(n) / n
+    return (np.exp(2j * np.pi * 64 * t) + noise).astype(np.complex64)
 
 
 class TestLabelledCollection:
@@ -172,3 +183,33 @@ class TestSoftmaxOnLogits:
         from ravensdr.signal_classifier import _softmax
         assert _softmax([8.0, 1.0, 1.0]).max() > 0.7
         assert _softmax([1.0, 1.0, 1.05]).max() < 0.7
+
+
+class TestSignalPresenceGate:
+    """Crest factor measures burstiness, so steady NOISE looked exactly like a
+    steady carrier and was collected. 685 windows of empty 345 MHz channel were
+    filed as OOK — 2x the noise floor, 0% containing a burst."""
+
+    def test_empty_window_is_rejected(self, collector):
+        assert collector.collect_sample(_iq(8192, signal=False), "FM", 1) is None
+        assert collector.collection_stats()["skipped_empty"] == 1
+
+    def test_window_with_a_carrier_is_kept(self, collector):
+        assert collector.collect_sample(_iq(8192), "FM", 1) is not None
+
+    def test_ratio_separates_noise_from_carrier(self):
+        from ravensdr.signal_classifier import spectral_peak_ratio
+        assert spectral_peak_ratio(_iq(8192, signal=False)) < 100
+        assert spectral_peak_ratio(_iq(8192)) > 1000
+
+    def test_dc_spike_does_not_fake_a_carrier(self):
+        """The RTL-SDR's DC offset is a receiver artifact, not a signal."""
+        from ravensdr.signal_classifier import spectral_peak_ratio
+        n = 8192
+        dc_only = (np.ones(n) * 40 +
+                   (np.random.randn(n) + 1j*np.random.randn(n)) * 0.3).astype(np.complex64)
+        assert spectral_peak_ratio(dc_only) < 100
+
+    def test_too_short_input_is_safe(self):
+        from ravensdr.signal_classifier import spectral_peak_ratio
+        assert spectral_peak_ratio(np.zeros(8, dtype=np.complex64)) == 0.0

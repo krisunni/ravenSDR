@@ -312,6 +312,54 @@ PRESETS = [
         "note": "acarsdec — VHF ACARS text; correlates with ADS-B map",
         "expected_modulation": "MSK",
     },
+    # Additional ACARS channels. acarsdec already listens to all five; giving
+    # each its own preset lets the collector gather MSK from five frequencies
+    # instead of one, so a model cannot pass by memorising 131.550 MHz.
+    {
+        "id": "acars-130025",
+        "label": "ACARS 130.025",
+        "freq": "130.025M",
+        "mode": "acars",
+        "category": "aviation",
+        "squelch": 0,
+        "note": "Secondary ACARS channel",
+        "expected_modulation": "MSK",
+    },
+    {
+        "id": "acars-131725",
+        "label": "ACARS 131.725",
+        "freq": "131.725M",
+        "mode": "acars",
+        "category": "aviation",
+        "squelch": 0,
+        "note": "European primary, used in North America as secondary",
+        "expected_modulation": "MSK",
+    },
+    # More FM broadcast stations. WFM was the one class that demonstrably
+    # generalised across frequency (0.949 trained on 90.3, tested on 94.9), so
+    # widening it further is cheap and strengthens the strongest evidence we have.
+    {
+        "id": "kiro-fm",
+        "label": "KIRO 97.3",
+        "freq": "97.300M",
+        "mode": "wbfm",
+        "category": "broadcast",
+        "squelch": 0,
+        "continuous": True,
+        "note": "Seattle news/talk — strong local signal",
+        "expected_modulation": "WFM",
+    },
+    {
+        "id": "king-fm",
+        "label": "KING 98.1",
+        "freq": "98.100M",
+        "mode": "wbfm",
+        "category": "broadcast",
+        "squelch": 0,
+        "continuous": True,
+        "note": "Seattle classical — strong local signal",
+        "expected_modulation": "WFM",
+    },
     # ── ISM / Sensors (rtl_433) ──
     {
         "id": "ism-433",

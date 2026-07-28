@@ -169,7 +169,20 @@ def load_radioml(dataset_path):
     return iq, labels, Z
 
 
-def load_custom_samples(data_dir, class_name, sample_len=RUNTIME_SAMPLE_LEN):
+def sample_frequency_hz(path):
+    """Parse the capture frequency out of a collected filename.
+
+    Collected as <UTCstamp>_<frequency_hz>.npy by
+    signal_classifier.collect_sample.
+    """
+    try:
+        return int(os.path.basename(path).rsplit("_", 1)[-1].split(".")[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def load_custom_samples(data_dir, class_name, sample_len=RUNTIME_SAMPLE_LEN,
+                        with_freqs=False):
     """Load custom IQ samples from .npy files in a directory.
 
     Args:
@@ -180,8 +193,9 @@ def load_custom_samples(data_dir, class_name, sample_len=RUNTIME_SAMPLE_LEN):
         list of complex numpy arrays
     """
     samples = []
+    freqs = []
     if not os.path.isdir(data_dir):
-        return samples
+        return (samples, freqs) if with_freqs else samples
 
     for fname in os.listdir(data_dir):
         if fname.endswith(".npy"):
@@ -190,10 +204,11 @@ def load_custom_samples(data_dir, class_name, sample_len=RUNTIME_SAMPLE_LEN):
                 iq = np.load(path)
                 if np.iscomplexobj(iq) and len(iq) >= FFT_SIZE:
                     samples.append(iq[:sample_len])
+                    freqs.append(sample_frequency_hz(path))
             except Exception:
                 pass
 
-    return samples
+    return (samples, freqs) if with_freqs else samples
 
 
 def build_dataset(radioml_path=None, custom_dirs=None, augment=True, seed=42,
