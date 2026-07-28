@@ -35,8 +35,36 @@
             .then(function (data) {
                 self.status = data;
                 self._renderStatus();
+                self._renderWarning();
             })
             .catch(function () {});
+    };
+
+    // Say plainly which predictions can be trusted.
+    //
+    // Three of the six trained classes were only ever observed on ONE frequency,
+    // so a model can score highly on them by recognising that band's noise floor
+    // and filter shape rather than the modulation. Held-out-frequency testing is
+    // the only way to tell them apart, and it cannot run on a single frequency.
+    ClassifierPanel.prototype._renderWarning = function () {
+        var el = document.getElementById("clf-warning");
+        if (!el || !this.status) return;
+        var unproven = this.status.unproven_classes || [];
+        var validated = this.status.validated_classes || [];
+        if (!unproven.length) { el.classList.add("hidden"); return; }
+
+        el.classList.remove("hidden");
+        el.innerHTML =
+            "<strong>Model limitations.</strong> Trained on " +
+            (validated.length + unproven.length) + " classes; only <strong>" +
+            validated.length + "</strong> could be validated across more than one " +
+            "frequency (" + validated.map(function (c) {
+                return "<code>" + c + "</code>"; }).join(" ") + "). " +
+            unproven.map(function (c) {
+                return "<code>" + c + "</code>"; }).join(" ") +
+            " were each seen on a single frequency, so a confident label there may " +
+            "be recognising the <em>band</em> rather than the modulation. Anything " +
+            "outside these classes will still be forced into one of them.";
     };
 
     ClassifierPanel.prototype._onClassification = function (data) {
@@ -65,6 +93,14 @@
 
         modEl.textContent = data.modulation || "--";
         modEl.className = "clf-mod-type clf-mod-" + (data.modulation || "unknown").toLowerCase();
+        // An unproven class gets a visible marker and the reason on hover, so a
+        // confident-looking label is never mistaken for a trustworthy one.
+        if (data.validation === "unproven") {
+            modEl.classList.add("clf-unproven");
+            modEl.title = data.caveat || "this class was only observed on one frequency";
+        } else {
+            modEl.title = "";
+        }
 
         var conf = Math.round((data.confidence || 0) * 100);
         confEl.textContent = conf + "%";
@@ -114,6 +150,7 @@
             item.className = "clf-history-item";
             if (idx === 0) item.classList.add("clf-history-new");
             if (evt.uncertain) item.classList.add("clf-uncertain-item");
+            if (evt.validation === "unproven") item.classList.add("clf-unproven-item");
 
             var ts = document.createElement("span");
             ts.className = "clf-history-ts";

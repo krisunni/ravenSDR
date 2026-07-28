@@ -175,6 +175,11 @@
 
         <!-- Signal Classification -->
         <div id="classifier-panel">
+            <!-- The model is trained on six classes, only three of which could be
+                 validated across more than one frequency. Saying so in the UI
+                 keeps a confident-looking label from being mistaken for a
+                 trustworthy one. -->
+            <div id="clf-warning" class="clf-warning hidden"></div>
             <div class="panel-header">
                 <label>Signal Classification</label>
                 <div class="clf-stats-bar">

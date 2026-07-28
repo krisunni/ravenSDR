@@ -43,7 +43,8 @@ from ravensdr.wefax_receiver import WefaxReceiver
 from ravensdr.meteor_detector import MeteorDetector, METEOR_ENABLED, METEOR_DUAL_DONGLE, METEOR_FREQUENCY
 from ravensdr.meteor_analyzer import MeteorAnalyzer
 from ravensdr.signal_classifier import (SignalClassifier, iq_to_spectrogram,
-                                        spectrogram_to_image, MODULATION_CLASSES)
+                                        spectrogram_to_image, MODULATION_CLASSES,
+                                        CLASS_VALIDATION)
 from ravensdr.sei_model import SEIModel
 from ravensdr.iq_segmenter import IQSegmenter, compute_power_db
 from ravensdr.config import (
@@ -519,10 +520,15 @@ meteor_detector.load_events_from_log()
 import os as _os
 _classifier_hef = _os.environ.get("CLASSIFIER_HEF_PATH")
 _classifier_classes = _os.environ.get("CLASSIFIER_CLASSES_PATH")
+# Default to the trained ONNX model shipped in models/ when no explicit path is
+# given, so a model dropped there is picked up without touching the environment.
+_classifier_onnx = _os.environ.get("CLASSIFIER_ONNX_PATH") or _os.path.join(
+    _os.path.dirname(__file__), "models", "signal_classifier.onnx")
 signal_classifier = SignalClassifier(
     emit_fn=_late_emit,
     hef_path=_classifier_hef,
     class_map_path=_classifier_classes,
+    onnx_path=_classifier_onnx,
 )
 log.info("Signal classifier initialized (backend: %s)", signal_classifier.backend)
 

@@ -82,6 +82,39 @@ COLLECT_MIN_PEAK_RATIO = 300.0
 HAILO_TIMEOUT_MS = 10000
 
 
+# How much a prediction can be trusted, per class.
+#
+# A class collected from only ONE frequency cannot be distinguished from "the
+# model learned what that band looks like" — every sample of it shares one noise
+# floor, one filter shape, one set of spurs. Held-out-frequency testing is the
+# only way to tell, and it needs at least two frequencies to run at all.
+#
+# Measured with validate_confound.py (train on some frequencies, test only on
+# unseen ones):
+#   WFM  0.949 recall on a frequency never trained on  -> generalises
+#   FM   several frequencies available, mixed result   -> partially validated
+#   MSK  two frequencies with enough samples           -> validated
+#   OOK / FSK / AFSK1200 — one frequency each, so UNPROVEN by construction.
+#   144.390 is the only APRS channel in North America, so AFSK1200 can never be
+#   validated on this node however long it collects.
+CLASS_VALIDATION = {
+    "WFM": "validated",
+    "FM": "validated",
+    "MSK": "validated",
+    "OOK": "unproven",
+    "FSK": "unproven",
+    "AFSK1200": "unproven",
+}
+
+
+def class_confidence_note(modulation):
+    """Human-readable caveat for a predicted class, or None if it is trusted."""
+    if CLASS_VALIDATION.get(modulation) == "unproven":
+        return ("only ever observed on one frequency — this prediction may be "
+                "recognising the band rather than the modulation")
+    return None
+
+
 def spectral_peak_ratio(iq_samples, nfft=8192):
     """Peak-to-median power across frequency.
 
@@ -174,7 +207,8 @@ def spectrogram_to_image(spectrogram, size=SPECTROGRAM_SIZE):
 class SignalClassifier:
     """Classifies RF signal modulation type from IQ samples using CNN on Hailo-8L."""
 
-    def __init__(self, emit_fn=None, hef_path=None, class_map_path=None):
+    def __init__(self, emit_fn=None, hef_path=None, class_map_path=None,
+                 onnx_path=None):
         self.emit_fn = emit_fn or (lambda *a, **kw: None)
         self.hef_path = hef_path
         self._classes = MODULATION_CLASSES[:]
@@ -192,6 +226,8 @@ class SignalClassifier:
         self._vdevice = None
         self._configured = None
         self._bindings = None
+        self._session = None
+        self._onnx_input = None
         self._running = False
         self._lock = threading.Lock()
         self.confidence_threshold = CONFIDENCE_THRESHOLD  # runtime-tunable
@@ -210,12 +246,61 @@ class SignalClassifier:
                 mapping = json.load(f)
                 self._classes = [mapping[str(i)] for i in range(len(mapping))]
 
-        # Try to load Hailo model
+        # Backend preference: NPU > trained model on CPU > heuristics.
+        #
+        # The middle rung matters. Compiling a .hef needs Hailo's Dataflow
+        # Compiler, which is x86-only and login-gated, so without it a trained
+        # model could not run on this node at all and "CPU fallback" meant
+        # hand-written rules that can only ever emit WFM/FM/CW/AM/SSB.
+        # onnxruntime runs the SAME trained network on the Pi's CPU — slower
+        # than the NPU but identical in what it predicts, so the model can be
+        # exercised and iterated on today and the backend swapped later.
         if hef_path and os.path.exists(hef_path):
             self._init_hailo(hef_path)
+        elif onnx_path and os.path.exists(onnx_path):
+            self._init_onnx(onnx_path)
         else:
-            log.info("Signal classifier: no HEF model, using CPU fallback")
+            log.info("Signal classifier: no model, using heuristic fallback")
             self._backend = "cpu"
+
+    def _init_onnx(self, onnx_path):
+        """Load the trained model for CPU inference via onnxruntime."""
+        try:
+            import onnxruntime as ort
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = 2      # leave headroom for Whisper
+            opts.log_severity_level = 3        # quiet the GPU-probe warnings
+            self._session = ort.InferenceSession(
+                onnx_path, opts, providers=["CPUExecutionProvider"])
+            self._onnx_input = self._session.get_inputs()[0].name
+            self._backend = "onnx"
+            log.info("Signal classifier loaded on CPU via onnxruntime: %s "
+                     "(input %s)", onnx_path,
+                     self._session.get_inputs()[0].shape)
+        except Exception as e:
+            log.warning("Signal classifier: ONNX init failed (%s), using "
+                        "heuristic fallback", e)
+            self._backend = "cpu"
+
+    def _infer_onnx(self, img):
+        """Run the trained network on the CPU. Same maths as the NPU path."""
+        try:
+            # NCHW float 0..1 — the layout torch.onnx.export recorded, which is
+            # NOT the NHWC the Hailo runtime wants. Same model, different
+            # convention, and getting it wrong silently produces nonsense.
+            x = np.stack([img, img, img], axis=0).astype(np.float32) / 255.0
+            x = np.expand_dims(x, axis=0)
+            with self._lock:
+                out = self._session.run(None, {self._onnx_input: x})
+            logits = np.asarray(out[0]).flatten()
+            if len(logits) < len(self._classes):
+                return None
+            probs = _softmax(logits[:len(self._classes)])
+            idx = int(np.argmax(probs))
+            return self._classes[idx], float(probs[idx]), probs.tolist()
+        except Exception as e:
+            log.warning("ONNX inference failed: %s", e)
+            return None
 
     def _init_hailo(self, hef_path):
         """Initialize Hailo-8L inference model.
@@ -286,6 +371,8 @@ class SignalClassifier:
         # Run inference
         if self._backend == "hailo" and self._model is not None:
             result = self._infer_hailo(img)
+        elif self._backend == "onnx" and self._session is not None:
+            result = self._infer_onnx(img)
         else:
             result = self._infer_cpu(spectrogram)
 
@@ -318,6 +405,8 @@ class SignalClassifier:
 
         classification = {
             "modulation": modulation,
+            "validation": CLASS_VALIDATION.get(modulation, "unknown"),
+            "caveat": class_confidence_note(modulation),
             "confidence": round(confidence, 3),
             "frequency_hz": frequency_hz,
             "timestamp": now,
@@ -595,6 +684,14 @@ class SignalClassifier:
             "accuracy_vs_presets": accuracy,
             "compared_count": self._compared_vs_preset,
             "correct_count": self._correct_vs_preset,
+            # Surfaced so the UI can say plainly which predictions are
+            # trustworthy. A class seen on one frequency cannot be told apart
+            # from the model having memorised that band.
+            "validation": CLASS_VALIDATION,
+            "validated_classes": sorted(k for k, v in CLASS_VALIDATION.items()
+                                        if v == "validated"),
+            "unproven_classes": sorted(k for k, v in CLASS_VALIDATION.items()
+                                       if v == "unproven"),
         }
 
     def stop(self):
