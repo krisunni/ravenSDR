@@ -551,41 +551,49 @@ _pending_spectrogram_row = None  # buffered for eventlet emission
 _pending_classification = None   # buffered for eventlet emission
 
 
-def _on_iq_chunk(iq_samples, frequency_hz):
-    """Called by pyrtlsdr IQCapture for each raw IQ chunk.
+def _classify_and_waterfall(iq_samples, frequency_hz, expected=None):
+    """Classify a chunk and build a waterfall row, buffered for the hub.
 
-    Runs in a real OS thread (not eventlet greenlet), so must NOT call
-    socketio.emit directly. Buffer data for the eventlet broadcast loop.
+    Called from REAL OS threads (pyrtlsdr's capture thread, or rtl_sdr's reader),
+    so it must not touch socketio directly — results are buffered and
+    iq_pipeline_emit_loop emits them.
     """
     global _iq_chunk_counter, _pending_spectrogram_row, _pending_classification
     _iq_chunk_counter += 1
 
-    # Feed segmenter every chunk (accurate TX boundary detection)
-    iq_segmenter.set_frequency(frequency_hz)
-    iq_segmenter.feed(iq_samples)
-
-    # Run classification every 5th chunk (~500ms) — buffer result, don't emit
     if _iq_chunk_counter % 5 == 0:
-        preset = input_source.current_preset or {}
         try:
             result = signal_classifier.classify_iq(
-                iq_samples,
-                frequency_hz=frequency_hz,
-                expected_modulation=preset.get("expected_modulation"),
+                iq_samples, frequency_hz=frequency_hz,
+                expected_modulation=expected,
             )
             if result:
                 _pending_classification = result
         except Exception:
-            pass
+            log.debug("classify failed", exc_info=True)
 
-    # Compute spectrogram row every 3rd chunk (~300ms) — buffer, don't emit
     if _iq_chunk_counter % 3 == 0:
         try:
             spec = iq_to_spectrogram(iq_samples, fft_size=256, hop=128)
             img = spectrogram_to_image(spec, size=256)
             _pending_spectrogram_row = img[-1].tolist()
         except Exception:
-            pass
+            log.debug("waterfall row failed", exc_info=True)
+
+
+def _on_iq_chunk(iq_samples, frequency_hz):
+    """Called by pyrtlsdr IQCapture for each raw IQ chunk.
+
+    NOTE: this never fires on this node — pyrtlsdr cannot load against the
+    RTL-SDR Blog driver, so set_iq_callback is a no-op and the tuner runs
+    rtl_fm, which yields audio and not IQ. The live IQ that DOES exist arrives
+    through _on_collect_iq, which drives the same work.
+    """
+    iq_segmenter.set_frequency(frequency_hz)
+    iq_segmenter.feed(iq_samples)
+    preset = input_source.current_preset or {}
+    _classify_and_waterfall(iq_samples, frequency_hz,
+                            preset.get("expected_modulation"))
 
 
 # Prevent classifier from emitting directly (it runs in the IQ thread)
@@ -1037,6 +1045,12 @@ def _on_collect_iq(iq_samples, frequency_hz):
     # For a bursty protocol the label is only true DURING a transmission, so
     # those bands collect solely through classify_segment, which fires when the
     # segmenter has actually detected one.
+    # Drive the live classifier panel from here too. This is the ONLY source of
+    # real IQ on this node, so without it the Signal Classification panel and
+    # its spectrogram waterfall stay permanently blank while the model is
+    # loaded, working and idle.
+    _classify_and_waterfall(iq_samples, frequency_hz, label)
+
     if _collect_duty != "continuous":
         return
     signal_classifier.collect_sample(iq_samples, label, frequency_hz)

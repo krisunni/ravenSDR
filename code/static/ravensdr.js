@@ -443,8 +443,8 @@
 
         // Sections only relevant when actively receiving audio
         var audioSections = [
-            "signal-section", "stats-section", "classifier-panel",
-            "sei-panel", "control-section", "advanced-panel",
+            "signal-section", "stats-section",
+            "control-section", "advanced-panel",
             "audio-section", "tuned-section",
         ];
         var hasAudio = !isWefax && !isScience && !isAdsbOnly && !isAisOnly && !isIsm && !isAcars && !isPager;
@@ -452,6 +452,16 @@
         audioSections.forEach(function (id) {
             var el = document.getElementById(id);
             if (el) el.style.display = hasAudio ? "" : "none";
+        });
+
+        // The classifier and SEI work on IQ, not audio, so they must NOT be
+        // hidden with the audio controls. Their only source of live IQ on this
+        // node is the background collector, which runs on ISM/APRS/packet
+        // presets — exactly the ones "hasAudio" switches off. Hiding them there
+        // meant the panels were invisible precisely when they had data.
+        ["classifier-panel", "sei-panel"].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.style.display = "";
         });
 
         // WEFAX tab: show chart panel, hide transcript
