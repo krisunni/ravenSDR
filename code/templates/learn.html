@@ -655,6 +655,37 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
   </table>
 </section>
 
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">11</span> Watch the code execute</h2>
+  <div class="lede">Every stage, stepped through with the values it really produced.</div>
+
+  <p>These are not illustrative numbers. They were captured by running the pipeline on
+  one real capture from this node &mdash;
+  <span class="mono" id="trace-file">&hellip;</span> &mdash; and one real training batch.
+  Step through and watch the data change shape at each line.</p>
+
+  <div class="fig">
+    <div class="fig-title">Execution trace</div>
+    <div class="controls">
+      <button class="pill" id="tr-prev">&larr; back</button>
+      <button class="pill" id="tr-next">step &rarr;</button>
+      <button class="pill" id="tr-play">play</button>
+      <span class="mono" id="tr-pos" style="color:var(--text-dim);margin-left:8px"></span>
+    </div>
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:1 1 380px">
+        <pre id="tr-code" style="margin-top:0;min-height:210px"></pre>
+      </div>
+      <div style="flex:1 1 340px">
+        <div class="fig-title" style="margin-bottom:8px">values at this point</div>
+        <div id="tr-vals" class="mono" style="font-size:12px;line-height:1.8;min-height:190px"></div>
+      </div>
+    </div>
+    <div class="hint" id="tr-note"></div>
+  </div>
+</section>
+
 <footer class="learn-foot">
   ravenSDR &mdash; <a href="/">console</a> &middot;
   <span class="mono" id="foot-stats">&mdash;</span>

@@ -984,4 +984,210 @@
            .style("font", "10px ui-monospace").text("(\u201clinear bottleneck\u201d)");
     })();
 
+    // ── 11. execution trace, using values captured from real runs ────────
+    (function executionTrace() {
+        var codeEl = document.getElementById("tr-code");
+        if (!codeEl) return;
+        var valsEl = document.getElementById("tr-vals"),
+            noteEl = document.getElementById("tr-note"),
+            posEl  = document.getElementById("tr-pos");
+        var step = 0, auto = null, T = null, STEPS = [];
+
+        function row(k, v, colour) {
+            return "<div><span style='color:" + C.dim + "'>" + k +
+                   "</span>  <span style='color:" + (colour || C.text) + "'>" +
+                   v + "</span></div>";
+        }
+        function code(lines, hot) {
+            return lines.map(function (l, i) {
+                var on = i === hot;
+                return "<div style='" + (on
+                    ? "background:#1c2a3a;color:" + C.accent + ";border-left:2px solid " + C.accent + ";padding-left:6px"
+                    : "color:" + C.dim + ";padding-left:8px") + "'>" +
+                    l.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</div>";
+            }).join("");
+        }
+
+        function build(t) {
+            var d = t.dsp, tr = t.train;
+            var fmt = function (a) { return "[" + a.join(", ") + "]"; };
+
+            return [
+            { title: "1 · the dongle hands over IQ",
+              code: ["# rtl_sdr streams interleaved 8-bit I/Q",
+                     "raw = proc.stdout.read(65536)",
+                     "i   = raw[0::2].astype(float32) - 127.5",
+                     "q   = raw[1::2].astype(float32) - 127.5",
+                     "iq  = (i + 1j*q).astype(complex64)"],
+              hot: 4,
+              vals: row("captured", d.file, C.yellow) +
+                    row("frequency", d.freq_mhz.toFixed(3) + " MHz") +
+                    row("length", d.iq_len.toLocaleString() + " complex samples") +
+                    row("iq[0..5]", d.iq.map(function (p) {
+                        return "(" + p[0] + (p[1] < 0 ? "" : "+") + p[1] + "j)"; }).join(" "), C.accent),
+              note: "Two numbers per sample, centred on 127.5. Nothing has been " +
+                    "interpreted yet — this is just what came off the wire." },
+
+            { title: "2 · the same points, read as magnitude and angle",
+              code: ["magnitude = np.abs(iq)      # how strong",
+                     "angle     = np.angle(iq)    # where in the circle"],
+              hot: 0,
+              vals: row("|iq|", fmt(d.mag), C.green) +
+                    row("angle°", fmt(d.ang), C.purple) +
+                    row("", "") +
+                    row("note", "same six samples, polar instead of cartesian"),
+              note: "Identical data. Magnitude carries AM, the rate of change of angle " +
+                    "carries FM — which is why both numbers had to be recorded." },
+
+            { title: "3 · window one frame, then FFT it",
+              code: ["window = np.hanning(256)",
+                     "frame  = iq[0:256] * window",
+                     "fft    = np.fft.fftshift(np.fft.fft(frame))",
+                     "power  = np.maximum(np.abs(fft)**2, 1e-20)",
+                     "db     = 10 * np.log10(power)"],
+              hot: 2,
+              vals: row("hanning[0..5]", fmt(d.window_first), C.dim) +
+                    row("|fft| bins 120-125", fmt(d.fft_mag), C.accent) +
+                    row("dB", fmt(d.db), C.green),
+              note: "The Hanning window tapers each frame to zero at its edges. Without " +
+                    "it, chopping the signal creates artificial edges that the FFT " +
+                    "reports as energy that was never on the air." },
+
+            { title: "4 · stack every frame into a spectrogram",
+              code: ["n_frames    = (len(iq) - 256) // 128 + 1",
+                     "spectrogram = np.zeros((n_frames, 256))",
+                     "for i in range(n_frames):",
+                     "    spectrogram[i] = fft_of_frame(i)"],
+              hot: 3,
+              vals: row("frames", d.spec_shape[0] + "  (hop 128 across " +
+                        d.iq_len.toLocaleString() + " samples)") +
+                    row("shape", d.spec_shape[0] + " × " + d.spec_shape[1], C.accent) +
+                    row("dB range", d.spec_min + " … " + d.spec_max, C.green) +
+                    row("", "") +
+                    row("duration", (d.iq_len / 2400) .toFixed(1) + " ms of radio"),
+              note: "Now it is a picture: " + d.spec_shape[0] + " rows of time, 256 " +
+                    "columns of frequency." },
+
+            { title: "5 · squash it into the shape the network expects",
+              code: ["lo, hi = spec.min(), spec.max()",
+                     "img = ((spec - lo)/(hi - lo) * 255).astype(uint8)",
+                     "img = img[np.ix_(rows, cols)]   # -> 224x224"],
+              hot: 1,
+              vals: row("input range", d.spec_min + " … " + d.spec_max + " dB") +
+                    row("output range", "0 … 255", C.accent) +
+                    row("shape", d.img_shape[0] + " × " + d.img_shape[1]) +
+                    row("row 112", fmt(d.img_row), C.green),
+              note: "Each image is scaled by its OWN min and max, so absolute signal " +
+                    "strength is thrown away. That is deliberate — but it means pure " +
+                    "noise gets stretched to full contrast, which is why a separate " +
+                    "signal check is needed." },
+
+            { title: "6 · is there actually a signal here?",
+              code: ["ratio = spectral_peak_ratio(iq)",
+                     "if ratio < 300:",
+                     "    return None        # empty channel, do not collect"],
+              hot: 0,
+              vals: row("peak / median", d.peak_ratio.toLocaleString(), C.green) +
+                    row("gate", d.gate) +
+                    row("verdict", d.peak_ratio >= d.gate ? "KEEP" : "REJECT",
+                        d.peak_ratio >= d.gate ? C.green : C.red) +
+                    row("", "") +
+                    row("for reference", "known noise ≈ 124, empty OOK ≈ 244", C.dim),
+              note: "This gate is what stopped 89,460 empty windows entering the corpus." },
+
+            { title: "7 · forward pass — the model guesses",
+              code: ["outputs = model(images)     # a batch of 8",
+                     "# raw scores, NOT probabilities"],
+              hot: 0,
+              vals: row("batch", tr.batch.join(", "), C.dim) +
+                    row("true label", tr.true_label, C.yellow) +
+                    row("logits", "[" + tr.logits.slice(0, 6).join(", ") + " …]", C.accent),
+              note: "Fifteen numbers, one per class. They are unbounded and do not sum " +
+                    "to anything — the network has not been asked for probabilities." },
+
+            { title: "8 · softmax turns scores into probabilities",
+              code: ["probs = exp(logits) / exp(logits).sum()",
+                     "# CrossEntropyLoss does this internally"],
+              hot: 0,
+              vals: row("probs", "[" + tr.probs.slice(0, 6).map(function (p) {
+                        return (p * 100).toFixed(1) + "%"; }).join(", ") + " …]", C.accent) +
+                    row("sum", "100%") +
+                    row("truth", tr.true_label + " — the model gave it " +
+                        (tr.probs[tr.classes.indexOf(tr.true_label)] * 100).toFixed(1) + "%",
+                        C.red),
+              note: "Untrained, it is spreading its bet almost evenly — roughly 1/15 " +
+                    "each. That is exactly what ignorance looks like." },
+
+            { title: "9 · the loss — one number for 'how wrong'",
+              code: ["loss = criterion(outputs, labels)",
+                     "# -log(probability of the correct class)"],
+              hot: 0,
+              vals: row("loss", tr.loss, C.red) +
+                    row("", "") +
+                    row("if it were certain and right", "0.00", C.green) +
+                    row("if it guessed evenly (1/15)", "2.71", C.dim) +
+                    row("ours", tr.loss + "  → worse than guessing", C.red),
+              note: "Cross-entropy is the negative log of the probability given to the " +
+                    "right answer. Confident and wrong is punished far harder than unsure." },
+
+            { title: "10 · backward — who caused the error?",
+              code: ["optimizer.zero_grad()",
+                     "loss.backward()",
+                     "# gradients computed; NOTHING has moved yet"],
+              hot: 1,
+              vals: row("weights (6 of 1280)", fmt(tr.w_before)) +
+                    row("gradients", fmt(tr.grads), C.yellow) +
+                    row("gradient norm", tr.grad_norm) +
+                    row("", "") +
+                    row("weights now", fmt(tr.w_before) + "  ← unchanged", C.dim),
+              note: "backward() only assigns blame. The chain rule walks the network in " +
+                    "reverse working out each weight's contribution to that 3.09." },
+
+            { title: "11 · step — apply the correction",
+              code: ["optimizer.step()",
+                     "# w  ←  w  −  lr × gradient"],
+              hot: 0,
+              vals: row("before", fmt(tr.w_before)) +
+                    row("− lr(" + tr.lr + ") × grad", fmt(tr.grads.map(function (g) {
+                        return Math.round(-tr.lr * g * 1e5) / 1e5; })), C.yellow) +
+                    row("after", fmt(tr.w_after), C.green) +
+                    row("", "") +
+                    row("changed by", fmt(tr.w_after.map(function (a, i) {
+                        return Math.round((a - tr.w_before[i]) * 1e5) / 1e5; })), C.accent),
+              note: "Six of 2,231,558 weights, nudged. Repeat 600 times and the model " +
+                    "has learned — that is 1.3 billion individual corrections." }
+            ];
+        }
+
+        function render() {
+            var st = STEPS[step];
+            codeEl.innerHTML = code(st.code, st.hot);
+            valsEl.innerHTML = "<div style='color:" + C.yellow + ";margin-bottom:8px'>" +
+                               st.title + "</div>" + st.vals;
+            noteEl.innerHTML = st.note;
+            posEl.textContent = (step + 1) + " / " + STEPS.length;
+        }
+        function go(d) {
+            step = (step + d + STEPS.length) % STEPS.length;
+            render();
+        }
+
+        fetch("/static/trace.json").then(function (r) { return r.json(); })
+          .then(function (t) {
+              T = t; STEPS = build(t);
+              var fe = document.getElementById("trace-file");
+              if (fe) fe.textContent = t.dsp.file;
+              render();
+              document.getElementById("tr-next").addEventListener("click", function () { go(1); });
+              document.getElementById("tr-prev").addEventListener("click", function () { go(-1); });
+              document.getElementById("tr-play").addEventListener("click", function () {
+                  if (auto) { clearInterval(auto); auto = null; this.textContent = "play"; }
+                  else { this.textContent = "pause"; auto = setInterval(function () { go(1); }, 3200); }
+              });
+          })
+          .catch(function () {
+              codeEl.textContent = "trace.json unavailable";
+          });
+    })();
+
 })();
