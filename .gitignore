@@ -24,6 +24,8 @@ code/ravensdr/data/meteor_log.json
 code/ravensdr/data/observations.json
 # Locally-collected IQ/spectrogram training captures (per-node, regenerated)
 code/ml/signal_classifier/data/collected/
+# Samples rejected as mislabelled (HF with no antenna, synthetic artifacts)
+code/ml/signal_classifier/data/quarantine/
 # Per-node runtime state (secondary dongle task, startup preset)
 code/ravensdr/config.json
 # Generated images (WEFAX charts, APT satellite passes)

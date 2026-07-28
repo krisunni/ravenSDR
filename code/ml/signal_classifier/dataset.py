@@ -35,7 +35,12 @@ SPECTROGRAM_SIZE = 224
 # Target modulation classes for ravenSDR
 TARGET_CLASSES = [
     "AM", "FM", "WFM", "SSB", "P25", "DMR",
-    "ADSB", "NOAA_APT", "WEFAX", "CW", "unknown",
+    "ADSB", "NOAA_APT", "WEFAX", "CW",
+    # Digital modulations the node can actually label from its presets. Without
+    # these, collection wrote AFSK1200/FSK/MSK/OOK directories that the dataset
+    # builder silently ignored — 1162 of 2271 samples dropped with no warning.
+    "OOK", "FSK", "MSK", "AFSK1200",
+    "unknown",
 ]
 
 # RadioML 2018.01A class name mapping to ravenSDR classes
@@ -323,6 +328,18 @@ if __name__ == "__main__":
             d = os.path.join(args.custom_dir, class_name)
             if os.path.isdir(d):
                 custom_dirs[class_name] = d
+
+        # A directory of real, labelled captures that is not in TARGET_CLASSES
+        # is a taxonomy bug, not an empty class — say so instead of dropping it.
+        if os.path.isdir(args.custom_dir):
+            unknown = [n for n in sorted(os.listdir(args.custom_dir))
+                       if os.path.isdir(os.path.join(args.custom_dir, n))
+                       and n not in TARGET_CLASSES]
+            for n in unknown:
+                count = len([f for f in os.listdir(os.path.join(args.custom_dir, n))
+                             if f.endswith(".npy")])
+                print("WARNING: ignoring %d samples in '%s' — not in "
+                      "TARGET_CLASSES" % (count, n))
 
     if args.radioml and args.sample_len != 1024:
         print("WARNING: RadioML records are 1024 samples but --sample-len is %d."

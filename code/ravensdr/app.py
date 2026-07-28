@@ -42,7 +42,8 @@ from ravensdr.wefax_scheduler import WefaxScheduler, WEFAX_ENABLED
 from ravensdr.wefax_receiver import WefaxReceiver
 from ravensdr.meteor_detector import MeteorDetector, METEOR_ENABLED, METEOR_DUAL_DONGLE, METEOR_FREQUENCY
 from ravensdr.meteor_analyzer import MeteorAnalyzer
-from ravensdr.signal_classifier import SignalClassifier, iq_to_spectrogram, spectrogram_to_image
+from ravensdr.signal_classifier import (SignalClassifier, iq_to_spectrogram,
+                                        spectrogram_to_image, MODULATION_CLASSES)
 from ravensdr.sei_model import SEIModel
 from ravensdr.iq_segmenter import IQSegmenter, compute_power_db
 from ravensdr.config import (
@@ -1046,22 +1047,48 @@ def _collect_bands(include_hf=False):
     """Bands worth collecting: presets that declare a modulation to label with."""
     seen = {}
     skipped_hf = []
+    ambiguous = set()
     for preset in get_presets():
         label = preset.get("expected_modulation")
         freq = preset.get("freq", "")
         if not label or label == "unknown" or preset.get("mode") == "adsb":
             continue
         hz = _freq_to_hz(freq)
-        if not hz or label in seen:
+        if not hz:
             continue
         if hz < HF_CUTOFF_HZ and not include_hf:
             skipped_hf.append(f"{preset['id']} ({hz/1e6:.3f} MHz)")
             continue
-        seen[label] = {"id": preset["id"], "freq_hz": hz, "label": label}
+        # Keep EVERY frequency that carries this modulation, not one per label.
+        #
+        # Deduplicating by label gave each class exactly one frequency, which
+        # makes the training set unable to distinguish "this modulation" from
+        # "this band": a model can score 99% by learning each band's noise floor
+        # and filter shape and never learn modulation at all. Collecting FM from
+        # three NOAA stations and several ham repeaters, WFM from two broadcast
+        # stations, OOK from 345 and 433 MHz, forces the model to find what those
+        # captures have in common — which is the modulation.
+        if label not in MODULATION_CLASSES:
+            ambiguous.add(label)
+            continue
+        seen.setdefault(label, []).append(
+            {"id": preset["id"], "freq_hz": hz, "label": label})
     if skipped_hf:
         log.info("IQ collect: skipping HF bands (no HF antenna): %s",
                  ", ".join(skipped_hf))
-    return list(seen.values())
+
+    if ambiguous:
+        log.info("IQ collect: skipping ambiguous modulation labels %s — a sample "
+                 "cannot be two classes, so they cannot be ground truth",
+                 ", ".join(sorted(ambiguous)))
+
+    bands = [b for group in seen.values() for b in group]
+    for label, group in sorted(seen.items()):
+        if len(group) == 1:
+            log.warning("IQ collect: %s has only one frequency (%s) — the model "
+                        "cannot separate modulation from band for this class",
+                        label, group[0]["id"])
+    return bands
 
 
 def _freq_to_hz(freq):

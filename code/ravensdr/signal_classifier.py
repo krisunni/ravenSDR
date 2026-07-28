@@ -17,7 +17,12 @@ log = logging.getLogger(__name__)
 # Classification target classes
 MODULATION_CLASSES = [
     "AM", "FM", "WFM", "SSB", "P25", "DMR",
-    "ADSB", "NOAA_APT", "WEFAX", "CW", "unknown",
+    "ADSB", "NOAA_APT", "WEFAX", "CW",
+    # Digital modulations the node can actually label from its presets. Without
+    # these, collection wrote AFSK1200/FSK/MSK/OOK directories that the dataset
+    # builder silently ignored — 1162 of 2271 samples dropped with no warning.
+    "OOK", "FSK", "MSK", "AFSK1200",
+    "unknown",
 ]
 
 CLASS_INDEX = {name: i for i, name in enumerate(MODULATION_CLASSES)}
@@ -149,6 +154,7 @@ class SignalClassifier:
         # Ground-truth label for collection, set from the tuned preset's
         # expected_modulation. None disables collection entirely.
         self.collect_label = None
+        self._warned_labels = set()
         self._model = None
         self._vdevice = None
         self._configured = None
@@ -301,6 +307,19 @@ class SignalClassifier:
         raises — collection must not be able to break reception.
         """
         if not label or label == "unknown":
+            return None
+        # The label becomes a directory name and a training class, so it must be
+        # exactly one known modulation. "OOK/FSK" (declared by the 433/915 ISM
+        # presets, where devices genuinely use either) created a NESTED
+        # collected/OOK/FSK/ directory whose samples the dataset builder never
+        # globbed — silently orphaned. An ambiguous label is also unusable as
+        # ground truth: half the samples would carry the wrong answer.
+        if label not in MODULATION_CLASSES:
+            if label not in self._warned_labels:
+                self._warned_labels.add(label)
+                log.warning("Not collecting %r — not a single known modulation "
+                            "(ambiguous or unrecognised labels poison training)",
+                            label)
             return None
         if snr_db is not None and snr_db < COLLECT_MIN_SNR_DB:
             self._collect_skipped_snr += 1
