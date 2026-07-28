@@ -98,6 +98,10 @@ log = logging.getLogger(__name__)
 
 VERSION = "1.3.0"
 
+# Modes whose IQ never reaches the classifier: a separate dongle, or a decoder
+# that consumes the stream itself. Their presets must not label the corpus.
+NON_IQ_MODES = {"adsb", "ais"}
+
 # ── Flask + Socket.IO ──
 app = Flask(
     __name__,
@@ -753,7 +757,18 @@ def _apply_tune(preset):
     # The preset's declared modulation is ground truth for corpus collection —
     # the operator tuned here deliberately. Set before any mode branch, all of
     # which return early.
-    signal_classifier.collect_label = preset.get("expected_modulation")
+    #
+    # ...but only for presets whose IQ actually reaches the classifier. ADS-B is
+    # map-only on the second dongle and AIS runs its own decoder, so neither
+    # feeds this path. Labelling from them left a stale collect_label in place
+    # while the main receiver sat on something else entirely: ten windows of
+    # 162.550 MHz NOAA weather were filed under "ADSB", a class the model does
+    # not even have. Clear it instead, so collection pauses rather than lies.
+    # _collect_bands() already applies the same exclusion to the rotation.
+    if preset.get("mode") in NON_IQ_MODES:
+        signal_classifier.collect_label = None
+    else:
+        signal_classifier.collect_label = preset.get("expected_modulation")
     # Start weather accumulation fresh when the station changes
     if input_source.current_preset is None or \
             input_source.current_preset.get("id") != preset.get("id"):
@@ -1075,7 +1090,7 @@ def _collect_bands(include_hf=False):
     for preset in get_presets():
         label = preset.get("expected_modulation")
         freq = preset.get("freq", "")
-        if not label or label == "unknown" or preset.get("mode") == "adsb":
+        if not label or label == "unknown" or preset.get("mode") in NON_IQ_MODES:
             continue
         hz = _freq_to_hz(freq)
         if not hz:

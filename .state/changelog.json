@@ -104,6 +104,16 @@
           "type": "changed",
           "date": "2026-07-28",
           "description": "Dashboard data caught up with three releases of drift: 25 components added (arbiter, IPC and process split, all six digital decoders, the ML path), the system diagram replaced (it stopped at 'RTL-SDR to rtl_fm to Whisper to browser' and predated the split, every decoder and the model), and the Demo screenshot replaced \u2014 it showed the pre-tab console"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "Corpus contamination: ten windows captured at 162.550 MHz (NOAA weather, narrowband FM) were filed under an ADSB class the model does not have. _collect_bands() already excluded mode=adsb from the rotation, but collect_label was set on every tune \u2014 and ADS-B is map-only on the second dongle, so tuning it left a stale label behind while the receiver sat elsewhere. AIS had the same shape. Both now clear the label instead, sharing one NON_IQ_MODES set with the rotation so the two rules cannot drift apart"
+        },
+        {
+          "type": "added",
+          "date": "2026-07-28",
+          "description": "Hailo compile path: export_calibration.py replays real corpus captures through the exact runtime preprocessing to build a class-balanced int8 calibration set, and compile_hailo.py drives the Dataflow Compiler's Python API (hailomz handles Model Zoo models only \u2014 a custom ONNX needs the DFC directly)"
         }
       ]
     },

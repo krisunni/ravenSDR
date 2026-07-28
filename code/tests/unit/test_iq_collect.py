@@ -308,3 +308,49 @@ class TestDutyGating:
         band = {"id": "x", "freq_hz": 1, "label": "FM",
                 "duty": get_preset_by_id("noaa-seattle")["duty"]}
         assert band["duty"] == "continuous"
+
+
+class TestNonIqModesNeverLabel:
+    """Presets whose IQ never reaches the classifier must not label the corpus.
+
+    ADS-B is map-only on the second dongle; AIS runs its own decoder. Neither
+    feeds the main receive path, so tuning one used to leave a stale
+    collect_label behind while the receiver sat on something else. That filed
+    ten windows of 162.550 MHz NOAA weather under "ADSB" — a class the model
+    does not have — which would have poisoned the next training run.
+
+    The rotation and the label assignment share one exclusion set precisely so
+    they cannot drift apart; these tests hold both ends of that.
+    """
+
+    def test_adsb_and_ais_are_excluded(self):
+        from ravensdr.app import NON_IQ_MODES
+        assert "adsb" in NON_IQ_MODES
+        assert "ais" in NON_IQ_MODES
+
+    def test_rotation_skips_non_iq_presets(self, monkeypatch):
+        import ravensdr.app as app
+
+        presets = [
+            {"id": "noaa-seattle", "freq": "162.550M", "mode": "fm",
+             "expected_modulation": "FM", "duty": "continuous"},
+            {"id": "adsb-1090", "freq": "1090M", "mode": "adsb",
+             "expected_modulation": "ADSB", "duty": "burst", "device_index": 1},
+            {"id": "ais-marine", "freq": "161.975M", "mode": "ais",
+             "expected_modulation": "FM", "duty": "burst"},
+        ]
+        monkeypatch.setattr(app, "get_presets", lambda: presets)
+
+        ids = {b["id"] for b in app._collect_bands()}
+        assert "noaa-seattle" in ids
+        assert "adsb-1090" not in ids, "ADS-B is on a different dongle entirely"
+        assert "ais-marine" not in ids, "AIS never reaches the classifier"
+
+    def test_no_band_is_labelled_adsb(self, monkeypatch):
+        """The label must describe the modulation, not the application."""
+        import ravensdr.app as app
+        monkeypatch.setattr(app, "get_presets", lambda: [
+            {"id": "adsb-1090", "freq": "1090M", "mode": "adsb",
+             "expected_modulation": "ADSB", "duty": "burst"},
+        ])
+        assert app._collect_bands() == []

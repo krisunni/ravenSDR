@@ -22,6 +22,7 @@ browser-based UI verification.
 - **Console overflowed at 360px**: the C2 lamp groups and the classifier stat row each pushed the page 30–60px wider than the viewport.
 - **Classifier backend displayed "None"** while a trained model was actively classifying — the `onnx` case was missing from the label map.
 - **Model view "Band" showed the modulation class**, not the channel, repeating what the corpus bars already said. Now shows the frequency and preset id.
+- **Corpus contamination — samples filed under a class the model does not have**: ten windows captured at 162.550 MHz (NOAA weather, narrowband FM) were written to an `ADSB` directory. `_collect_bands()` already excluded `mode=adsb` from the rotation, but `collect_label` was set on *every* tune, and ADS-B is map-only on the second dongle — so tuning it left a stale label in place while the main receiver sat elsewhere. AIS had the same shape. Both now clear the label, sharing one `NON_IQ_MODES` set with the rotation so the two rules cannot drift apart.
 - **Garbled pager messages**: POCSAG numeric mode is BCD through multimon-ng's table `084 2.6]195-3U7[`, where `[` and `]` carry no meaning in paging. Payloads full of them are alphanumeric or binary content forced through the numeric table, or noise that survived BCH correction. These are now labelled rather than presented as messages — the raw payload is kept, since an undecodable page still proves the channel is live. Note that counting digits does **not** detect this: the observed noise is ~75% digits.
 
 ### Changed
