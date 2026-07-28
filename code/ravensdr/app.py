@@ -519,7 +519,8 @@ meteor_detector.load_events_from_log()
 # ── Signal Classifier ──
 import os as _os
 _classifier_hef = _os.environ.get("CLASSIFIER_HEF_PATH")
-_classifier_classes = _os.environ.get("CLASSIFIER_CLASSES_PATH")
+_classifier_classes = _os.environ.get("CLASSIFIER_CLASSES_PATH") or _os.path.join(
+    _os.path.dirname(__file__), "models", "signal_classifier_classes.json")
 # Default to the trained ONNX model shipped in models/ when no explicit path is
 # given, so a model dropped there is picked up without touching the environment.
 _classifier_onnx = _os.environ.get("CLASSIFIER_ONNX_PATH") or _os.path.join(

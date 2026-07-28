@@ -32,3 +32,6 @@ code/ravensdr/config.json
 code/static/images/
 # Locally-cloned driver/SDR source trees (built by setup.sh)
 /rtl-sdr/
+
+# Trained model — 8.6MB binary, rebuilt from the corpus by the ML pipeline
+code/ravensdr/models/signal_classifier.onnx

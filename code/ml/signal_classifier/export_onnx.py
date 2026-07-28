@@ -46,15 +46,26 @@ def run_export(args):
     onnx_path = os.path.join(args.output_dir, "signal_classifier.onnx")
 
     print(f"Exporting to ONNX (opset {args.opset})...")
-    torch.onnx.export(
-        model,
-        dummy_input,
-        onnx_path,
+    # dynamo=False forces the legacy TorchScript exporter.
+    #
+    # torch 2.13 defaults to the dynamo exporter, which drags in onnxscript ->
+    # onnx_ir -> ml_dtypes and fails on this box with
+    # "module 'ml_dtypes' has no attribute 'bfloat16'" — a version conflict
+    # inside that chain, not a problem with the model. The legacy exporter has
+    # none of those dependencies and produces exactly the fixed-shape NCHW graph
+    # the Hailo compiler expects, so it is the right tool here regardless.
+    export_kwargs = dict(
         opset_version=args.opset,
         input_names=["input"],
         output_names=["output"],
         dynamic_axes=None,  # fixed shape
     )
+    try:
+        torch.onnx.export(model, dummy_input, onnx_path,
+                          dynamo=False, **export_kwargs)
+    except TypeError:
+        # older torch has no dynamo kwarg — it only had the legacy exporter
+        torch.onnx.export(model, dummy_input, onnx_path, **export_kwargs)
 
     # Verify ONNX model
     print("Verifying ONNX model...")
