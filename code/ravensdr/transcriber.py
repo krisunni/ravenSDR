@@ -1,5 +1,6 @@
 # Hailo Whisper wrapper + audio chunking
 
+import contextlib
 import logging
 import os
 import threading
@@ -381,6 +382,16 @@ class ContinuousSegmenter:
         self._pending = b""
 
 
+def _shared_vdevice():
+    """The process-wide VDevice. Never closed here — the classifier and SEI
+    hold the same object, and closing it would take the NPU from them."""
+    from ravensdr.hailo_device import get_vdevice
+    vd = get_vdevice()
+    if vd is None:
+        raise RuntimeError("no Hailo VDevice")
+    return vd
+
+
 class Transcriber:
     """Accumulates PCM chunks, detects silence, runs Whisper inference."""
 
@@ -704,15 +715,12 @@ class Transcriber:
         """Hailo NPU inference loop — VDevice and configure() scoped by context managers."""
         from ravensdr.mel import log_mel_spectrogram, pad_or_trim
 
-        params = VDevice.create_params()
-        params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
-
         decoder_hef = HEF(self._decoder_path)
         sorted_output_names = decoder_hef.get_sorted_output_names()
         decoder_model_name = decoder_hef.get_network_group_names()[0]
 
         try:
-            with VDevice(params) as vdevice:
+            with contextlib.nullcontext(_shared_vdevice()) as vdevice:
                 encoder_model = vdevice.create_infer_model(self._encoder_path)
                 decoder_model = vdevice.create_infer_model(self._decoder_path)
 

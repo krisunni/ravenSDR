@@ -310,17 +310,29 @@ class SignalClassifier:
         device with it — the second one to start simply fails to acquire.
         """
         try:
-            from hailo_platform import (HEF, VDevice, FormatType,
-                                        HailoSchedulingAlgorithm)
+            from hailo_platform import HEF, FormatType
+            from ravensdr.hailo_device import get_vdevice
             hef = HEF(hef_path)
-            params = VDevice.create_params()
-            params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
-            self._vdevice = VDevice(params)
+            # Shared, not our own: a second VDevice would take the single
+            # physical chip and starve Whisper. See hailo_device.py.
+            self._vdevice = get_vdevice()
+            if self._vdevice is None:
+                raise RuntimeError("no Hailo VDevice")
             self._model = self._vdevice.create_infer_model(hef_path)
-            # Feed float32 so the 0..1 range the model was calibrated on is
-            # preserved; the runtime otherwise expects quantised uint8 and the
-            # scale would be off by 255x.
-            self._model.input().set_format_type(FormatType.FLOAT32)
+            # Formats are dictated by the .hef, not by preference. Ours reports:
+            #   Input  UINT8, NHWC(224x224x3)
+            #   Output UINT8, NC(15)
+            #
+            # The input is uint8 because normalisation is compiled INTO the
+            # graph (`normalization([0,0,0],[255,255,255])`), so the chip does
+            # the divide. Feeding float 0..1 here — as this used to — would be
+            # normalised a second time and the network would see near-black
+            # images while still returning confident-looking labels.
+            #
+            # The output is asked for as float32 so HailoRT dequantises the
+            # int8 logits for us; reading the raw uint8 would need the scale and
+            # zero-point applied by hand.
+            self._model.input().set_format_type(FormatType.UINT8)
             self._model.output().set_format_type(FormatType.FLOAT32)
             self._configured = self._model.configure()
             self._bindings = self._configured.create_bindings()
@@ -570,10 +582,10 @@ class SignalClassifier:
             # which the except below swallowed — so the NPU path was dead code
             # that silently degraded to CPU while still reporting "hailo".
             #
-            # Layout is NHWC (HailoRT's convention), float 0..1 to match how the
-            # model is calibrated. Three identical channels because the network
+            # NHWC uint8, straight through: the .hef normalises on-chip, so the
+            # host must NOT scale. Three identical channels because the network
             # is ImageNet-pretrained and expects RGB.
-            input_data = np.stack([img, img, img], axis=-1).astype(np.float32) / 255.0
+            input_data = np.stack([img, img, img], axis=-1).astype(np.uint8)
             input_data = np.expand_dims(input_data, axis=0)      # (1,224,224,3)
             input_data = np.ascontiguousarray(input_data)
 

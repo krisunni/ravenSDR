@@ -114,6 +114,31 @@
           "type": "added",
           "date": "2026-07-28",
           "description": "Hailo compile path: export_calibration.py replays real corpus captures through the exact runtime preprocessing to build a class-balanced int8 calibration set, and compile_hailo.py drives the Dataflow Compiler's Python API (hailomz handles Model Zoo models only \u2014 a custom ONNX needs the DFC directly)"
+        },
+        {
+          "type": "added",
+          "date": "2026-07-28",
+          "description": "Signal classifier now runs on the Hailo-8L NPU: 5.2ms median against 21.7ms on the CPU, a 4.2x speedup, at 97.5% agreement with the validated ONNX model. Compiled from the custom ONNX via the Dataflow Compiler's Python API inside the x86 SW Suite container"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "Loading the classifier onto the NPU evicted Whisper to the CPU. Three components each created their own VDevice, but the Hailo-8L is a single physical device and ROUND_ROBIN only shares network groups WITHIN one VDevice \u2014 so the second to ask got HAILO_OUT_OF_PHYSICAL_DEVICES. The error was logged, the console still reported 'hailo' for the classifier, and transcription silently got slow. All three now share one VDevice via hailo_device.py"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "_infer_hailo divided by 255 before submitting the buffer, but the compiled .hef takes UINT8 NHWC because normalisation is built into the graph. Feeding float 0..1 would have been normalised twice and the network would have seen near-black images while still returning confident labels. Format read from the .hef with hailortcli parse-hef rather than assumed"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "The first .hef agreed with the CPU model only 53% of the time \u2014 not a wiring fault: it picked the right class but at 0.61 against 0.9985, so every borderline window flipped. Fifteen logits quantised to 8 bits leaves softmax too little resolution. The classifier head now runs at 16-bit with the conv trunk at 8-bit, lifting agreement to 97.5%"
+        },
+        {
+          "type": "changed",
+          "date": "2026-07-28",
+          "description": "CLASSIFIER_HEF_PATH now defaults to models/signal_classifier_h8l.hef, matching how the ONNX path already defaulted \u2014 previously the NPU could only be reached by setting an environment variable"
         }
       ]
     },

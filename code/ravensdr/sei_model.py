@@ -137,9 +137,12 @@ class SEIModel:
             hef = HEF(hef_path)
             # ROUND_ROBIN so this can coexist with Whisper and the classifier;
             # a bare VDevice() cannot share the NPU and simply fails to acquire.
-            params = VDevice.create_params()
-            params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
-            self._vdevice = VDevice(params)
+            # Shared VDevice — see hailo_device.py. Creating our own would
+            # take the single physical chip from Whisper.
+            from ravensdr.hailo_device import get_vdevice
+            self._vdevice = get_vdevice()
+            if self._vdevice is None:
+                raise RuntimeError("no Hailo VDevice")
             self._model = self._vdevice.create_infer_model(hef_path)
             self._model.input().set_format_type(FormatType.FLOAT32)
             self._model.output().set_format_type(FormatType.FLOAT32)

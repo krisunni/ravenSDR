@@ -41,7 +41,21 @@ DEFAULT_ARCH = "hailo8l"
 # the graph it must pass uint8 through untouched, or every value is scaled twice
 # and the model sees near-black images. See --no-onchip-norm to keep the host
 # doing it instead.
-MODEL_SCRIPT = "normalization1 = normalization([0.0, 0.0, 0.0], [255.0, 255.0, 255.0])\n"
+# The first compile agreed with the CPU model only 53% of the time. It was not
+# a structural error — on an OOK window the NPU still picked OOK, but at 0.61
+# against the CPU's 0.9985. The probabilities were smeared, which flips every
+# borderline window. Cause: fifteen logits quantised to 8 bits leaves too little
+# resolution for softmax to separate them.
+#
+# So the classifier head runs at 16-bit while the convolutional trunk stays at
+# 8-bit — the trunk is where the compute is, the head is where the precision
+# matters. Bias correction (optimization_level=1) recovers what per-layer
+# clipping costs; level 2 adds finetuning, which needs a GPU this VM lacks.
+MODEL_SCRIPT = """
+normalization1 = normalization([0.0, 0.0, 0.0], [255.0, 255.0, 255.0])
+quantization_param([fc1], precision_mode=a16_w16)
+model_optimization_flavor(optimization_level=1, compression_level=0)
+"""
 
 
 def main():

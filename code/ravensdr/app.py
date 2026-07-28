@@ -522,7 +522,11 @@ meteor_detector.load_events_from_log()
 
 # ── Signal Classifier ──
 import os as _os
-_classifier_hef = _os.environ.get("CLASSIFIER_HEF_PATH")
+# Same defaulting as the ONNX below: a .hef dropped into models/ should be
+# picked up without anyone having to set an environment variable. Without this
+# the NPU path could only ever be reached by remembering CLASSIFIER_HEF_PATH.
+_classifier_hef = _os.environ.get("CLASSIFIER_HEF_PATH") or _os.path.join(
+    _os.path.dirname(__file__), "models", "signal_classifier_h8l.hef")
 _classifier_classes = _os.environ.get("CLASSIFIER_CLASSES_PATH") or _os.path.join(
     _os.path.dirname(__file__), "models", "signal_classifier_classes.json")
 # Default to the trained ONNX model shipped in models/ when no explicit path is

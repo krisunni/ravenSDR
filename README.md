@@ -70,7 +70,8 @@ below if that flow looks like magic.
 - **Meteor scatter** detection
 
 **Machine learning**
-- **Signal classifier** — MobileNetV2 over IQ spectrograms (see [ML pipeline](#ml-pipeline))
+- **Signal classifier** — MobileNetV2 over IQ spectrograms, **running on the Hailo-8L NPU**
+  at ~5 ms (4.2× the CPU path), sharing the chip with Whisper (see [ML pipeline](#ml-pipeline))
 - **SEI** — specific-emitter fingerprinting from raw IQ
 - **Background corpus collection** — rotates bands to build labelled training data
 

@@ -7,6 +7,9 @@ venv/
 dist/
 build/
 .env
+# .hef files are build artefacts. Whisper's come from download_models.sh;
+# the classifier's is produced by code/ml/signal_classifier/compile_hailo.py
+# inside the Hailo SW Suite container (x86 only).
 *.hef
 *.wav
 *.mp3
