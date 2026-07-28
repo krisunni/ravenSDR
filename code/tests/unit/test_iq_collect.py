@@ -269,3 +269,42 @@ class TestClassBalancedRotation:
         snap = s.snapshot()
         assert snap["frequencies_per_class"] == {"FM": 5, "AFSK1200": 1}
         assert snap["classes"] == ["AFSK1200", "FM"]
+
+
+class TestDutyGating:
+    """A random window on a BURSTY channel is almost always empty.
+
+    Collecting those directly produced 1921 "OOK" samples containing zero
+    transmissions, and "AFSK1200" that was a steady carrier parked on 144.390
+    rather than an APRS packet. For a bursty protocol the label is only true
+    during a burst, so those bands must come from the segmenter.
+    """
+
+    def test_presets_declare_a_duty(self):
+        from ravensdr.presets import get_presets
+        missing = [p["id"] for p in get_presets() if "duty" not in p]
+        assert not missing, "presets without duty: %s" % missing
+
+    def test_duty_values_are_valid(self):
+        from ravensdr.presets import get_presets
+        bad = [p["id"] for p in get_presets()
+               if p["duty"] not in ("continuous", "burst")]
+        assert not bad
+
+    def test_always_on_broadcasts_are_continuous(self):
+        from ravensdr.presets import get_preset_by_id
+        for pid in ("noaa-seattle", "kuow-fm", "kexp-fm"):
+            assert get_preset_by_id(pid)["duty"] == "continuous"
+
+    def test_packet_and_sensor_bands_are_bursty(self):
+        """These transmit for milliseconds and are silent the rest of the time."""
+        from ravensdr.presets import get_preset_by_id
+        for pid in ("aprs-144390", "acars-vhf", "ism-security-345",
+                    "pager-pocsag", "redmond-ares"):
+            assert get_preset_by_id(pid)["duty"] == "burst", pid
+
+    def test_band_dicts_carry_duty_to_the_scheduler(self):
+        from ravensdr.presets import get_preset_by_id
+        band = {"id": "x", "freq_hz": 1, "label": "FM",
+                "duty": get_preset_by_id("noaa-seattle")["duty"]}
+        assert band["duty"] == "continuous"

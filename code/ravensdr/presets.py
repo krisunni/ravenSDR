@@ -1,9 +1,21 @@
 # Frequency preset definitions (SDR + stream URLs)
 
+# "duty" says whether a preset carries a signal continuously or only while
+# somebody transmits. It decides how training samples may be collected:
+#
+#   continuous — a random window contains the signal, so it can be sampled
+#                directly (NOAA's loop, broadcast FM).
+#   burst      — a random window is almost always EMPTY, so only the segmenter
+#                may collect, and only once it has detected a transmission.
+#
+# Ignoring this produced 1921 "OOK" samples with zero bursts in them, and
+# "AFSK1200" samples that were a steady carrier parked on 144.390 rather than
+# any APRS packet. For a bursty protocol the label is only true DURING a burst.
 PRESETS = [
     # ── Weather ──
     {
         "id": "noaa-seattle",
+        "duty": "continuous",
         "label": "NOAA Seattle",
         "freq": "162.550M",
         "mode": "fm",
@@ -16,6 +28,7 @@ PRESETS = [
     },
     {
         "id": "noaa-monterey",
+        "duty": "continuous",
         "label": "NOAA Monterey",
         "freq": "162.400M",
         "mode": "fm",
@@ -28,6 +41,7 @@ PRESETS = [
     },
     {
         "id": "noaa-portland",
+        "duty": "continuous",
         "label": "NOAA Portland",
         "freq": "162.475M",
         "mode": "fm",
@@ -40,6 +54,7 @@ PRESETS = [
     },
     {
         "id": "kuow-fm",
+        "duty": "continuous",
         "label": "KUOW 94.9",
         "freq": "94.900M",
         "mode": "wbfm",
@@ -60,6 +75,7 @@ PRESETS = [
     # ACARS below work well and stay. Re-add AM voice with a vertical airband antenna.
     {
         "id": "adsb-1090",
+        "duty": "burst",
         "label": "ADS-B 1090 MHz",
         "freq": "1090M",
         "mode": "adsb",
@@ -72,6 +88,7 @@ PRESETS = [
     # ── Marine ──
     {
         "id": "ais-marine",
+        "duty": "burst",
         "label": "AIS Marine Traffic",
         "freq": "162.000M",
         "mode": "ais",
@@ -82,6 +99,7 @@ PRESETS = [
     },
     {
         "id": "marine-ch16",
+        "duty": "burst",
         "label": "Marine CH 16",
         "freq": "156.800M",
         "mode": "fm",
@@ -92,6 +110,7 @@ PRESETS = [
     },
     {
         "id": "marine-ch22a",
+        "duty": "burst",
         "label": "Marine CH 22A",
         "freq": "157.100M",
         "mode": "fm",
@@ -103,6 +122,7 @@ PRESETS = [
     # ── WEFAX (HF Weather Charts) ──
     {
         "id": "wefax-nmc",
+        "duty": "burst",
         "label": "NMC Point Reyes",
         "freq": "8682.0k",
         "mode": "usb",
@@ -113,6 +133,7 @@ PRESETS = [
     },
     {
         "id": "wefax-noj",
+        "duty": "burst",
         "label": "NOJ Kodiak",
         "freq": "4298.0k",
         "mode": "usb",
@@ -131,6 +152,7 @@ PRESETS = [
     # on receive). Seattle ACS practice net: Mondays 7:00-7:30pm PT on 146.960.
     {
         "id": "seattle-acs-psrg",
+        "duty": "burst",
         "label": "Seattle ACS (PSRG)",
         "freq": "146.960M",
         "mode": "fm",
@@ -141,6 +163,7 @@ PRESETS = [
     },
     {
         "id": "kc-ares-primary",
+        "duty": "burst",
         "label": "KC ARES/RACES",
         "freq": "147.080M",
         "mode": "fm",
@@ -151,6 +174,7 @@ PRESETS = [
     },
     {
         "id": "redmond-ares",
+        "duty": "burst",
         "label": "Redmond ARES",
         "freq": "145.310M",
         "mode": "fm",
@@ -161,6 +185,7 @@ PRESETS = [
     },
     {
         "id": "kirkland-ares",
+        "duty": "burst",
         "label": "Kirkland ARES",
         "freq": "145.490M",
         "mode": "fm",
@@ -171,6 +196,7 @@ PRESETS = [
     },
     {
         "id": "bellevue-simplex",
+        "duty": "burst",
         "label": "Bellevue CommSup",
         "freq": "146.580M",
         "mode": "fm",
@@ -181,6 +207,7 @@ PRESETS = [
     },
     {
         "id": "shoreline-acs",
+        "duty": "burst",
         "label": "Shoreline ACS",
         "freq": "442.825M",
         "mode": "fm",
@@ -191,6 +218,7 @@ PRESETS = [
     },
     {
         "id": "pager-pocsag",
+        "duty": "burst",
         "label": "Pagers (POCSAG)",
         "freq": "152.0075M",
         "mode": "pager",
@@ -204,6 +232,7 @@ PRESETS = [
         # Stations beacon position/weather/telemetry on a schedule, so unlike the
         # voice repeaters this channel carries data continuously.
         "id": "aprs-144390",
+        "duty": "burst",
         "label": "APRS 144.390",
         "freq": "144.390M",
         "mode": "aprs",
@@ -220,6 +249,7 @@ PRESETS = [
     # instead of idling. Squelch mutes the noise floor at the source.
     {
         "id": "amr-ems-dispatch",
+        "duty": "burst",
         "label": "AMR EMS Dispatch",
         "freq": "158.835M",
         "mode": "fm",
@@ -230,6 +260,7 @@ PRESETS = [
     },
     {
         "id": "amr-ems-alt",
+        "duty": "burst",
         "label": "AMR Seattle (alt)",
         "freq": "155.220M",
         "mode": "fm",
@@ -240,6 +271,7 @@ PRESETS = [
     },
     {
         "id": "kc-mars-interop",
+        "duty": "burst",
         "label": "KC Mutual Aid (MARS)",
         "freq": "155.190M",
         "mode": "fm",
@@ -250,6 +282,7 @@ PRESETS = [
     },
     {
         "id": "kc-sar-f2",
+        "duty": "burst",
         "label": "KC Search & Rescue F-2",
         "freq": "154.965M",
         "mode": "fm",
@@ -261,6 +294,7 @@ PRESETS = [
     # ── Science ──
     {
         "id": "meteor-scatter",
+        "duty": "burst",
         "label": "Meteor Scatter",
         "freq": "143.050M",
         "mode": "fm",
@@ -278,6 +312,7 @@ PRESETS = [
         # 137 MHz V-dipole is far too short to hear it. Needs an HF/longwire
         # antenna, same caveat as the WEFAX presets.
         "id": "redmond-tis-1650",
+        "duty": "continuous",
         "label": "Redmond Community 1650",
         "freq": "1650k",
         "mode": "am",
@@ -289,6 +324,7 @@ PRESETS = [
     },
     {
         "id": "kexp-fm",
+        "duty": "continuous",
         "label": "KEXP 90.3",
         "freq": "90.300M",
         "mode": "wbfm",
@@ -304,6 +340,7 @@ PRESETS = [
     # ── ACARS aircraft messaging (acarsdec) ──
     {
         "id": "acars-vhf",
+        "duty": "burst",
         "label": "ACARS (aircraft msgs)",
         "freq": "131.550M",
         "mode": "acars",
@@ -317,6 +354,7 @@ PRESETS = [
     # instead of one, so a model cannot pass by memorising 131.550 MHz.
     {
         "id": "acars-130025",
+        "duty": "burst",
         "label": "ACARS 130.025",
         "freq": "130.025M",
         "mode": "acars",
@@ -327,6 +365,7 @@ PRESETS = [
     },
     {
         "id": "acars-131725",
+        "duty": "burst",
         "label": "ACARS 131.725",
         "freq": "131.725M",
         "mode": "acars",
@@ -340,6 +379,7 @@ PRESETS = [
     # widening it further is cheap and strengthens the strongest evidence we have.
     {
         "id": "kiro-fm",
+        "duty": "continuous",
         "label": "KIRO 97.3",
         "freq": "97.300M",
         "mode": "wbfm",
@@ -351,6 +391,7 @@ PRESETS = [
     },
     {
         "id": "king-fm",
+        "duty": "continuous",
         "label": "KING 98.1",
         "freq": "98.100M",
         "mode": "wbfm",
@@ -363,6 +404,7 @@ PRESETS = [
     # ── ISM / Sensors (rtl_433) ──
     {
         "id": "ism-433",
+        "duty": "burst",
         "label": "ISM 433 MHz",
         "freq": "433.92M",
         "mode": "ism",
@@ -377,6 +419,7 @@ PRESETS = [
         # hears them. Unlike Gridstream (which yields identity only), ERT
         # SCM/IDM frames carry actual consumption values.
         "id": "ism-ert-912",
+        "duty": "burst",
         "label": "Utility Meters (ERT)",
         "freq": "912.60M",
         "mode": "ism",
@@ -387,6 +430,7 @@ PRESETS = [
     },
     {
         "id": "ism-tpms-315",
+        "duty": "burst",
         "label": "TPMS 315 MHz",
         "freq": "315.00M",
         "mode": "ism",
@@ -397,6 +441,7 @@ PRESETS = [
     },
     {
         "id": "ism-security-345",
+        "duty": "burst",
         "label": "Security Sensors 345 MHz",
         "freq": "345.00M",
         "mode": "ism",
@@ -407,6 +452,7 @@ PRESETS = [
     },
     {
         "id": "ism-915",
+        "duty": "burst",
         "label": "ISM 915 MHz",
         "freq": "915.00M",
         "mode": "ism",

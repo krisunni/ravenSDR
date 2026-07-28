@@ -223,6 +223,151 @@
   </div>
 </section>
 
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">7</span> The actual code</h2>
+  <div class="lede">Every step above, as the Python that runs it.</div>
+
+  <p>Four libraries do the work. Nothing here is bespoke maths &mdash; it is
+  mostly gluing well-worn tools together.</p>
+
+  <table class="data">
+    <thead><tr><th>Library</th><th>Job</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">numpy</td><td>FFTs, array maths, the spectrogram itself</td><td>Pi + VM</td></tr>
+      <tr><td class="mono">torch</td><td>the neural network, and the training loop</td><td>VM only</td></tr>
+      <tr><td class="mono">torchvision</td><td>MobileNetV2, pre-trained on ImageNet</td><td>VM only</td></tr>
+      <tr><td class="mono">onnx</td><td>portable model format the Hailo compiler reads</td><td>VM only</td></tr>
+      <tr><td class="mono">hailo_platform</td><td>running the compiled model on the NPU</td><td>Pi only</td></tr>
+    </tbody>
+  </table>
+
+  <div class="aside">
+    <strong>Why torch is not on the Pi.</strong> Training needs gradients, optimisers
+    and float32 &mdash; hundreds of megabytes of machinery used once. The Pi only ever
+    <em>runs</em> a finished model, so it needs none of it. PyTorch was deliberately
+    removed from the node.
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">Step 1 &mdash; IQ becomes a picture</h3>
+  <p>Slide a window along the samples, FFT each one, stack the results. Roughly
+  twenty lines, in <code>signal_classifier.py</code>:</p>
+<pre>def iq_to_spectrogram(iq_samples, fft_size=256, hop=128):
+    window = np.hanning(fft_size)          # taper the edges of each slice
+    n_frames = (len(iq_samples) - fft_size) // hop + 1
+    spectrogram = np.zeros((n_frames, fft_size))
+
+    for i in range(n_frames):
+        frame = iq_samples[i*hop : i*hop + fft_size]
+        fft   = np.fft.fftshift(np.fft.fft(frame * window))
+        power = np.maximum(np.abs(fft) ** 2, 1e-20)   # never log(0)
+        spectrogram[i] = 10 * np.log10(power)         # into dB
+
+    return spectrogram                     # (frames, 256) — one row per slice</pre>
+
+  <p><code>hanning</code> tapers each slice to zero at its edges. Without it, chopping
+  the signal creates artificial sharp edges, and an FFT reports those as energy that
+  was never on the air. <code>fftshift</code> just moves zero&nbsp;Hz to the middle so
+  negative frequencies sit left of centre where you would expect them.</p>
+
+  <p>Then squash to a greyscale image the network can eat:</p>
+<pre>def spectrogram_to_image(spec, size=224):
+    lo, hi = spec.min(), spec.max()
+    img = ((spec - lo) / (hi - lo) * 255).astype(np.uint8)   # scale to 0-255
+    rows = (np.arange(size) * img.shape[0] / size).astype(int)
+    cols = (np.arange(size) * img.shape[1] / size).astype(int)
+    return img[np.ix_(rows, cols)]         # nearest-neighbour resize</pre>
+
+  <div class="aside warn">
+    <strong>A trap hiding in that first line.</strong> Every image is scaled by its own
+    min and max, so absolute signal strength is thrown away &mdash; a strong signal and
+    a weak one look identical. That is deliberate (the model should not care how close
+    you are), but it means a window of pure noise gets stretched to full contrast and
+    can look like a real signal. It is exactly why a separate
+    <em>is there actually anything here</em> check was needed before collecting.
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">Step 2 &mdash; borrowing a network that can already see</h3>
+  <p>We do not build a network from scratch. <strong>MobileNetV2</strong> has already
+  been trained on a million photographs, so it knows edges, textures and stripes. We
+  keep all of that and replace only the final layer &mdash; the part that says which
+  of 1000 everyday objects it is &mdash; with one that picks between our modulations:</p>
+<pre>model = torchvision.models.mobilenet_v2(weights=IMAGENET1K_V1)
+model.classifier[1] = nn.Linear(1280, num_classes)   # 1000 objects -> our classes</pre>
+
+  <p>That is <strong>transfer learning</strong>, and it is why a few thousand samples
+  suffice where training from nothing would need millions.</p>
+
+  <div class="fig">
+    <div class="fig-title">What gets kept and what gets replaced</div>
+    <svg id="s-transfer" viewBox="0 0 860 170" width="860" height="170"></svg>
+  </div>
+
+  <p>The two halves even learn at different speeds &mdash; nudge the borrowed layers
+  gently, teach the new one properly:</p>
+<pre>optimizer = optim.Adam([
+    {"params": model.features.parameters(),   "lr": 1e-5},   # already knows how to see
+    {"params": model.classifier.parameters(), "lr": 1e-3},   # knows nothing yet
+])</pre>
+
+  <h3 style="margin-top:26px;font-size:15px">Step 3 &mdash; the training loop</h3>
+  <p>This is the whole of "machine learning". Five lines, repeated:</p>
+<pre>for images, labels in loader:          # a batch of ~32 spectrograms
+    optimizer.zero_grad()              # forget last batch's corrections
+    outputs = model(images)            # guess
+    loss    = criterion(outputs, labels)   # how wrong, as one number
+    loss.backward()                    # work out which weights caused it
+    optimizer.step()                   # nudge every weight slightly</pre>
+
+  <p><code>loss.backward()</code> is the clever part: it walks the network in reverse
+  working out how much each of the 2.2 million weights contributed to the error.
+  <code>optimizer.step()</code> then moves each one a little in the direction that would
+  have been less wrong. Do that tens of thousands of times and the network has learned.</p>
+
+  <div class="fig">
+    <div class="fig-title">Gradient descent &mdash; rolling downhill to the lowest error</div>
+    <canvas id="c-descent" width="860" height="230"></canvas>
+    <div class="controls">
+      <button class="pill" id="descent-go">drop a ball</button>
+      <button class="pill active" data-lr="ok">sensible step size</button>
+      <button class="pill" data-lr="big">step too big</button>
+    </div>
+    <div class="hint" id="descent-hint">The "learning rate" is how far it moves each
+      step. Too big and it bounces straight over the bottom.</div>
+  </div>
+
+  <div class="aside">
+    <strong>Why the loss is weighted here.</strong> Our corpus is lopsided, so
+    <code>CrossEntropyLoss(weight=...)</code> makes a mistake on a rare class cost more
+    than one on a common class. Without it, guessing "WFM" every time is a decent
+    strategy, and the network will find it.
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">Step 4 &mdash; out of Python, onto the chip</h3>
+<pre># PyTorch -> ONNX: a portable description of the network
+torch.onnx.export(model, torch.randn(1, 3, 224, 224), "signal_classifier.onnx")
+
+# ONNX -> HEF: Hailo's compiler, x86 only
+runner = ClientRunner(hw_arch="hailo8l")
+runner.translate_onnx_model(onnx_path, start_node_names=["input"])
+runner.optimize(calibration_images)    # measure typical values, pick integer scales
+hef = runner.compile()</pre>
+
+  <p><code>optimize()</code> is the <strong>quantisation</strong> step. The network
+  thinks in decimals; the NPU works in 8-bit integers. To convert, the compiler needs
+  to see ~100 real images to learn what range of values to expect &mdash; then it can
+  map decimals onto integers without losing the plot. That is why calibration data has
+  to look like what the model will really see.</p>
+
+  <p>And on the Pi, running it is four calls:</p>
+<pre>configured = model.configure()
+bindings   = configured.create_bindings()
+bindings.input().set_buffer(image)      # NHWC float32, 0..1
+configured.run([bindings], timeout_ms)
+logits = bindings.output().get_buffer()
+probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
+</section>
+
 <footer class="learn-foot">
   ravenSDR &mdash; <a href="/">console</a> &middot;
   <span class="mono" id="foot-stats">&mdash;</span>

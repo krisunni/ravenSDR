@@ -979,6 +979,8 @@ sdr_arbiter = SdrArbiter(
 # Rejects only a dead/disconnected receiver — a quiet band still collects,
 # because the preset is the label and we deliberately tuned here.
 COLLECT_MIN_POWER_DB = -60.0
+# Duty of the band currently being collected — see presets.py.
+_collect_duty = "burst"
 # Above this crest factor the channel is idle between bursts, so direct
 # collection would store silence. Continuous carriers measured 1.5-3.6.
 COLLECT_BURSTY_CREST = 5.0
@@ -1019,16 +1021,17 @@ def _on_collect_iq(iq_samples, frequency_hz):
     if compute_power_db(iq_samples) < COLLECT_MIN_POWER_DB:
         return          # receiver dead or disconnected, not merely quiet
 
-    # Crest factor separates a steady carrier from a channel that is idle
-    # between packets. Measured: WFM 1.5 and FM 3.1 (continuous) against APRS
-    # 10.2 and pager 11.1 (bursty). Collecting a bursty channel directly stores
-    # mostly silence under a real modulation label, so those bands are left to
-    # the segmenter, which extracts the transmission itself.
-    mag = np.abs(iq_samples)
-    median = float(np.median(mag))
-    crest = float(np.max(mag)) / median if median > 1e-6 else 0.0
-    if crest > COLLECT_BURSTY_CREST:
-        return          # segmenter-gated; see classify_segment
+    # Only a CONTINUOUS band may be sampled directly. Crest factor was used for
+    # this and it was the wrong test: it measures burstiness, so an idle channel
+    # and a steady carrier are indistinguishable. That produced 1921 "OOK"
+    # samples containing zero bursts, and "AFSK1200" that was a steady carrier
+    # sitting on 144.390 rather than an APRS packet.
+    #
+    # For a bursty protocol the label is only true DURING a transmission, so
+    # those bands collect solely through classify_segment, which fires when the
+    # segmenter has actually detected one.
+    if _collect_duty != "continuous":
+        return
     signal_classifier.collect_sample(iq_samples, label, frequency_hz)
 
 
@@ -1072,7 +1075,8 @@ def _collect_bands(include_hf=False):
             ambiguous.add(label)
             continue
         seen.setdefault(label, []).append(
-            {"id": preset["id"], "freq_hz": hz, "label": label})
+            {"id": preset["id"], "freq_hz": hz, "label": label,
+             "duty": preset.get("duty", "burst")})
     if skipped_hf:
         log.info("IQ collect: skipping HF bands (no HF antenna): %s",
                  ", ".join(skipped_hf))
@@ -1106,6 +1110,8 @@ def _freq_to_hz(freq):
 
 def _start_collect_slot(band):
     """Take the dongle and start capturing IQ for one band."""
+    global _collect_duty
+    _collect_duty = band.get("duty", "burst")
     if input_source.apt_mode or input_source.wefax_mode:
         return False        # a scheduled pass outranks corpus building
     input_source.stop()

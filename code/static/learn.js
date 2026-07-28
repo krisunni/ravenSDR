@@ -510,4 +510,112 @@
            .attr("fill", C.yellow).style("font", "11px ui-monospace").text("─ off-node (x86) ─");
     })();
 
+    // ── 7a. transfer learning ────────────────────────────────────────────
+    (function transfer() {
+        var svg = d3.select("#s-transfer");
+        if (svg.empty()) return;
+        var blocks = [
+            { x: 40,  w: 105, t: "edges",    keep: true },
+            { x: 155, w: 105, t: "textures", keep: true },
+            { x: 270, w: 105, t: "shapes",   keep: true },
+            { x: 385, w: 105, t: "parts",    keep: true },
+            { x: 500, w: 105, t: "objects",  keep: true },
+            { x: 632, w: 150, t: "1000 objects", keep: false }
+        ];
+        blocks.forEach(function (b) {
+            svg.append("rect").attr("x", b.x).attr("y", 52).attr("width", b.w)
+               .attr("height", 52).attr("rx", 6)
+               .attr("fill", b.keep ? "#16261c" : "#2a1a1a")
+               .attr("stroke", b.keep ? C.green : C.red)
+               .attr("stroke-dasharray", b.keep ? "none" : "4 3");
+            svg.append("text").attr("x", b.x + b.w / 2).attr("y", 82)
+               .attr("text-anchor", "middle")
+               .attr("fill", b.keep ? C.green : C.red)
+               .style("font", "11px ui-monospace").text(b.t);
+        });
+        svg.append("text").attr("x", 300).attr("y", 34).attr("text-anchor", "middle")
+           .attr("fill", C.green).style("font", "12px ui-monospace")
+           .text("KEPT — already knows how to look at a picture");
+        svg.append("text").attr("x", 707).attr("y", 34).attr("text-anchor", "middle")
+           .attr("fill", C.red).style("font", "12px ui-monospace").text("THROWN AWAY");
+        svg.append("rect").attr("x", 632).attr("y", 112).attr("width", 150).attr("height", 40)
+           .attr("rx", 6).attr("fill", "#16202e").attr("stroke", C.accent);
+        svg.append("text").attr("x", 707).attr("y", 137).attr("text-anchor", "middle")
+           .attr("fill", C.accent).style("font", "11px ui-monospace")
+           .text("FM / WFM / OOK / MSK …");
+        svg.append("path").attr("d", "M707,104 L707,112").attr("stroke", C.accent);
+        svg.append("text").attr("x", 300).attr("y", 137).attr("text-anchor", "middle")
+           .attr("fill", C.dim).style("font", "11px ui-monospace")
+           .text("2.2 million weights, borrowed from a million photographs");
+    })();
+
+    // ── 7b. gradient descent ─────────────────────────────────────────────
+    (function descent() {
+        var ctx = ctxOf("c-descent");
+        if (!ctx) return;
+        var lr = "ok", ball = null, hint = document.getElementById("descent-hint");
+
+        // an error "landscape" — the network is looking for the lowest point
+        function loss(x) {
+            return 0.5 + 0.42 * Math.sin(x * 2.1) * Math.exp(-Math.abs(x) * 0.25)
+                       + 0.05 * x * x;
+        }
+        function slope(x) { return (loss(x + 0.01) - loss(x - 0.01)) / 0.02; }
+
+        wire("[data-lr]", function (d) {
+            lr = d.lr;
+            hint.innerHTML = lr === "big"
+                ? "<strong>Too big.</strong> Each step overshoots the bottom and it " +
+                  "bounces around, never settling — in training this shows up as a " +
+                  "loss that jumps about instead of falling."
+                : "The 'learning rate' is how far it moves each step. Too big and it " +
+                  "bounces straight over the bottom.";
+            drop();
+        });
+        function drop() { ball = { x: -3.2 + Math.random() * 0.6, v: 0, done: false }; }
+        var go = document.getElementById("descent-go");
+        if (go) go.addEventListener("click", drop);
+        drop();
+
+        function draw() {
+            var w = ctx._w, h = ctx._h, padL = 40, padB = 34;
+            ctx.clearRect(0, 0, w, h);
+            var X = function (x) { return padL + (x + 4) / 8 * (w - padL - 20); };
+            var Y = function (v) { return h - padB - v * (h - padB - 26) / 1.4; };
+
+            ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(padL, h - padB); ctx.lineTo(w - 20, h - padB); ctx.stroke();
+            ctx.fillStyle = C.dim; ctx.font = "10px ui-monospace, monospace";
+            ctx.fillText("a weight's value →", padL, h - 12);
+            ctx.save(); ctx.translate(16, h / 2); ctx.rotate(-Math.PI / 2);
+            ctx.fillText("error", 0, 0); ctx.restore();
+
+            ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (var px = -4; px <= 4; px += 0.02) {
+                var x = X(px), y = Y(loss(px));
+                px === -4 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            if (ball) {
+                var step = lr === "big" ? 0.62 : 0.12;
+                if (!ball.done) {
+                    var g = slope(ball.x);
+                    ball.x -= step * g;                     // gradient descent, literally
+                    if (Math.abs(g) < 0.004 && lr !== "big") ball.done = true;
+                    if (ball.x < -4) ball.x = -4; if (ball.x > 4) ball.x = 4;
+                }
+                var bx = X(ball.x), by = Y(loss(ball.x));
+                ctx.fillStyle = ball.done ? C.green : C.yellow;
+                ctx.beginPath(); ctx.arc(bx, by - 6, 7, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = C.dim;
+                ctx.fillText(ball.done ? "settled at the bottom" :
+                             (lr === "big" ? "overshooting" : "rolling downhill"), bx - 40, by - 22);
+            }
+            requestAnimationFrame(draw);
+        }
+        draw();
+    })();
+
 })();
