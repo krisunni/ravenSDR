@@ -10,15 +10,80 @@
 <body>
 
 <header class="learn-hero">
-  <h1>How ravenSDR works</h1>
-  <div class="sub">From a radio wave to a neural network, one step at a time.</div>
-  <a class="back" href="/">&larr; back to the console</a>
+  <div class="hero-eyebrow">Raspberry Pi 5 &middot; Hailo-8L NPU &middot; RTL-SDR Blog V4 &middot; no cloud</div>
+  <h1>ravenSDR</h1>
+  <div class="sub">A passive RF intelligence node. It listens across VHF/UHF, transcribes
+    voice on-device with Whisper, decodes eleven digital protocols, and classifies
+    modulation with a neural network trained on captures it collected itself.</div>
+
+  <!-- Read from the running node, not typed in. A page about a live system that
+       quotes stale numbers is the first thing a reader stops trusting. -->
+  <div class="hero-stats" id="hero-stats">
+    <div class="hstat"><b id="hs-corpus">&mdash;</b><span>IQ samples collected</span></div>
+    <div class="hstat"><b id="hs-protocols">11</b><span>protocols decoded</span></div>
+    <div class="hstat"><b id="hs-validated">&mdash;</b><span>classes actually validated</span></div>
+    <div class="hstat"><b id="hs-latency">&mdash;</b><span>inference, on-device</span></div>
+  </div>
+  <div class="hero-live" id="hero-live"></div>
+
+  <nav class="hero-actions">
+    <a class="cta cta-primary" href="#summary">What I built</a>
+    <a class="cta" href="#decisions">Engineering decisions</a>
+    <a class="cta" href="#failures">What went wrong</a>
+    <a class="cta" href="/">Live console &rarr;</a>
+  </nav>
 </header>
+
+<!-- Sticky rail: twelve sections and ~18,000px of page. Without this you cannot
+     get from the top to the part you care about. -->
+<nav class="rail" id="rail" aria-label="Sections"></nav>
 
 <main>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="summary" class="summary-section">
+  <h2>In short</h2>
+  <div class="lede">If you read one screen, read this one.</div>
+
+  <p>The dongle records two numbers, 2.4 million times a second. Everything below is
+  what it takes to turn that into something a machine can act on &mdash; and, more to
+  the point, what it takes to know whether the machine is right.</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="sc-title">The system</div>
+      <ul>
+        <li>Two-process split &mdash; the console loads even when the radio is dead</li>
+        <li>Eleven decoders sharing one dongle behind an arbiter with commanded-vs-actual state</li>
+        <li>Whisper on the Hailo-8L NPU, with a CPU fallback that is measured, not assumed</li>
+        <li>Fully air-gapped: no CDN, no cloud inference, no external calls</li>
+      </ul>
+    </div>
+    <div class="summary-card">
+      <div class="sc-title">The model</div>
+      <ul>
+        <li>MobileNetV2 over spectrograms &mdash; a radio problem reframed as an image problem</li>
+        <li>Labels come free from the tuned preset; the corpus collects itself on a band rotation</li>
+        <li>Trained off-node on x86, exported to ONNX, run back on the Pi</li>
+        <li>Six classes trained. <strong>Three</strong> survive honest validation.</li>
+      </ul>
+    </div>
+    <div class="summary-card sc-flag">
+      <div class="sc-title">The part I would lead with</div>
+      <p>The first model scored <span class="mono">99.1%</span>. That number was
+      worthless: every class had been collected on exactly one frequency, so the network
+      could score perfectly by memorising the band and never learning the modulation.</p>
+      <p>A random train/test split <em>cannot</em> see this &mdash; both halves contain the
+      same frequencies. Splitting by <strong>frequency</strong> instead, and holding whole
+      bands out of training, dropped FM recall to <span class="mono">0.38</span>.</p>
+      <p>The console now labels three of six classes as unproven, on purpose.
+      <a href="#failures">Three more bugs like it &rarr;</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="wave">
   <h2><span class="num">1</span> A radio wave is a spinning arrow</h2>
   <div class="lede">Everything else follows from this one picture.</div>
 
@@ -62,7 +127,7 @@
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="modes">
   <h2><span class="num">2</span> Sending data by wiggling</h2>
   <div class="lede">The four digital modes your node collects &mdash; watch what changes.</div>
 
@@ -78,7 +143,7 @@
     <div id="mod-explain" class="hint"></div>
   </div>
 
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <thead><tr><th>Mode</th><th>Like&hellip;</th><th>What changes</th><th>On your node</th></tr></thead>
     <tbody>
       <tr><td class="mono">OOK</td><td>a flashlight blinking</td><td>amplitude &mdash; on or off</td><td>door &amp; window sensors, 345&nbsp;MHz</td></tr>
@@ -86,7 +151,7 @@
       <tr><td class="mono">MSK</td><td>two notes, <em>slid</em> not jumped</td><td>frequency, smoothly</td><td>aircraft ACARS, 131.55&nbsp;MHz</td></tr>
       <tr><td class="mono">AFSK1200</td><td>whistling into a walkie&#8209;talkie</td><td>audio tones, then FM</td><td>APRS packet, 144.39&nbsp;MHz</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
   <div class="aside">
     <strong>Why AFSK is the odd one.</strong> The radio has no idea it is carrying data
@@ -97,7 +162,7 @@
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="spectrogram">
   <h2><span class="num">3</span> Turning radio into a picture</h2>
   <div class="lede">The trick that lets us use image AI on radio.</div>
 
@@ -126,7 +191,7 @@
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="training">
   <h2><span class="num">4</span> Teaching it to recognise them</h2>
   <div class="lede">What "training" actually is.</div>
 
@@ -163,7 +228,7 @@
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="wrong">
   <h2><span class="num">5</span> Where it goes wrong</h2>
   <div class="lede">Every problem we hit was a <em>data</em> problem, not a maths problem.</div>
 
@@ -201,7 +266,7 @@
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="chip">
   <h2><span class="num">6</span> Onto the chip</h2>
   <div class="lede">Why training happens elsewhere, and inference happens here.</div>
 
@@ -225,14 +290,14 @@
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="code">
   <h2><span class="num">7</span> The actual code</h2>
   <div class="lede">Every step above, as the Python that runs it.</div>
 
   <p>Four libraries do the work. Nothing here is bespoke maths &mdash; it is
   mostly gluing well-worn tools together.</p>
 
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <thead><tr><th>Library</th><th>Job</th><th>Where</th></tr></thead>
     <tbody>
       <tr><td class="mono">numpy</td><td>FFTs, array maths, the spectrogram itself</td><td>Pi + VM</td></tr>
@@ -241,7 +306,7 @@
       <tr><td class="mono">onnx</td><td>portable model format the Hailo compiler reads</td><td>VM only</td></tr>
       <tr><td class="mono">hailo_platform</td><td>running the compiled model on the NPU</td><td>Pi only</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
   <div class="aside">
     <strong>Why torch is not on the Pi.</strong> Training needs gradients, optimisers
@@ -370,7 +435,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="network">
   <h2><span class="num">8</span> Inside the network</h2>
   <div class="lede">What is actually happening when a picture goes in and a label comes out.</div>
 
@@ -439,7 +504,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="convolution">
   <h2><span class="num">9</span> Why a <em>convolutional</em> network</h2>
   <div class="lede">The idea that makes image recognition tractable at all.</div>
 
@@ -487,7 +552,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
       is channel count.</div>
   </div>
 
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <thead><tr><th>idx</th><th>block</th><th>output shape</th><th>params</th><th>what it is doing</th></tr></thead>
     <tbody>
       <tr><td class="mono">0</td><td class="mono">Conv2dNormActivation</td><td class="mono">32&times;112&times;112</td><td class="mono">928</td><td>first real convolution; halves the image, finds 32 kinds of edge</td></tr>
@@ -502,7 +567,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
       <tr><td class="mono">&mdash;</td><td class="mono">AdaptiveAvgPool2d</td><td class="mono">1280</td><td class="mono">0</td><td>average each channel over space &rarr; one number per feature</td></tr>
       <tr style="background:#16202e"><td class="mono">&mdash;</td><td class="mono">Linear(1280, 6)</td><td class="mono">6</td><td class="mono">7,686</td><td><strong>the only part we retrain</strong> &mdash; one score per modulation</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
   <p><strong>2,231,558 parameters total</strong>, of which we train <strong>7,686</strong>
   &mdash; 0.3%. Everything else is knowledge borrowed from photographs and left alone.</p>
@@ -549,7 +614,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
   <h3 style="margin-top:26px;font-size:15px">Why MobileNetV2 specifically</h3>
   <p>The choice was made for the NPU, and it is worth being able to defend it.</p>
 
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <thead><tr><th>Reason</th><th>Detail</th></tr></thead>
     <tbody>
       <tr><td>Depthwise separable convolutions</td>
@@ -566,7 +631,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
           <td>Known to compile to <code>.hef</code> for HAILO8L. An architecture that
               will not compile is worthless here however accurate it is.</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
   <div class="fig">
     <div class="fig-title">Standard vs depthwise separable convolution</div>
@@ -577,16 +642,16 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
-  <h2><span class="num">10</span> Explaining this in an interview</h2>
-  <div class="lede">The decisions, the trade-offs, and the failures worth admitting.</div>
+<section id="decisions">
+  <h2><span class="num">10</span> Engineering decisions, and what they cost</h2>
+  <div class="lede">Every choice here bought something and gave something up.</div>
 
   <p>The engineering here is not the model — it is <strong>everything around the
   model</strong>. Anyone can fine-tune MobileNetV2. What is worth talking about is the
   data and the constraints.</p>
 
   <h3 style="margin-top:22px;font-size:15px">Decisions you should be able to defend</h3>
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <thead><tr><th>Decision</th><th>Why</th><th>What it cost</th></tr></thead>
     <tbody>
       <tr><td>Spectrograms, not raw IQ</td>
@@ -608,13 +673,14 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
           <td>Hailo's compiler is x86-only; the Pi is ARM.</td>
           <td>A deploy pipeline instead of a single machine.</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
-  <h3 style="margin-top:22px;font-size:15px">The failures — these are the good part</h3>
-  <p>An interviewer learns far more from how you found a bug than from a headline number.
-  Every one of these was a <strong>data</strong> problem wearing a modelling costume:</p>
+  <h3 id="failures" style="margin-top:22px;font-size:15px">Four bugs that looked like modelling problems</h3>
+  <p>Not one of these was a modelling problem. Every one was a <strong>data</strong>
+  problem wearing a modelling costume, and each was found by measuring something the
+  headline metric could not see:</p>
 
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <thead><tr><th>Symptom</th><th>Actual cause</th><th>How it surfaced</th></tr></thead>
     <tbody>
       <tr><td>99.1% test accuracy</td>
@@ -632,17 +698,17 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
               silently.</td>
           <td>Sample count did not match what was on disk.</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
   <div class="aside">
-    <strong>The line worth having ready:</strong> "A random train/test split cannot detect
+    <strong>The finding in one sentence.</strong> "A random train/test split cannot detect
     a confound where each class only appears in one context. I split by frequency instead —
     held entire bands out of training — and accuracy dropped from 99% to 38%, which told me
     the first number was measuring the wrong thing."
   </div>
 
   <h3 style="margin-top:22px;font-size:15px">Numbers to know</h3>
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <tbody>
       <tr><td class="mono">2.4 MHz</td><td>capture bandwidth — one window at a time</td></tr>
       <tr><td class="mono">24,000</td><td>IQ samples per training window (10&nbsp;ms)</td></tr>
@@ -653,11 +719,11 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
       <tr><td class="mono">int8</td><td>quantisation on the Hailo-8L</td></tr>
       <tr><td class="mono">13 TOPS</td><td>NPU throughput, shared with Whisper</td></tr>
     </tbody>
-  </table>
+  </table></div>
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="trace">
   <h2><span class="num">11</span> Watch the code execute</h2>
   <div class="lede">Every stage, stepped through with the values it really produced.</div>
 
@@ -688,7 +754,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
 </section>
 
 <!-- ─────────────────────────────────────────────────────────── -->
-<section>
+<section id="cycle">
   <h2><span class="num">12</span> The full cycle, as it actually went</h2>
   <div class="lede">Collect here &rarr; train elsewhere &rarr; run it back here. What
     broke on the way.</div>
@@ -700,9 +766,12 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
   </div>
 
   <h3 style="margin-top:22px;font-size:15px">The result</h3>
-  <table class="data">
+  <p class="hint" style="margin-bottom:4px">The run that produced the model currently
+    deployed. These are that run's figures, not live counters &mdash; the corpus has kept
+    growing since, and the number at the top of this page is the current one.</p>
+  <div class="table-scroll"><table class="data">
     <tbody>
-      <tr><td>Corpus collected</td><td class="mono">10,083 samples over ~24 h</td></tr>
+      <tr><td>Corpus at training time</td><td class="mono">10,083 samples over ~24 h</td></tr>
       <tr><td>Empty windows rejected</td><td class="mono">89,460</td></tr>
       <tr><td>Training</td><td class="mono">10 epochs, ~4 CPU cores, val 0.9987</td></tr>
       <tr><td>Model size</td><td class="mono">8.6 MB ONNX, 2.2M parameters</td></tr>
@@ -711,7 +780,7 @@ probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
       <tr style="background:#2a2213"><td><strong>Genuinely validated</strong></td>
           <td class="mono">3 of 6 classes</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
   <div class="aside warn">
     <strong>Why 71/72 is not the number that matters.</strong> Those samples came from
@@ -736,7 +805,7 @@ heuristics       →  instant, and can only ever say WFM/FM/CW/AM/SSB</pre>
 
   <h3 style="margin-top:22px;font-size:15px">Four failures that had nothing to do with ML</h3>
   <p>Worth showing, because this is what "deploying a model" actually consists of:</p>
-  <table class="data">
+  <div class="table-scroll"><table class="data">
     <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
     <tbody>
       <tr><td class="mono">No module named 'onnxscript'</td>
@@ -758,7 +827,7 @@ heuristics       →  instant, and can only ever say WFM/FM/CW/AM/SSB</pre>
           <td>Proxmox default CPU model is kvm64 — no SSE4.2</td>
           <td><code>cpu=host</code>, and a full stop/start, not a reset</td></tr>
     </tbody>
-  </table>
+  </table></div>
 
   <h3 style="margin-top:22px;font-size:15px">What the next lap changes</h3>
   <ul style="margin:10px 0 10px 22px;color:var(--text-dim)">

@@ -1,5 +1,87 @@
 # Changelog
 
+## [1.3.0] — 2026-07-28
+
+Console rebuilt around tabbed views; `/learn` reframed as a portfolio piece;
+browser-based UI verification.
+
+### Added
+
+- **Tabbed console** — twelve panels shared one vertical scroll, which put the signal classifier (where the node now spends most of its effort) below the fold and the decoders somewhere past that. Six views now: Listen, Classify, Decoders, Imagery, Science, Model. The preset selector stays above the tabs in every view, because tuning drives the radio regardless of what you are looking at.
+- **Model view** — active backend, corpus size, collection state, and a per-class bar chart annotated with how many *distinct frequencies* each class was collected on, which is what decides whether a class can be validated at all.
+- **View memory and follow-the-radio** — the active view persists in `localStorage`; an *explicit* tune switches to the view that preset feeds (ADS-B → Decoders, WEFAX → Imagery, meteor → Science). Page load deliberately does not, since it would override whatever the operator had open.
+- **Tab badges** — live aircraft count on Decoders, last modulation on Classify, `REC` on Model while the collector is capturing.
+- **Empty states** — a view whose panels are all hidden now explains which preset fills it instead of rendering blank.
+- **`/learn` as a portfolio piece** — a hero stating what the node is, four figures read live from the running Pi, an "In short" summary above the tutorial (the strongest material was previously nine sections down), and a sticky section rail built from the DOM.
+- **UI snapshot harness** (`code/scripts/ui_snapshot.py`) — renders the console and `/learn` in real Chromium at five viewport sizes, screenshots every view, and reports horizontal overflow, sub-11px text and sub-32px tap targets.
+
+### Fixed
+
+- **Corpus bars rendered at zero width**: `.mdl-bar-fill` is a `<span>` inside a non-flex parent, so it stayed inline and `width` was ignored — every bar measured 0px while reporting the correct percentage. Found by measuring in a browser, not by reading the CSS.
+- **`/learn` panned sideways on phones** (153px at 390, 183px at 360): nine unconstrained wide tables dragging the document. Each now scrolls in its own container.
+- **Console overflowed at 360px**: the C2 lamp groups and the classifier stat row each pushed the page 30–60px wider than the viewport.
+- **Classifier backend displayed "None"** while a trained model was actively classifying — the `onnx` case was missing from the label map.
+- **Model view "Band" showed the modulation class**, not the channel, repeating what the corpus bars already said. Now shows the frequency and preset id.
+- **Garbled pager messages**: POCSAG numeric mode is BCD through multimon-ng's table `084 2.6]195-3U7[`, where `[` and `]` carry no meaning in paging. Payloads full of them are alphanumeric or binary content forced through the numeric table, or noise that survived BCH correction. These are now labelled rather than presented as messages — the raw payload is kept, since an undecodable page still proves the channel is live. Note that counting digits does **not** detect this: the observed noise is ~75% digits.
+
+### Changed
+
+- **Typography split** — monospace for data (frequencies, counts, callsigns), a UI sans for labels and prose. The whole document had been monospace.
+- **Transcript feed** sized to content between bounds instead of a fixed 300px box that was mostly empty on a quiet channel.
+- **Preset list** capped and internally scrollable on small screens; a category like Public Safety was 530px of buttons before you reached the tabs.
+- **Section 10 of `/learn`** renamed from "Explaining this in an interview" to "Engineering decisions, and what they cost" — the content is the evidence, not notes about the evidence.
+
+## [1.2.1] — 2026-07-27
+
+The full machine-learning cycle, end to end on-node: collect a labelled corpus,
+train off-node, run the result back on the Pi — and find out how much of the
+headline accuracy was real.
+
+### Added
+
+- **Background IQ collection** (`iq_collector`, `iq_collect_scheduler`): rotates the dongle across bands to build a labelled training corpus, balanced **by class** rather than by frequency, with dwell weighted toward under-represented classes.
+- **Preset-derived labels**: samples are labelled by whichever preset is tuned, so ground truth is free and never depends on the classifier's own output.
+- **Trained model running on the Pi** via `onnxruntime` — the Hailo Dataflow Compiler is x86-only and behind a login, so the same network runs on the CPU at ~58 ms instead of a few. Backend order is Hailo → trained ONNX → heuristics.
+- **Held-out-frequency validation** (`code/ml/signal_classifier/validate_confound.py`) — the test that decides whether a class is trustworthy.
+- **Corpus pruning** (`prune_corpus.py`): applies the current signal-presence gate retroactively, quarantining rather than deleting so the judgement stays reviewable.
+- **`/learn`** — a twelve-section animated explainer served from the node itself, including a stepped execution trace using values captured from a real run, and the network internals down to the convolution arithmetic. D3 is vendored, not from a CDN.
+- **Adaptive VAD**: gates on level *above the measured noise floor* rather than a fixed RMS, so an open-squelch channel stops feeding static to the NPU.
+
+### Fixed
+
+- **99.1% accuracy was measuring the wrong thing.** Every class had been collected on exactly one frequency, so the network could score perfectly by learning the band and never the modulation. A random train/test split cannot detect this — both halves contain the same frequencies. Splitting by frequency and holding whole bands out of training dropped FM recall to 0.38. Three of six classes are now marked unproven in the UI, on purpose.
+- **1,921 "OOK" samples were an empty channel** — 0% contained a burst, at only 2× the noise floor. Added a spectral peak-to-median gate.
+- **"APRS" samples were a steady carrier** parked on 144.390, not packets: high spectral energy but a 3% burst rate, which is contradictory for a packet mode.
+- **Half the corpus vanished silently** — 1,162 of 2,271 samples had preset modulations that were never in the class list, and the loader dropped them without a word.
+- **`OOK/FSK` nested directory** orphaned 1,078 samples; ambiguous labels are now rejected at collection time.
+- **OOM during validation**: 9,353 images as float32 × 3 channels is 5.6 GB on a 6 GB VM. Held as uint8 (0.47 GB) and expanded per batch.
+- **The IQ rotation was poisoning its own corpus** by sampling bands whose protocol only transmits in bursts as though they were continuous.
+- **Console needed the internet to show anything**: socket.io and Leaflet came from a CDN, so an air-gapped node rendered no panels at all. Both are now vendored.
+- **Stale JS after deploys** — cache busting is now derived from file mtime.
+
+### Changed
+
+- The console no longer logs errors for ordinary states (an idle radio, an absent optional service).
+
+## [1.2.0] — 2026-07-26
+
+Split the console from the radio, and put a real arbiter in front of the dongle.
+
+### Added
+
+- **Two-process split**: `ui_app` and the radio process talk over a Unix socket with NDJSON framing, so the console loads and stays responsive even when the radio process is dead or restarting.
+- **SDR arbiter** with command-and-control semantics — commanded vs actual state, LOCKED/SWITCHING/FAULT, request coalescing, and adoption of whatever the hardware is already doing. The header shows all of it.
+- **Automation switch**: one toggle stops the satellite/WEFAX/ADS-B schedulers seizing the dongle.
+- **APRS** packet decoding, additional ISM bands, and durable emitter history that survives restarts.
+
+### Fixed
+
+- **Orphaned `rtl_fm` holding the dongle**: overlapping tune requests raced because `_kill_pid` yields, letting one greenthread clear `self._pid` after another had stored a fresh one. The tuner now tracks every spawned pid and kills the whole set. An orphan had held the dongle for 17 minutes, breaking the pager decoder, a NOAA APT pass, and all tuning.
+- **App-wide hub deadlock on a squelched tune**: `pipe.close()` blocked behind a reader still in `stdout.read()`. Processes are now killed *before* their pipes are closed.
+- **Piped decoders misreported a busy dongle as a missing binary** — the source process's exit was never checked, so "is multimon-ng installed?" appeared when multimon-ng was fine and the dongle was not.
+- **Cross-thread `greenlet.error` crashes**: eventlet had made the logging handler locks green, so real threads touching them exploded. Real `RLock`s plus an emit bridge that hands work to a green thread.
+- **The console hijacked the radio on page load**, force-tuning a preset and destroying the saved `last_preset` so a restart could never resume. It now adopts the radio's existing state instead.
+
 ## [1.1.1] — 2026-07-23
 
 NOAA APT satellite imagery — made it actually work end-to-end on the current

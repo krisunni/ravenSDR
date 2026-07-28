@@ -1240,4 +1240,101 @@
            .text("the flaw found in step 6 is what step 1 collects for next time");
     })();
 
+    // ── Section rail ─────────────────────────────────────────────────────
+    // Twelve sections and ~18,000px of page. Built from the DOM rather than a
+    // hand-kept list so it cannot drift out of sync with the sections.
+    (function rail() {
+        var rail = document.getElementById("rail");
+        if (!rail) return;
+        var sections = [].slice.call(document.querySelectorAll("main > section[id]"));
+        var links = sections.map(function (sec) {
+            var h2 = sec.querySelector("h2");
+            var num = h2 && h2.querySelector(".num");
+            var a = document.createElement("a");
+            a.href = "#" + sec.id;
+            a.textContent = num ? num.textContent : (h2 ? h2.textContent.trim() : sec.id);
+            a.title = h2 ? h2.textContent.replace(/^\s*\d+\s*/, "").trim() : sec.id;
+            rail.appendChild(a);
+            return a;
+        });
+
+        // Highlight whichever section owns the middle of the viewport. Using a
+        // scroll handler rather than IntersectionObserver because sections here
+        // are taller than the viewport, so "is intersecting" is true for
+        // several at once and says nothing about which one you are reading.
+        var ticking = false;
+        function update() {
+            ticking = false;
+            var mid = window.scrollY + window.innerHeight * 0.35, best = 0;
+            sections.forEach(function (sec, i) {
+                if (sec.offsetTop <= mid) best = i;
+            });
+            links.forEach(function (a, i) { a.classList.toggle("active", i === best); });
+            var on = links[best];
+            if (on && on.offsetLeft < rail.scrollLeft ||
+                on && on.offsetLeft + on.offsetWidth > rail.scrollLeft + rail.clientWidth) {
+                rail.scrollTo({ left: on.offsetLeft - rail.clientWidth / 2, behavior: "smooth" });
+            }
+        }
+        window.addEventListener("scroll", function () {
+            if (!ticking) { ticking = true; requestAnimationFrame(update); }
+        }, { passive: true });
+        update();
+    })();
+
+    // ── Hero stats ───────────────────────────────────────────────────────
+    // Read from the node this page is served by. A portfolio page describing a
+    // live system loses its credibility the moment its numbers go stale, and
+    // "these are read from the running machine" is itself part of the point.
+    (function heroStats() {
+        var el = document.getElementById("hero-stats");
+        if (!el) return;
+        var set = function (id, v) {
+            var n = document.getElementById(id);
+            if (n && v !== undefined && v !== null) n.textContent = v;
+        };
+
+        function load() {
+            Promise.all([
+                fetch("/api/iq-collect").then(function (r) { return r.json(); }),
+                fetch("/api/classifier/status").then(function (r) { return r.json(); })
+            ]).then(function (res) {
+                var iq = res[0] || {}, clf = res[1] || {};
+                var corpus = (iq.corpus && iq.corpus.total) || 0;
+                set("hs-corpus", corpus.toLocaleString());
+                // Deliberately NOT a hero stat: this counter is session-scoped
+                // and resets with the service, so a restart would make the node
+                // look like it had barely run. It belongs in the live line,
+                // where "since restart" is obvious.
+                var since = (clf.classifications_total || 0).toLocaleString();
+
+                var val = (clf.validated_classes || []).length;
+                var all = Object.keys(clf.validation || {}).length ||
+                          ((clf.validated_classes || []).length +
+                           (clf.unproven_classes || []).length);
+                set("hs-validated", all ? val + " of " + all : "\u2014");
+
+                var backend = { hailo: "Hailo NPU", onnx: "CPU / ONNX",
+                                cpu: "heuristics", none: "\u2014" }[clf.backend] || clf.backend;
+                set("hs-latency", backend);
+
+                var live = document.getElementById("hero-live");
+                if (live) {
+                    live.innerHTML = '<span class="dot"></span>' +
+                        (iq.capturing
+                            ? "collecting now \u2014 " +
+                              ((iq.current_band && iq.current_band.id) || "rotating bands")
+                            : "idle between collection slots") +
+                        " \u00b7 " + since + " signals classified since restart" +
+                        " \u00b7 read live from this Pi";
+                }
+            }).catch(function () {
+                var live = document.getElementById("hero-live");
+                if (live) live.textContent = "console offline — figures unavailable";
+            });
+        }
+        load();
+        setInterval(load, 15000);
+    })();
+
 })();

@@ -1,9 +1,193 @@
 {
   "versions": [
     {
+      "version": "1.3.0",
+      "date": "2026-07-28",
+      "status": "running",
+      "changes": [
+        {
+          "type": "added",
+          "description": "Tabbed console: twelve panels shared one vertical scroll, which put the signal classifier below the fold and the decoders past that. Six views now \u2014 Listen, Classify, Decoders, Imagery, Science, Model \u2014 with the preset selector pinned above the tabs in every view",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "added",
+          "description": "Model view: active backend, corpus size, collection state, and a per-class bar chart annotated with how many distinct frequencies each class was collected on \u2014 the figure that decides whether a class can be validated at all",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "added",
+          "description": "View memory and follow-the-radio: the active view persists in localStorage, and an explicit tune switches to the view that preset feeds (ADS-B to Decoders, WEFAX to Imagery, meteor to Science). Page load deliberately does not, since it would override whatever the operator had open",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "added",
+          "description": "Tab badges: live aircraft count on Decoders, last modulation on Classify, REC on Model while the collector is capturing",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "added",
+          "description": "Empty states: a view whose panels are all hidden now explains which preset fills it instead of rendering blank",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "added",
+          "description": "/learn reframed as a portfolio piece \u2014 a hero stating what the node is, four figures read live from the running Pi, an 'In short' summary above the tutorial (the strongest material had been nine sections down), and a sticky section rail built from the DOM",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "added",
+          "description": "UI snapshot harness (code/scripts/ui_snapshot.py): renders the console and /learn in real Chromium at five viewport sizes, screenshots every view, and reports horizontal overflow, sub-11px text and sub-32px tap targets",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "fixed",
+          "description": "Corpus bars rendered at zero width: .mdl-bar-fill is a span inside a non-flex parent, so it stayed inline and width was ignored \u2014 every bar measured 0px while reporting the correct percentage. Found by measuring in a browser, not by reading the CSS",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "fixed",
+          "description": "/learn panned sideways on phones (153px at 390, 183px at 360) \u2014 nine unconstrained wide tables dragging the document. Each now scrolls in its own container",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "fixed",
+          "description": "Console overflowed at 360px: the C2 lamp groups and the classifier stat row each pushed the page 30-60px wider than the viewport",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "fixed",
+          "description": "Classifier backend displayed 'None' while a trained model was actively classifying \u2014 the onnx case was missing from the label map",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "fixed",
+          "description": "Model view 'Band' showed the modulation class rather than the channel, repeating what the corpus bars already said. Now shows the frequency and preset id",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "fixed",
+          "description": "Garbled pager messages: POCSAG numeric mode is BCD through multimon-ng's table 084 2.6]195-3U7[, where [ and ] carry no meaning in paging. Payloads full of them are alphanumeric or binary content forced through the numeric table, or noise that survived BCH correction. Now labelled rather than presented as messages, with the raw payload kept. Counting digits does not detect this \u2014 the observed noise is ~75% digits",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "changed",
+          "description": "Typography split: monospace for data (frequencies, counts, callsigns), a UI sans for labels and prose. The whole document had been monospace",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "changed",
+          "description": "Transcript feed sized to content between bounds instead of a fixed 300px box that was mostly empty on a quiet channel",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "changed",
+          "description": "Preset list capped and internally scrollable on small screens \u2014 a category like Public Safety was 530px of buttons before you reached the tabs",
+          "date": "2026-07-28"
+        },
+        {
+          "type": "changed",
+          "description": "/learn section 10 renamed from 'Explaining this in an interview' to 'Engineering decisions, and what they cost' \u2014 the content is the evidence, not notes about it",
+          "date": "2026-07-28"
+        }
+      ]
+    },
+    {
+      "version": "1.2.1",
+      "date": "2026-07-27",
+      "status": "superseded",
+      "changes": [
+        {
+          "type": "added",
+          "description": "Background IQ collection (iq_collector, iq_collect_scheduler): rotates the dongle across bands to build a labelled training corpus, balanced by class rather than by frequency, with dwell weighted toward under-represented classes",
+          "date": "2026-07-26"
+        },
+        {
+          "type": "added",
+          "description": "Preset-derived labels \u2014 samples are labelled by whichever preset is tuned, so ground truth is free and never depends on the classifier's own output",
+          "date": "2026-07-26"
+        },
+        {
+          "type": "added",
+          "description": "Trained model running on the Pi via onnxruntime. The Hailo Dataflow Compiler is x86-only and behind a login, so the same network runs on the CPU at ~58ms instead of a few. Backend order: Hailo, trained ONNX, heuristics",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "added",
+          "description": "Held-out-frequency validation (validate_confound.py) \u2014 the test that decides whether a class is trustworthy",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "added",
+          "description": "Corpus pruning (prune_corpus.py): applies the current signal-presence gate retroactively, quarantining rather than deleting so the judgement stays reviewable",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "added",
+          "description": "/learn: a twelve-section animated explainer served from the node itself, including a stepped execution trace using values captured from a real run, and the network internals down to the convolution arithmetic. D3 is vendored, not from a CDN",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "added",
+          "description": "Adaptive VAD gates on level above the measured noise floor rather than a fixed RMS, so an open-squelch channel stops feeding static to the NPU",
+          "date": "2026-07-26"
+        },
+        {
+          "type": "fixed",
+          "description": "99.1% accuracy was measuring the wrong thing: every class had been collected on exactly one frequency, so the network could score perfectly by learning the band and never the modulation. A random train/test split cannot detect this \u2014 both halves contain the same frequencies. Splitting by frequency and holding whole bands out of training dropped FM recall to 0.38. Three of six classes are now marked unproven in the UI, on purpose",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "1,921 'OOK' samples were an empty channel \u2014 0% contained a burst, at only 2x the noise floor. Added a spectral peak-to-median gate",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "'APRS' samples were a steady carrier parked on 144.390, not packets: high spectral energy but a 3% burst rate, contradictory for a packet mode",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "Half the corpus vanished silently \u2014 1,162 of 2,271 samples had preset modulations that were never in the class list, and the loader dropped them without a word",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "An OOK/FSK nested directory orphaned 1,078 samples; ambiguous labels are now rejected at collection time",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "OOM during validation: 9,353 images as float32 x3 channels is 5.6GB on a 6GB VM. Held as uint8 (0.47GB) and expanded per batch",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "The IQ rotation was poisoning its own corpus by sampling burst-only protocols as though they were continuous",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "The console needed the internet to show anything: socket.io and Leaflet came from a CDN, so an air-gapped node rendered no panels at all. Both are now vendored",
+          "date": "2026-07-27"
+        },
+        {
+          "type": "fixed",
+          "description": "Stale JS after deploys \u2014 cache busting is now derived from file mtime",
+          "date": "2026-07-26"
+        },
+        {
+          "type": "changed",
+          "description": "The console no longer logs errors for ordinary states such as an idle radio or an absent optional service",
+          "date": "2026-07-27"
+        }
+      ]
+    },
+    {
       "version": "1.2.0",
-      "date": "2026-07-25",
-      "status": "in-progress",
+      "date": "2026-07-26",
+      "status": "superseded",
       "changes": [
         {
           "type": "fixed",

@@ -185,12 +185,41 @@ def audio_stream():
 
 ### 3.7 Frontend (`index.html` + `ravensdr.js` + `ravensdr.css`)
 
-Single-page console-style UI with:
-- **PresetSelector** — category tabs, preset buttons, custom frequency input
-- **SignalMeter** — canvas-based horizontal bar (green/yellow/red)
-- **AudioPlayer** — hidden `<audio>` with custom controls, reconnect logic
-- **TranscriptFeed** — scrolling div, auto-scroll, clear/copy buttons
-- **ControlBar** — squelch slider, gain selector, stop button
+Single-page console. Twelve panels once shared one vertical scroll, which put
+the classifier — where the node now spends most of its effort — below the fold
+and the decoders somewhere past that. They are grouped into six **views**,
+switched by a sticky tab bar. The preset selector sits above the tabs and stays
+visible in every view, because tuning is how you drive the radio regardless of
+what you are looking at.
+
+| View | Panels |
+|---|---|
+| Listen | status strip (tuned / signal / audio), transcript, weather, inference stats, controls, advanced |
+| Classify | signal classification, emitter tracking (SEI) |
+| Decoders | ADS-B, ISM, APRS, ACARS, pager |
+| Imagery | NOAA APT satellite, WEFAX |
+| Science | meteor scatter |
+| Model | active model, trust, collection, training corpus by class |
+
+Behaviour:
+- **View memory** — the active view is stored in `localStorage`; a refresh
+  returns you to it rather than the top of the page.
+- **Follow the radio** — an *explicit* tune switches to the view that preset
+  feeds (ADS-B → Decoders, WEFAX → Imagery, meteor → Science). Page load never
+  does this: it would override the view the operator had open.
+- **Tab badges** — live aircraft count on Decoders, last modulation on Classify,
+  `REC` on Model while the IQ collector is capturing.
+- **Empty states** — a view whose panels are all hidden explains which preset
+  fills it instead of rendering blank.
+
+Components: **PresetSelector** (category tabs, preset grid), **SignalMeter**,
+**AudioPlayer**, **TranscriptFeed**, **ControlBar**, **ClassifierPanel**,
+**ModelView**.
+
+Typography splits monospace for data (frequencies, counts, callsigns) from a UI
+sans for labels and prose. Layout is verified at 1440/1280/834/390/360px by
+`code/scripts/ui_snapshot.py` — see `code/scripts/README-ui-snapshot.md` for why
+it snapshots the server rather than browsing it.
 
 ### 3.8 Presets (`presets.py`)
 

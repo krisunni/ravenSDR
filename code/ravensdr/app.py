@@ -96,7 +96,7 @@ def _make_logging_thread_safe():
 _make_logging_thread_safe()
 log = logging.getLogger(__name__)
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 
 # ── Flask + Socket.IO ──
 app = Flask(

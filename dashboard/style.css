@@ -260,6 +260,7 @@ tr:hover td {
     background: rgba(59, 158, 255, 0.12);
     color: var(--accent-blue);
 }
+.badge-superseded { background: rgba(139, 148, 158, 0.12); color: #8b949e; border-color: rgba(139, 148, 158, 0.3); }
 
 .badge-planned {
     background: rgba(255, 153, 51, 0.12);

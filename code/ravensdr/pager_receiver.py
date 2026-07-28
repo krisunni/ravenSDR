@@ -26,6 +26,37 @@ _POCSAG_RE = re.compile(
 #   FLEX: 2026-07-24 ... [001234567] ALN message text
 _FLEX_RE = re.compile(r"FLEX[:|].*?\[0*(\d+)\]\s*\S*\s*(.*)")
 
+# POCSAG numeric mode is 4-bit BCD read through multimon-ng's conversion table
+# "084 2.6]195-3U7[". Only the digits and a couple of separators carry meaning;
+# "]", "[" and "U" are the reserved and urgency codes. A genuine numeric page is
+# a callback number, so it is nearly all digits. A payload that is a third
+# reserved codes is not numeric data at all — it is alphanumeric or binary
+# content forced through the numeric table, or noise that survived BCH
+# correction on a weak signal. Both look like line noise to an operator.
+#
+# We label rather than drop: a page that decoded badly is still evidence the
+# channel is active, and the raw payload stays available.
+# "[" and "]" are the two BCD codes with no assigned meaning in numeric paging.
+# A callback number never contains one, so a single bracket already says the
+# payload is not numeric data. "U" (urgency) IS legitimate — a trailing "U" on a
+# real page is common — so it only counts against the message when it recurs.
+#
+# Counting digits does not work here: the observed noise is ~75% digits and
+# sails through any digit-fraction test.
+_UNASSIGNED = set("][")
+_MAX_URGENCY_FRACTION = 0.15
+
+
+def numeric_quality(text):
+    """Return "ok" or "low" for a numeric-mode POCSAG payload."""
+    body = [c for c in text if not c.isspace()]
+    if len(body) < 6:
+        return "ok"
+    if any(c in _UNASSIGNED for c in body):
+        return "low"
+    urgency = sum(1 for c in body if c == "U")
+    return "low" if urgency / len(body) > _MAX_URGENCY_FRACTION else "ok"
+
 
 class PagerReceiver(SubprocessDecoder):
     """Decode POCSAG/FLEX pager traffic via rtl_fm piped into multimon-ng."""
@@ -53,12 +84,15 @@ class PagerReceiver(SubprocessDecoder):
             protocol = "POCSAG" + m.group(1)
             content_type = m.group(4) or ""
             text = (m.group(5) or "").strip()
+            quality = ("ok" if content_type != "Numeric"
+                       else numeric_quality(text))
             return {
                 "protocol": protocol,
                 "address": m.group(2),
                 "function": m.group(3),
                 "content_type": content_type,
                 "text": text,
+                "quality": quality,
             }
         f = _FLEX_RE.search(line)
         if f:
@@ -68,6 +102,7 @@ class PagerReceiver(SubprocessDecoder):
                 "function": "",
                 "content_type": "",
                 "text": (f.group(2) or "").strip(),
+                "quality": "ok",
             }
         return None
 

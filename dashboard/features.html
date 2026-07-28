@@ -71,7 +71,8 @@
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${f.phase}</td>
-                    <td><strong>${f.name}</strong><br><span style="font-size:0.75rem;color:var(--text-secondary)">${f.description}</span></td>
+                    <td><strong>${f.name}</strong><br><span style="font-size:0.75rem;color:var(--text-secondary)">${f.description}</span>${
+                        f.notes ? `<br><span style="font-size:0.72rem;color:var(--text-muted);font-style:italic">${f.notes}</span>` : ''}</td>
                     <td>${badge(f.status)}</td>
                     <td>${badge(f.priority)}</td>
                     <td><span style="font-family:var(--font-mono);font-size:0.75rem">${f.components.join(', ')}</span></td>

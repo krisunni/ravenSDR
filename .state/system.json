@@ -1,7 +1,7 @@
 {
   "name": "ravenSDR",
   "description": "Real-time RF Signal Transcription Pipeline \u2014 RTL-SDR \u2192 Edge AI Inference (Hailo-8L NPU) \u2192 Live Web Interface",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "status": "running",
   "license": "AGPL-3.0",
   "stack": {
@@ -19,24 +19,30 @@
     "mapping": "Leaflet.js + OpenStreetMap",
     "weatherParser": "NOAA NWS broadcast regex parser",
     "passPredictor": "ephem (PyEphem orbital mechanics)",
-    "aptDecoder": "noaa-apt CLI (APT image decoder)",
+    "aptDecoder": "aptdec (built from source; noaa-apt needs Rust+GTK)",
     "hallucinationFilter": "Two-tier Whisper noise filter (phrases + structural patterns)",
-    "wefaxDecoder": "fldigi (WEFAX HF decode via Xvfb headless)",
+    "wefaxDecoder": "Self-contained numpy FSK decoder (1500/2300 Hz, LPM deskew, WAV to PNG)",
     "meteorDetector": "Forward scatter power monitor (numpy threshold detector)",
-    "signalClassifier": "MobileNetV2 CNN spectrogram classifier (Hailo-8L NPU, CPU fallback)",
+    "signalClassifier": "MobileNetV2 over IQ spectrograms; trained off-node on x86, exported to ONNX, run on the Pi via onnxruntime (~58 ms). Hailo .hef pending the x86-only Dataflow Compiler",
     "emitterIdentification": "1D CNN + attention SEI model (Hailo-8L NPU, CPU fallback)",
     "iqCapture": "pyrtlsdr direct IQ capture with FM/AM/WFM demodulation, squelch, de-emphasis, replaces rtl_fm main pipeline",
     "sdrDemodFallback": "rtl_fm subprocess (auto-fallback when pyrtlsdr unavailable)",
     "processArchitecture": "Two-process split: ravensdr-ui (Flask+Socket.IO, no hardware) and ravensdr-radio (RTL-SDR/Hailo/decoders, eventlet-free), NDJSON over Unix domain socket",
     "ipc": "Newline-delimited JSON over Unix domain socket (ipc.py / ipc_server.py / radio_link.py)",
-    "sdrArbitration": "SdrArbiter \u2014 serialized coalescing command queue, C2 states LOCKED/SWITCHING/FAULT"
+    "sdrArbitration": "SdrArbiter \u2014 serialized coalescing command queue, C2 states LOCKED/SWITCHING/FAULT",
+    "modelValidation": "Held-out-frequency split \u2014 whole bands withheld from training; 3 of 6 classes generalise, the rest are marked unproven in the UI",
+    "corpusCollection": "Background band rotation labelled from the tuned preset, class-balanced, with a spectral peak-to-median gate on empty windows",
+    "consoleLayout": "Six tabbed views (Listen / Classify / Decoders / Imagery / Science / Model) with view memory and follow-the-radio switching",
+    "uiVerification": "Headless Chromium over CDP at five viewport sizes (code/scripts/ui_snapshot.py)",
+    "digitalDecoders": "ADS-B, ACARS, APRS, AIS, ISM/rtl_433, POCSAG/FLEX pager, NOAA APT, WEFAX, meteor scatter",
+    "offlineOperation": "Fully air-gapped \u2014 socket.io, Leaflet and D3 vendored, no CDN or cloud calls"
   },
   "targetHardware": {
     "sbc": "Raspberry Pi 5",
     "npu": "Hailo AI Hat (Hailo-8L, 13 TOPS)",
     "sdr": "RTL-SDR Blog V4 (R828D tuner, RTL2832U, 1PPM TCXO)"
   },
-  "targetOS": "Raspberry Pi OS (Bookworm, 64-bit)",
+  "targetOS": "Raspberry Pi OS / Debian Trixie (64-bit, 16 KB pages)",
   "repository": "ravenSDR",
   "created": "2026-02-24",
   "implementationPlans": [

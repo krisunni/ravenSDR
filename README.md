@@ -6,6 +6,11 @@ RTL-SDR radio reception → Hailo-8L NPU inference → live web interface.
 
 ravenSDR tunes into radio frequencies using a software-defined radio dongle, runs Whisper speech-to-text on a Hailo-8L neural processing unit, and streams both audio and transcripts to a browser-based console UI — all on a Raspberry Pi 5.
 
+Two pages worth opening: the **console** at `:5000`, and
+**[`/learn`](code/templates/learn.html)** — a twelve-section animated walkthrough of
+how a radio wave becomes a classification, served from the node itself and using
+figures read live from the running machine.
+
 ## Signal Flow
 
 One dongle, many protocols. What the RF becomes depends entirely on which
@@ -57,7 +62,8 @@ below if that flow looks like magic.
 - **ACARS** aircraft messaging, correlated against tracked flights
 - **APRS** packet — station positions, weather and telemetry
 - **ISM / rtl_433** — weather stations, TPMS, utility meters, security sensors
-- **POCSAG/FLEX** pager text
+- **POCSAG/FLEX** pager text — numeric payloads carrying the unassigned BCD
+  codes are labelled undecodable rather than shown as if they were messages
 - **AIS** marine vessel tracking
 - **NOAA APT** satellite imagery on scheduled passes
 - **WEFAX** HF weather charts (needs an HF antenna)
@@ -69,6 +75,9 @@ below if that flow looks like magic.
 - **Background corpus collection** — rotates bands to build labelled training data
 
 **Operations**
+- **Tabbed console** — six views (Listen, Classify, Decoders, Imagery, Science,
+  Model) instead of one long scroll; the active view survives a refresh, and an
+  explicit tune switches to the view that preset feeds
 - **Command & control UI** — commanded vs actual SDR state, with the transition visible
 - **Automation switch** — one toggle stops schedulers seizing the dongle
 - **Durable emitter history** — first/last seen and packet counts, surviving restarts
@@ -195,9 +204,27 @@ against the runtime's. `RUNTIME_SAMPLE_LEN` keeps them aligned.
 
 Python 3.11+ / Flask / Flask-SocketIO / Hailo SDK / faster-whisper / rtl-sdr / ffmpeg / Vanilla JS
 
+## UI verification
+
+`code/scripts/ui_snapshot.py` renders the console and `/learn` in a real
+Chromium at 1440/1280/834/390/360px, screenshots every view, and flags
+horizontal overflow, sub-11px text and sub-32px tap targets.
+
+```bash
+python3 code/scripts/ui_snapshot.py     # -> .ui-snapshots/{shots,report.json}
+```
+
+It snapshots the running server and loads the copy over `file://` because
+Chromium 150 on this Pi cannot commit an HTTP navigation — the request is
+answered with a 200 but the renderer never leaves `about:blank`. See
+[the harness notes](code/scripts/README-ui-snapshot.md).
+
 ## Project Dashboard
 
 [View project status dashboard](https://krisunni.github.io/ravenSDR/dashboard/) — components, features, tasks, and changelog.
+
+Version history is in [CHANGELOG.md](CHANGELOG.md); the dashboard renders the same
+data from `.state/`.
 
 ## License
 

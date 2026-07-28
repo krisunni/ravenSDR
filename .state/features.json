@@ -6,7 +6,10 @@
       "description": "Tune RTL-SDR Blog V4 to preset frequencies, demodulate FM/AM/WBFM/SSB via rtl_fm, output 16kHz mono PCM",
       "status": "done",
       "phase": 2,
-      "components": ["tuner", "input-source"],
+      "components": [
+        "tuner",
+        "input-source"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-2-input-source.md"
     },
@@ -16,7 +19,10 @@
       "description": "Pull live audio from public internet streams (LiveATC, NOAA via wxradio.org) using ffmpeg subprocess when no SDR hardware is present",
       "status": "done",
       "phase": 2,
-      "components": ["stream-source", "input-source"],
+      "components": [
+        "stream-source",
+        "input-source"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-2-input-source.md"
     },
@@ -26,7 +32,9 @@
       "description": "On startup, run rtl_test to detect RTL-SDR dongle presence. Auto-select SDR mode or Web Stream mode accordingly",
       "status": "done",
       "phase": 2,
-      "components": ["input-source"],
+      "components": [
+        "input-source"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-2-input-source.md"
     },
@@ -36,7 +44,10 @@
       "description": "Real-time Whisper inference on Hailo-8L NPU with silence detection and automatic CPU fallback via faster-whisper. 10s audio chunks, mel spectrogram, encoder/decoder HEF pipeline with repetition penalty.",
       "status": "done",
       "phase": 3,
-      "components": ["transcriber", "mel"],
+      "components": [
+        "transcriber",
+        "mel"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-3-transcriber.md"
     },
@@ -46,7 +57,9 @@
       "description": "HTTP chunked WAV stream from backend to browser for live radio audio playback",
       "status": "done",
       "phase": 4,
-      "components": ["audio-router"],
+      "components": [
+        "audio-router"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-4-audio-router.md"
     },
@@ -56,7 +69,9 @@
       "description": "Flask REST endpoints for tuning, squelch, gain, stop, status, and preset listing",
       "status": "done",
       "phase": 5,
-      "components": ["flask-app"],
+      "components": [
+        "flask-app"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-5-backend-api.md"
     },
@@ -66,7 +81,9 @@
       "description": "Socket.IO events for transcript delivery, signal level updates, status changes, mode announcements, and error notifications",
       "status": "done",
       "phase": 5,
-      "components": ["flask-app"],
+      "components": [
+        "flask-app"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-5-backend-api.md"
     },
@@ -76,7 +93,9 @@
       "description": "Single-page web UI with preset selector, signal meter, audio player, transcript feed, and squelch/gain controls",
       "status": "done",
       "phase": 6,
-      "components": ["frontend"],
+      "components": [
+        "frontend"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-6-frontend.md"
     },
@@ -86,7 +105,9 @@
       "description": "Bundled presets for weather, aviation, marine, public safety, and broadcast frequencies in the Redmond/Seattle area",
       "status": "done",
       "phase": 7,
-      "components": ["presets"],
+      "components": [
+        "presets"
+      ],
       "priority": "medium",
       "implementation_plan": "implementation-plans/phase-7-presets.md"
     },
@@ -96,7 +117,12 @@
       "description": "Graceful handling of SDR disconnect, rtl_fm crash, stream drops, ALSA issues, and Hailo NPU absence",
       "status": "done",
       "phase": 8,
-      "components": ["flask-app", "tuner", "stream-source", "transcriber"],
+      "components": [
+        "flask-app",
+        "tuner",
+        "stream-source",
+        "transcriber"
+      ],
       "priority": "medium",
       "implementation_plan": "implementation-plans/phase-8-error-handling.md",
       "notes": "All tasks complete: SDR disconnect/reconnect detection with auto-recovery, process crash auto-restart (3 retries) with retry button, browser audio reconnect, Hailo NPU fallback."
@@ -107,7 +133,11 @@
       "description": "Real-time ADS-B flight tracking via dump1090 correlated with Whisper aviation transcripts. Callsigns spoken on tower/approach frequencies highlight aircraft on a Leaflet.js map. Supports single-dongle (time-sharing) and dual-dongle modes.",
       "status": "done",
       "phase": 10,
-      "components": ["adsb-receiver", "adsb-correlator", "map-panel"],
+      "components": [
+        "adsb-receiver",
+        "adsb-correlator",
+        "map-panel"
+      ],
       "priority": "medium",
       "implementation_plan": "implementation-plans/phase-10-adsb-aviation-correlation.md"
     },
@@ -117,7 +147,9 @@
       "description": "Silence-based audio chunking replaces fixed 10s splits. Segments end at silence boundaries to avoid cutting words mid-utterance. Configurable RMS threshold, holdoff timer, min/max segment duration.",
       "status": "done",
       "phase": 10,
-      "components": ["transcriber"],
+      "components": [
+        "transcriber"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-10-adsb-aviation-correlation.md"
     },
@@ -127,7 +159,12 @@
       "description": "Continuous monitoring of NOAA weather radio on 162.550 MHz with Whisper transcription, structured NWS broadcast parser (temperature, wind, visibility, alerts, marine forecasts), weather conditions panel UI with priority alert banners, and 30s squelch-zero segmenter.",
       "status": "done",
       "phase": 12,
-      "components": ["transcriber", "flask-app", "frontend", "presets"],
+      "components": [
+        "transcriber",
+        "flask-app",
+        "frontend",
+        "presets"
+      ],
       "priority": "medium",
       "implementation_plan": "implementation-plans/phase-12-noaa-weather-radio.md"
     },
@@ -137,7 +174,13 @@
       "description": "Auto-scheduled recording of NOAA-15/19 APT satellite passes at 137 MHz using PyEphem orbital prediction and Celestrak TLEs. Wideband FM capture via rtl_fm, decode with noaa-apt CLI to PNG. Satellite panel UI with pass countdown, recording progress, and decoded image display with history.",
       "status": "done",
       "phase": 13,
-      "components": ["apt-scheduler", "apt-decoder", "input-source", "flask-app", "frontend"],
+      "components": [
+        "apt-scheduler",
+        "apt-decoder",
+        "input-source",
+        "flask-app",
+        "frontend"
+      ],
       "priority": "medium",
       "implementation_plan": "implementation-plans/phase-13-noaa-apt-satellite-imaging.md"
     },
@@ -147,7 +190,11 @@
       "description": "Real-time NPU/CPU performance metrics in the web UI: encoder/decoder latency, real-time factor, tokens/sec, decoder steps used, chunks processed, silence skip rate. Color-coded RTF indicator.",
       "status": "done",
       "phase": 11,
-      "components": ["transcriber", "flask-app", "frontend"],
+      "components": [
+        "transcriber",
+        "flask-app",
+        "frontend"
+      ],
       "priority": "low",
       "implementation_plan": "implementation-plans/phase-11-inference-stats.md"
     },
@@ -157,7 +204,13 @@
       "description": "Receives and decodes WEFAX weather charts from NMC Point Reyes and NOJ Kodiak on HF frequencies using RTL-SDR V4 direct sampling (Q-branch). Scheduled reception based on broadcast timetables, fldigi decode to PNG, chart history with type filtering. Supports surface analysis, forecast, and wave charts.",
       "status": "done",
       "phase": 14,
-      "components": ["wefax-scheduler", "wefax-receiver", "input-source", "flask-app", "frontend"],
+      "components": [
+        "wefax-scheduler",
+        "wefax-receiver",
+        "input-source",
+        "flask-app",
+        "frontend"
+      ],
       "priority": "medium",
       "implementation_plan": "implementation-plans/phase-14-weatherfax-wefax.md"
     },
@@ -167,7 +220,13 @@
       "description": "Detects meteor scatter events by monitoring signal power on a distant FM carrier. Forward scatter from ionized meteor trails causes brief signal bursts. Classifies underdense (< 0.5s, sub-mm particles) and overdense (> 0.5s, larger meteoroids) trails. Correlates with annual shower calendar (Perseids, Geminids, etc). Supports dual dongle for 24/7 independent monitoring.",
       "status": "done",
       "phase": 15,
-      "components": ["meteor-detector", "meteor-analyzer", "input-source", "flask-app", "frontend"],
+      "components": [
+        "meteor-detector",
+        "meteor-analyzer",
+        "input-source",
+        "flask-app",
+        "frontend"
+      ],
       "priority": "low",
       "implementation_plan": "implementation-plans/phase-15-meteor-scatter-detection.md"
     },
@@ -177,7 +236,12 @@
       "description": "Real-time modulation type identification from raw IQ samples using MobileNetV2 CNN on Hailo-8L NPU. Converts IQ to spectrogram images (256-point FFT, Hann window), classifies into 11 target classes (AM, FM, WFM, SSB, P25, DMR, ADS-B, NOAA APT, WEFAX, CW, unknown). CPU heuristic fallback when Hailo unavailable. Self-supervised labeling pipeline collects confirmed samples for retraining. Always-visible UI panel with confidence bar, spectrogram waterfall, and classification history.",
       "status": "done",
       "phase": 16,
-      "components": ["signal-classifier", "iq-capture", "flask-app", "frontend"],
+      "components": [
+        "signal-classifier",
+        "iq-capture",
+        "flask-app",
+        "frontend"
+      ],
       "priority": "high",
       "implementation_plan": "implementation-plans/phase-16-signal-classification.md"
     },
@@ -187,9 +251,159 @@
       "description": "Passive RF fingerprinting of individual transmitters via 1D CNN + attention on raw IQ samples. Produces 128-dimensional embedding vectors matched against a local emitter database using cosine similarity. New emitters enrolled automatically with sequential IDs. ADS-B transponders provide ground truth for training via ICAO hex codes. Emitter tracking panel with known emitters table, inline label editing, re-identification feed, and new emitter alerts.",
       "status": "done",
       "phase": 17,
-      "components": ["sei-model", "iq-segmenter", "signal-classifier", "flask-app", "frontend"],
+      "components": [
+        "sei-model",
+        "iq-segmenter",
+        "signal-classifier",
+        "flask-app",
+        "frontend"
+      ],
       "priority": "medium",
       "implementation_plan": "implementation-plans/phase-17-specific-emitter-identification.md"
+    },
+    {
+      "id": "ism-sensors",
+      "name": "ISM / rtl_433 Sensors",
+      "description": "Decode 315/345/433/915 MHz ISM traffic via rtl_433 \u2014 weather stations, TPMS, utility meters, door and window sensors \u2014 with every reported field shown",
+      "status": "done",
+      "phase": 18,
+      "components": [
+        "ism-receiver",
+        "subprocess-decoder"
+      ],
+      "priority": "medium"
+    },
+    {
+      "id": "acars-messaging",
+      "name": "ACARS Aircraft Messaging",
+      "description": "Decode VHF ACARS via acarsdec and correlate messages against tracked ADS-B flights",
+      "status": "done",
+      "phase": 18,
+      "components": [
+        "acars-receiver",
+        "subprocess-decoder"
+      ],
+      "priority": "medium"
+    },
+    {
+      "id": "pager-decoding",
+      "name": "POCSAG / FLEX Pager Decoding",
+      "description": "Decode pager traffic via rtl_fm piped into multimon-ng. Numeric-mode payloads containing the unassigned BCD codes are labelled as undecodable rather than presented as messages",
+      "status": "done",
+      "phase": 18,
+      "components": [
+        "pager-receiver",
+        "subprocess-decoder"
+      ],
+      "priority": "medium"
+    },
+    {
+      "id": "aprs-packet",
+      "name": "APRS Packet",
+      "description": "AFSK1200 packet decode on 144.390 MHz \u2014 station positions, weather and telemetry",
+      "status": "done",
+      "phase": 18,
+      "components": [
+        "subprocess-decoder"
+      ],
+      "priority": "medium"
+    },
+    {
+      "id": "ais-marine",
+      "name": "AIS Vessel Tracking",
+      "description": "Decode AIS marine traffic and plot vessels on the shared map",
+      "status": "done",
+      "phase": 18,
+      "components": [
+        "subprocess-decoder",
+        "map"
+      ],
+      "priority": "low"
+    },
+    {
+      "id": "sdr-arbiter",
+      "name": "SDR Command & Control",
+      "description": "Single-owner arbiter in front of the dongle: commanded vs actual state, LOCKED/SWITCHING/FAULT, request coalescing, and adoption of whatever the hardware is already doing",
+      "status": "done",
+      "phase": 18,
+      "components": [
+        "sdr-arbiter"
+      ],
+      "priority": "high"
+    },
+    {
+      "id": "ui-radio-split",
+      "name": "UI / Radio Process Split",
+      "description": "Console and radio run as separate processes over a Unix socket with NDJSON framing, so the UI loads and stays responsive even when the radio process is dead or restarting",
+      "status": "in-progress",
+      "phase": 18,
+      "components": [
+        "ui-app",
+        "ipc-server",
+        "radio-link"
+      ],
+      "priority": "high",
+      "notes": "IPC, arbiter and daemon landed. Retiring the radio process's own Flask app and moving audio to a PCM socket are outstanding."
+    },
+    {
+      "id": "iq-corpus-collection",
+      "name": "Background IQ Corpus Collection",
+      "description": "Rotates the dongle across bands to build a labelled training corpus, balanced by class rather than frequency, with dwell weighted toward under-represented classes and a spectral gate that rejects empty windows",
+      "status": "done",
+      "phase": 19,
+      "components": [
+        "iq-collector",
+        "iq-collect-scheduler"
+      ],
+      "priority": "high"
+    },
+    {
+      "id": "ml-training-pipeline",
+      "name": "Model Training & Deployment",
+      "description": "Train MobileNetV2 over spectrograms off-node on x86, export to ONNX, and run it back on the Pi via onnxruntime. Includes held-out-frequency validation, which is what decides whether a class is trustworthy at all",
+      "status": "done",
+      "phase": 19,
+      "components": [
+        "signal-classifier",
+        "validate-confound",
+        "prune-corpus"
+      ],
+      "priority": "high",
+      "notes": "Three of six classes are validated across frequencies. The other three were each observed on a single frequency and are marked unproven in the UI."
+    },
+    {
+      "id": "learn-explainer",
+      "name": "/learn Explainer",
+      "description": "A twelve-section animated walkthrough served from the node \u2014 radio wave to spectrogram to CNN \u2014 with a stepped execution trace using values captured from a real run, the engineering decisions and their costs, and live figures read from the running Pi. All assets vendored for air-gapped operation",
+      "status": "done",
+      "phase": 19,
+      "components": [
+        "learn"
+      ],
+      "priority": "medium"
+    },
+    {
+      "id": "tabbed-console",
+      "name": "Tabbed Console",
+      "description": "Six views \u2014 Listen, Classify, Decoders, Imagery, Science, Model \u2014 replacing a single twelve-panel scroll. View memory, follow-the-radio tab switching, live tab badges and explanatory empty states",
+      "status": "done",
+      "phase": 20,
+      "components": [
+        "console-ui"
+      ],
+      "priority": "high"
+    },
+    {
+      "id": "ui-verification",
+      "name": "Browser UI Verification",
+      "description": "Renders the console and /learn in real Chromium at five viewport sizes, screenshots every view, and reports horizontal overflow, sub-11px text and sub-32px tap targets",
+      "status": "done",
+      "phase": 20,
+      "components": [
+        "ui-snapshot"
+      ],
+      "priority": "medium",
+      "notes": "Snapshots the served page and drives it over file:// \u2014 Chromium 150 on this Pi cannot commit an HTTP navigation."
     }
   ]
 }

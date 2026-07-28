@@ -184,8 +184,20 @@
         el = document.getElementById("clf-backend");
         if (el) {
             var backend = this.status.backend || "none";
-            el.textContent = backend === "hailo" ? "Hailo NPU" :
-                             backend === "cpu" ? "CPU" : "None";
+            // "onnx" was missing here, so a working trained model on the CPU
+            // displayed as "None" while it was classifying thousands of chunks.
+            var labels = {
+                hailo: "Hailo NPU",
+                onnx: "Trained (CPU)",
+                cpu: "Heuristic",
+                none: "None"
+            };
+            el.textContent = labels[backend] || backend;
+            el.title = backend === "onnx"
+                ? "Trained MobileNetV2 running via onnxruntime on the Pi CPU"
+                : backend === "cpu"
+                ? "No trained model loaded — hand-written rules, WFM/FM/CW/AM/SSB only"
+                : "";
         }
 
         el = document.getElementById("clf-total");

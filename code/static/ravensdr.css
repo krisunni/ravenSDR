@@ -10,7 +10,10 @@
     --green: #3fb950;
     --yellow: #d29922;
     --red: #f85149;
-    --font-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    --font-mono: "SF Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", system-ui, sans-serif;
+    --radius: 10px;
 }
 
 * {
@@ -22,12 +25,21 @@
 body {
     background: var(--bg);
     color: var(--text);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 14px;
     line-height: 1.5;
     padding: 16px;
-    max-width: 900px;
+    max-width: 1240px;          /* was 900 — the wide views had nowhere to go */
     margin: 0 auto;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Data stays monospace so columns of numbers line up and callsigns are
+   unambiguous. Everything else reads as an interface. */
+.tuned-freq, .preset-freq, .badge, .c2-val, .c2-key, .mono,
+.transcript-feed, .stat-value, .stat-label,
+input, select, textarea, code, pre, table.data td, .clf-history-freq {
+    font-family: var(--font-mono);
 }
 
 /* ── Header ── */
@@ -35,16 +47,26 @@ body {
 header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 20px;
+    gap: 10px;
+    margin-bottom: 16px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
 }
 
+/* Everything from here is secondary chrome, pushed to the right so the header
+   stays one line instead of spilling "Settings" onto a row of its own. */
+header .btn-advanced { margin-left: auto; }
+header .btn-advanced ~ .btn-advanced { margin-left: 0; }
+
 header h1 {
-    font-size: 20px;
-    font-weight: 600;
+    font-size: 19px;
+    font-weight: 650;
+    letter-spacing: -0.2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
 }
 
 .badge {
@@ -130,16 +152,17 @@ header h1 {
 section {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px 16px;
+    border-radius: var(--radius);
+    padding: 14px 16px;
     margin-bottom: 12px;
 }
 
 section > label {
     display: block;
-    font-size: 11px;
+    font-family: var(--font-mono);
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.09em;
     color: var(--text-dim);
     margin-bottom: 8px;
 }
@@ -517,8 +540,9 @@ select {
 .transcript-feed {
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    height: 300px;
+    border-radius: 8px;
+    min-height: 96px;
+    max-height: 44vh;
     overflow-y: auto;
     padding: 8px 12px;
     font-size: 13px;
@@ -870,3 +894,300 @@ select {
 
 /* Paused is a deliberate operator choice, so it reads as a state, not an error. */
 .automation-config.is-paused .auto-switch { color: var(--yellow); }
+
+/* ── Tabbed workspace ──
+   Twelve panels in one scroll made the AI work invisible below the fold and
+   buried the decoders. Views group them; tuning stays above, because it is how
+   you drive the radio regardless of what you are looking at. */
+.view-nav {
+    display: flex;
+    gap: 2px;
+    padding: 0 4px;
+    margin: 14px 0 16px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.view-nav::-webkit-scrollbar { display: none; }
+
+.view-tab {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding: 11px 15px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color .12s, border-color .12s;
+}
+.view-tab:hover { color: var(--text); }
+.view-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+}
+.view-icon { font-size: 13px; opacity: .85; }
+
+.view-badge {
+    min-width: 17px;
+    padding: 1px 5px;
+    border-radius: 9px;
+    background: var(--border);
+    color: var(--text);
+    font: 10px var(--font-mono);
+    text-align: center;
+}
+.view-badge:empty { display: none; }
+.view-badge.live { background: #1a3a2a; color: var(--green); }
+.view-badge.warn { background: #3a2f1a; color: var(--yellow); }
+
+.view { display: none; }
+.view.active { display: block; animation: view-in .16s ease-out; }
+@keyframes view-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; } }
+
+/* ── Model view ── */
+.mdl-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.mdl-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+.mdl-wide { margin-bottom: 16px; }
+.mdl-card-title {
+    font: 11px var(--font-mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}
+.mdl-kv {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 4px 0;
+    font-size: 13px;
+}
+.mdl-kv span { color: var(--text-dim); }
+.mdl-kv b { font-family: var(--font-mono); font-size: 12px; font-weight: 500; text-align: right; }
+.mdl-kv b.ok { color: var(--green); }
+.mdl-kv b.warn { color: var(--yellow); }
+.mdl-note { color: var(--text-dim); font-size: 12px; margin-top: 10px; line-height: 1.5; }
+
+.mdl-bars { display: flex; flex-direction: column; gap: 7px; }
+.mdl-bar-row { display: flex; align-items: center; gap: 10px; font: 12px var(--font-mono); }
+.mdl-bar-label { width: 84px; color: var(--text-dim); flex: none; }
+.mdl-bar-track { flex: 1; display: block; height: 14px; background: var(--bg);
+                 border-radius: 4px; overflow: hidden; }
+.mdl-bar-fill { display: block; height: 100%; background: var(--accent);
+                border-radius: 4px; transition: width .4s; }
+.mdl-bar-fill.unproven { background: var(--yellow); }
+.mdl-bar-count { width: 52px; text-align: right; color: var(--text); flex: none; }
+.mdl-bar-freqs { width: 58px; text-align: right; color: var(--text-dim);
+                 font-size: 11px; flex: none; }
+
+@media (max-width: 640px) {
+    .view-tab { padding: 10px 11px; font-size: 12px; }
+    .view-tab .view-icon { display: none; }
+}
+
+/* Empty state: a dedicated tab that renders nothing looks broken. Say why it
+   is empty and what to tune to fill it. */
+.view-empty {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 34px 28px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.6;
+}
+.view-empty p { max-width: 46ch; margin: 0 auto; }
+.view-empty-title {
+    color: var(--text);
+    font: 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+/* ══ Console polish ═══════════════════════════════════════════════════════
+   Everything below refines the tabbed workspace: keeping the header on one
+   line, making the nav reachable without scrolling back up, and making the
+   phone layout hold together at 360px. */
+
+/* Nav follows you down the page — with six views, scrolling to the bottom of
+   Decoders and then back up to reach Model was the common complaint. */
+.view-nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: var(--bg);
+    /* The fade tells you there are more tabs off the right edge on a phone,
+       which a plain clipped row does not. */
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+            mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+}
+@media (min-width: 700px) {
+    .view-nav { -webkit-mask-image: none; mask-image: none; }
+}
+
+/* ── Header C2 block ──
+   "NOAA Seattle 162.550M" wrapped onto four lines on a phone and pushed the
+   whole header past 110px tall. Clamp it and let it ellipsis instead. */
+.c2-val {
+    max-width: 30ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Status strip ──
+   Signal, tuned frequency and audio were three full-width slabs stacked down
+   the page for maybe forty characters of content between them. Side by side
+   they read as one instrument panel and give back ~120px of vertical space. */
+.listen-strip {
+    display: grid;
+    grid-template-columns: minmax(260px, 1.2fr) minmax(200px, 1fr) auto;
+    gap: 12px;
+    align-items: stretch;
+    margin-bottom: 12px;
+}
+.listen-strip > section { margin-bottom: 0; }
+@media (max-width: 860px) {
+    .listen-strip { grid-template-columns: 1fr; }
+}
+
+/* The meter reads as a level, not an empty form field. */
+.meter-container {
+    height: 10px !important;
+    border: none !important;
+    background: #0a0e14 !important;
+    border-radius: 999px !important;
+    overflow: hidden;
+}
+.meter-bar { border-radius: 999px; }
+
+.meter-value {
+    min-width: 4ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Transcript ──
+   A 300px fixed box meant most of the Listen view was empty on a quiet
+   channel. Let it size to content between sensible bounds. */
+/* ── Presets ── */
+.preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 8px;
+}
+.preset-btn {
+    border-radius: 8px;
+    transition: border-color .12s, background .12s;
+}
+.tabs { flex-wrap: wrap; gap: 6px; }
+
+/* ── Phone ── */
+@media (max-width: 640px) {
+    body { padding: 12px 12px 28px; }
+    header { gap: 8px; row-gap: 10px; }
+    header h1 { font-size: 17px; }
+    .c2-val { max-width: none; }
+    .sdr-c2 { flex: 1 1 100%; order: 2; }
+    .automation-config { order: 3; }
+    header .btn-advanced { order: 4; margin-left: 0; }
+    header #settings-toggle { margin-left: auto; }
+    .automation-config, .secondary-config { font-size: 12px; }
+    section { padding: 12px; }
+    .preset-grid { grid-template-columns: 1fr 1fr; }
+    .preset-label { font-size: 12px; }
+    .view-nav { margin: 10px -12px 14px; padding: 0 12px; }
+    /* Thumb-sized tap targets — 32px rows are hard to hit accurately. */
+    .view-tab { padding: 12px 13px; }
+    .btn { min-height: 34px; }
+}
+@media (max-width: 400px) {
+    .preset-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Narrow-screen containment ──
+   Measured at 360px: the C2 block's fixed-width lamp groups and the classifier
+   stat row each pushed the document ~30–60px wider than the viewport, so the
+   whole page scrolled sideways. Let both wrap and shrink. */
+.sdr-c2 { flex-wrap: wrap; row-gap: 6px; min-width: 0; }
+.c2-fields { min-width: 0; flex: 1 1 auto; }
+
+.clf-stats-bar { flex-wrap: wrap; row-gap: 6px; }
+
+@media (max-width: 520px) {
+    .c2-lamp-group { min-width: 0; }
+    .c2-link-group { margin-left: auto; }
+    .c2-val { max-width: none; }
+    .c2-field { min-width: 0; }
+    .clf-stats-bar { gap: 12px; }
+}
+
+/* ── Phone legibility and touch ──
+   Measured on a 390px viewport: 17 text nodes under 11px and 13 controls under
+   32px tall. Both are fine with a mouse on a 27" panel and genuinely bad on a
+   phone held at arm's length. */
+@media (max-width: 640px) {
+    section > label,
+    .c2-key, .c2-state, .stat-label, .clf-stat-label,
+    .mdl-card-title, .view-badge, .badge {
+        font-size: 11px;
+    }
+    .preset-freq { font-size: 11px; }
+
+    .tab, .btn-sm, select, input[type="text"], .preset-btn {
+        min-height: 36px;
+    }
+    .tab { display: inline-flex; align-items: center; }
+    /* A 13px checkbox is not a 44px target; pad the label around it. */
+    .auto-switch { display: inline-flex; align-items: center; gap: 6px;
+                   min-height: 36px; padding: 0 4px; }
+    .auto-switch input { width: 17px; height: 17px; }
+}
+
+/* A category like Public Safety has ten presets. Stacked one-per-row on a
+   phone that is ~530px of buttons before you reach the tabs, on a page whose
+   whole point was to stop making you scroll. Cap it and scroll inside. */
+@media (max-width: 860px) {
+    #preset-buttons {
+        max-height: 42vh;
+        overflow-y: auto;
+        padding-right: 2px;
+    }
+}
+
+/* Pager pages whose numeric decode is not actually numeric data. Kept visible
+   — an undecodable page still proves the channel is live — but visibly demoted
+   so it is not mistaken for a real callback number. */
+.pager-badge-undecoded {
+    font: 10px var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--yellow);
+    border: 1px solid #3a2f1a;
+    background: #241d10;
+    border-radius: 999px;
+    padding: 1px 7px;
+    margin-left: 6px;
+}
+.pager-text-undecoded {
+    color: var(--text-dim);
+    opacity: 0.75;
+    word-break: break-all;
+}

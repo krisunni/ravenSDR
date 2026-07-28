@@ -127,12 +127,32 @@
     </div>
 
     <main>
+        <!-- Tuning stays visible in every view: it is how you drive the radio. -->
         <!-- Preset Selector -->
         <section id="preset-section">
             <div id="category-tabs" class="tabs"></div>
             <div id="preset-buttons" class="preset-grid"></div>
         </section>
 
+        <nav id="view-nav" class="view-nav">
+            <button class="view-tab" data-view="listen"><span class="view-icon">▶</span>Listen<span class="view-badge" id="badge-listen"></span></button>
+            <button class="view-tab" data-view="classify"><span class="view-icon">◉</span>Classify<span class="view-badge" id="badge-classify"></span></button>
+            <button class="view-tab" data-view="decoders"><span class="view-icon">⌗</span>Decoders<span class="view-badge" id="badge-decoders"></span></button>
+            <button class="view-tab" data-view="imagery"><span class="view-icon">▦</span>Imagery<span class="view-badge" id="badge-imagery"></span></button>
+            <button class="view-tab" data-view="science"><span class="view-icon">☄</span>Science<span class="view-badge" id="badge-science"></span></button>
+            <button class="view-tab" data-view="model"><span class="view-icon">⚙</span>Model<span class="view-badge" id="badge-model"></span></button>
+        </nav>
+
+        <div class="view" id="view-listen">
+        <!-- One instrument strip: what we are on, how strong it is, and how to
+             hear it. These were three stacked full-width slabs holding about
+             forty characters between them. -->
+        <div class="listen-strip" id="listen-strip">
+        <!-- Now Tuned -->
+        <section id="tuned-section">
+            <span id="tuned-label" class="tuned-info">Not tuned</span>
+            <span id="tuned-freq" class="tuned-freq"></span>
+        </section>
         <!-- Signal Meter -->
         <section id="signal-section">
             <label>Signal</label>
@@ -141,7 +161,35 @@
             </div>
             <span id="signal-rms" class="meter-value">0</span>
         </section>
-
+        <!-- Audio Player -->
+        <section id="audio-section">
+            <label>Audio</label>
+            <div class="audio-controls">
+                <button id="audio-toggle" class="btn" disabled>Play Audio</button>
+                <span id="audio-status" class="status-text">No source</span>
+            </div>
+            <audio id="audio-player" preload="none"></audio>
+        </section>
+        </div>
+        <!-- Transcript Feed -->
+        <section id="transcript-section">
+            <div class="transcript-header">
+                <label>Transcript</label>
+                <div>
+                    <button id="clear-btn" class="btn btn-sm">Clear</button>
+                    <button id="copy-btn" class="btn btn-sm">Copy</button>
+                </div>
+            </div>
+            <div id="transcript-feed" class="transcript-feed"></div>
+        </section>
+        <!-- Weather Panel -->
+        <div id="weather-panel" class="hidden">
+            <div class="panel-header">
+                <label>Weather</label>
+                <button id="weather-toggle-btn" class="btn btn-sm">Hide</button>
+            </div>
+            <div class="weather-content"></div>
+        </div>
         <!-- Inference Stats -->
         <section id="stats-section">
             <label>Inference</label>
@@ -176,7 +224,73 @@
                 </div>
             </div>
         </section>
+        <!-- Controls -->
+        <section id="control-section">
+            <div class="control-group">
+                <label for="squelch-slider">Squelch <span class="info-icon" title="Mutes audio below this signal level. Increase to filter out static and noise when no one is transmitting.">i</span></label>
+                <input type="range" id="squelch-slider" min="0" max="100" value="0">
+                <span id="squelch-value">0</span>
+            </div>
+            <div class="control-group">
+                <label for="gain-select">Gain <span class="info-icon" title="Controls SDR receiver amplification. Auto adjusts dynamically. Increase manually for weak signals, decrease if audio is distorted.">i</span></label>
+                <select id="gain-select">
+                    <option value="auto" selected>Auto</option>
+                    <option value="0">0 dB</option>
+                    <option value="10">10 dB</option>
+                    <option value="20">20 dB</option>
+                    <option value="30">30 dB</option>
+                    <option value="40">40 dB</option>
+                    <option value="50">50 dB</option>
+                </select>
+            </div>
+            <button id="stop-btn" class="btn btn-stop" disabled>Stop</button>
+            <button id="advanced-toggle" class="btn btn-sm btn-advanced">Advanced</button>
+        </section>
+        <!-- Advanced SDR Settings (collapsible) -->
+        <div id="advanced-panel" class="advanced-panel hidden">
+            <div class="advanced-grid">
+                <div class="control-group">
+                    <label for="sample-rate-select">Sample Rate <span class="info-icon" title="Capture bandwidth. Wider = more spectrum but more noise.">i</span></label>
+                    <select id="sample-rate-select">
+                        <option value="" selected>Auto (200k)</option>
+                        <option value="170k">170k</option>
+                        <option value="200k">200k</option>
+                        <option value="256k">256k</option>
+                        <option value="1024k">1024k</option>
+                        <option value="2048k">2048k</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>De-emphasis <span class="info-icon" title="Reduces high-frequency hiss on FM signals. Auto = ON for FM modes.">i</span></label>
+                    <div class="toggle-group">
+                        <span class="toggle-label-text" id="deemp-label">Auto</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="deemp-toggle" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label for="ppm-input">PPM <span class="info-icon" title="Crystal frequency correction. Blog V4 TCXO = 0.">i</span></label>
+                    <input type="number" id="ppm-input" class="control-number" value="0" min="-200" max="200" step="1">
+                </div>
+                <div class="control-group">
+                    <label for="direct-sampling-select">Direct Samp <span class="info-icon" title="For HF reception below 24 MHz. Off for normal VHF/UHF.">i</span></label>
+                    <select id="direct-sampling-select">
+                        <option value="0" selected>Off</option>
+                        <option value="1">I-branch</option>
+                        <option value="2">Q-branch</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>Resample <span class="info-icon" title="Output sample rate, fixed at 16 kHz for Whisper compatibility.">i</span></label>
+                    <span class="control-readonly" id="resample-display">16k</span>
+                </div>
+            </div>
+        </div>
+        </div>
 
+        <div class="view" id="view-classify">
         <!-- Signal Classification -->
         <div id="classifier-panel">
             <!-- The model is trained on six classes, only three of which could be
@@ -223,7 +337,6 @@
             <div class="clf-feed-label">Classification History</div>
             <div id="clf-history-feed" class="clf-history-feed"></div>
         </div>
-
         <!-- Emitter Tracking (SEI) -->
         <div id="sei-panel">
             <div class="panel-header">
@@ -262,110 +375,95 @@
             <div class="sei-section-label">Recent Identifications</div>
             <div id="sei-recent-feed" class="sei-recent-feed"></div>
         </div>
-
-        <!-- Controls -->
-        <section id="control-section">
-            <div class="control-group">
-                <label for="squelch-slider">Squelch <span class="info-icon" title="Mutes audio below this signal level. Increase to filter out static and noise when no one is transmitting.">i</span></label>
-                <input type="range" id="squelch-slider" min="0" max="100" value="0">
-                <span id="squelch-value">0</span>
-            </div>
-            <div class="control-group">
-                <label for="gain-select">Gain <span class="info-icon" title="Controls SDR receiver amplification. Auto adjusts dynamically. Increase manually for weak signals, decrease if audio is distorted.">i</span></label>
-                <select id="gain-select">
-                    <option value="auto" selected>Auto</option>
-                    <option value="0">0 dB</option>
-                    <option value="10">10 dB</option>
-                    <option value="20">20 dB</option>
-                    <option value="30">30 dB</option>
-                    <option value="40">40 dB</option>
-                    <option value="50">50 dB</option>
-                </select>
-            </div>
-            <button id="stop-btn" class="btn btn-stop" disabled>Stop</button>
-            <button id="advanced-toggle" class="btn btn-sm btn-advanced">Advanced</button>
-        </section>
-
-        <!-- Advanced SDR Settings (collapsible) -->
-        <div id="advanced-panel" class="advanced-panel hidden">
-            <div class="advanced-grid">
-                <div class="control-group">
-                    <label for="sample-rate-select">Sample Rate <span class="info-icon" title="Capture bandwidth. Wider = more spectrum but more noise.">i</span></label>
-                    <select id="sample-rate-select">
-                        <option value="" selected>Auto (200k)</option>
-                        <option value="170k">170k</option>
-                        <option value="200k">200k</option>
-                        <option value="256k">256k</option>
-                        <option value="1024k">1024k</option>
-                        <option value="2048k">2048k</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label>De-emphasis <span class="info-icon" title="Reduces high-frequency hiss on FM signals. Auto = ON for FM modes.">i</span></label>
-                    <div class="toggle-group">
-                        <span class="toggle-label-text" id="deemp-label">Auto</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="deemp-toggle" checked>
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="control-group">
-                    <label for="ppm-input">PPM <span class="info-icon" title="Crystal frequency correction. Blog V4 TCXO = 0.">i</span></label>
-                    <input type="number" id="ppm-input" class="control-number" value="0" min="-200" max="200" step="1">
-                </div>
-                <div class="control-group">
-                    <label for="direct-sampling-select">Direct Samp <span class="info-icon" title="For HF reception below 24 MHz. Off for normal VHF/UHF.">i</span></label>
-                    <select id="direct-sampling-select">
-                        <option value="0" selected>Off</option>
-                        <option value="1">I-branch</option>
-                        <option value="2">Q-branch</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label>Resample <span class="info-icon" title="Output sample rate, fixed at 16 kHz for Whisper compatibility.">i</span></label>
-                    <span class="control-readonly" id="resample-display">16k</span>
-                </div>
-            </div>
         </div>
 
-        <!-- Audio Player -->
-        <section id="audio-section">
-            <label>Audio</label>
-            <div class="audio-controls">
-                <button id="audio-toggle" class="btn" disabled>Play Audio</button>
-                <span id="audio-status" class="status-text">No source</span>
-            </div>
-            <audio id="audio-player" preload="none"></audio>
-        </section>
-
-        <!-- Now Tuned -->
-        <section id="tuned-section">
-            <span id="tuned-label" class="tuned-info">Not tuned</span>
-            <span id="tuned-freq" class="tuned-freq"></span>
-        </section>
-
-        <!-- Transcript Feed -->
-        <section id="transcript-section">
-            <div class="transcript-header">
-                <label>Transcript</label>
-                <div>
-                    <button id="clear-btn" class="btn btn-sm">Clear</button>
-                    <button id="copy-btn" class="btn btn-sm">Copy</button>
-                </div>
-            </div>
-            <div id="transcript-feed" class="transcript-feed"></div>
-        </section>
-
-        <!-- Weather Panel -->
-        <div id="weather-panel" class="hidden">
+        <div class="view" id="view-decoders">
+        <div class="view-empty hidden" id="empty-decoders">
+          <div class="view-empty-title">No decoder running</div>
+          <p>Decoders only run while the radio is tuned to a preset that feeds them. Tune an ADS-B, ISM, APRS, ACARS or pager preset above and this tab will fill in.</p>
+        </div>
+        <!-- ADS-B Map Panel -->
+        <div id="adsb-panel" class="hidden">
             <div class="panel-header">
-                <label>Weather</label>
-                <button id="weather-toggle-btn" class="btn btn-sm">Hide</button>
+                <label>ADS-B Aircraft Map</label>
+                <span id="flight-count" class="flight-count">0 aircraft</span>
             </div>
-            <div class="weather-content"></div>
+            <div id="adsb-scan-status">Scanning ADS-B...</div>
+            <div id="adsb-map"></div>
+        </div>
+        <!-- ISM / Sensors Panel (rtl_433) -->
+        <div id="ism-panel" class="hidden">
+            <div class="panel-header">
+                <label>ISM Sensors (rtl_433)</label>
+                <span id="ism-count" class="flight-count">0 devices</span>
+            </div>
+            <div id="ism-status">Listening for ISM devices…</div>
+            <div class="sei-table-wrap">
+                <table class="sei-emitter-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>ID</th>
+                            <th>Readings</th>
+                            <th>RSSI</th>
+                            <th>Pkts</th>
+                            <th>First Seen</th>
+                            <th>Last Seen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ism-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+        <!-- APRS Panel (multimon-ng AFSK1200) -->
+        <div id="aprs-panel" class="hidden">
+            <div class="panel-header">
+                <label>APRS Stations (144.390)</label>
+                <span id="aprs-count" class="flight-count">0 stations</span>
+            </div>
+            <div id="aprs-status">Listening for APRS packets…</div>
+            <div class="sei-table-wrap">
+                <table class="sei-emitter-table">
+                    <thead>
+                        <tr>
+                            <th>Station</th>
+                            <th>Type</th>
+                            <th>Position</th>
+                            <th>Info</th>
+                            <th>Pkts</th>
+                            <th>First Heard</th>
+                            <th>Last Heard</th>
+                        </tr>
+                    </thead>
+                    <tbody id="aprs-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+        <!-- ACARS Panel (acarsdec) -->
+        <div id="acars-panel" class="hidden">
+            <div class="panel-header">
+                <label>ACARS Aircraft Messages</label>
+                <span id="acars-count" class="flight-count">0 aircraft</span>
+            </div>
+            <div id="acars-status">Listening for ACARS on 131.550 / 130.025 / 130.425 / 131.725 / 131.825 MHz…</div>
+            <div id="acars-feed" class="sei-recent-feed"></div>
+        </div>
+        <!-- Pager Panel (POCSAG/FLEX via multimon-ng) -->
+        <div id="pager-panel" class="hidden">
+            <div class="panel-header">
+                <label>Pager Messages (POCSAG / FLEX)</label>
+                <span id="pager-count" class="flight-count">0 addresses</span>
+            </div>
+            <div id="pager-status">Decoding pager traffic…</div>
+            <div id="pager-feed" class="sei-recent-feed"></div>
+        </div>
         </div>
 
+        <div class="view" id="view-imagery">
+        <div class="view-empty hidden" id="empty-imagery">
+          <div class="view-empty-title">No imagery source tuned</div>
+          <p>Pick a NOAA weather-satellite preset for APT imagery, or a WEFAX preset for HF weather fax. Passes are captured automatically on schedule.</p>
+        </div>
         <!-- Satellite Panel -->
         <div id="satellite-panel" class="hidden">
             <div class="panel-header">
@@ -391,7 +489,6 @@
             <div id="sat-latest-image"></div>
             <div id="sat-image-history"></div>
         </div>
-
         <!-- WEFAX Panel -->
         <div id="wefax-panel" class="hidden">
             <div class="panel-header">
@@ -457,7 +554,13 @@
             <div class="wefax-section-label">Chart History</div>
             <div id="wefax-chart-history"></div>
         </div>
+        </div>
 
+        <div class="view" id="view-science">
+        <div class="view-empty hidden" id="empty-science">
+          <div class="view-empty-title">Meteor detection idle</div>
+          <p>Tune the meteor-scatter preset to start counting head echoes against the 143.050 MHz GRAVES radar.</p>
+        </div>
         <!-- Meteor Scatter Panel -->
         <div id="meteor-panel" class="hidden">
             <div class="panel-header">
@@ -498,86 +601,46 @@
                 <span>Baseline: <span class="meteor-target-value" id="meteor-baseline">--</span></span>
             </div>
         </div>
-
-        <!-- ADS-B Map Panel -->
-        <div id="adsb-panel" class="hidden">
-            <div class="panel-header">
-                <label>ADS-B Aircraft Map</label>
-                <span id="flight-count" class="flight-count">0 aircraft</span>
-            </div>
-            <div id="adsb-scan-status">Scanning ADS-B...</div>
-            <div id="adsb-map"></div>
         </div>
 
-        <!-- ISM / Sensors Panel (rtl_433) -->
-        <div id="ism-panel" class="hidden">
-            <div class="panel-header">
-                <label>ISM Sensors (rtl_433)</label>
-                <span id="ism-count" class="flight-count">0 devices</span>
-            </div>
-            <div id="ism-status">Listening for ISM devices…</div>
-            <div class="sei-table-wrap">
-                <table class="sei-emitter-table">
-                    <thead>
-                        <tr>
-                            <th>Model</th>
-                            <th>ID</th>
-                            <th>Readings</th>
-                            <th>RSSI</th>
-                            <th>Pkts</th>
-                            <th>First Seen</th>
-                            <th>Last Seen</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ism-tbody"></tbody>
-                </table>
-            </div>
+        <div class="view" id="view-model">
+        <!-- Model view: what the classifier is, how it was built, how the
+             corpus is growing. Everything the operator needs to judge whether a
+             prediction is worth believing. -->
+        <section class="mdl-grid">
+          <div class="mdl-card">
+            <div class="mdl-card-title">Active model</div>
+            <div class="mdl-kv"><span>Backend</span><b id="mdl-backend">&mdash;</b></div>
+            <div class="mdl-kv"><span>Architecture</span><b id="mdl-arch">&mdash;</b></div>
+            <div class="mdl-kv"><span>Classifications</span><b id="mdl-total">0</b></div>
+            <div class="mdl-kv"><span>Agrees with preset</span><b id="mdl-acc">&mdash;</b></div>
+          </div>
+          <div class="mdl-card">
+            <div class="mdl-card-title">Trust</div>
+            <div class="mdl-kv"><span>Validated</span><b id="mdl-validated" class="ok">&mdash;</b></div>
+            <div class="mdl-kv"><span>Unproven</span><b id="mdl-unproven" class="warn">&mdash;</b></div>
+            <p class="mdl-note">A class seen on only one frequency cannot be told
+              apart from the model having memorised that band.</p>
+          </div>
+          <div class="mdl-card">
+            <div class="mdl-card-title">Collection</div>
+            <div class="mdl-kv"><span>Running</span><b id="mdl-collecting">&mdash;</b></div>
+            <div class="mdl-kv"><span>Band</span><b id="mdl-band">&mdash;</b></div>
+            <div class="mdl-kv"><span>Corpus</span><b id="mdl-corpus">0</b></div>
+            <div class="mdl-kv"><span>Rejected as noise</span><b id="mdl-empty">0</b></div>
+          </div>
+        </section>
+        <section class="mdl-card mdl-wide">
+          <div class="mdl-card-title">Training corpus by class</div>
+          <div id="mdl-corpus-bars" class="mdl-bars"></div>
+          <p class="mdl-note">Sample count is the bar; the figure after it is how
+            many distinct frequencies those samples came from. One frequency means
+            the class is unproven no matter how many samples it has.</p>
+          <p class="mdl-note" id="mdl-balance"></p>
+        </section>
+
         </div>
 
-        <!-- APRS Panel (multimon-ng AFSK1200) -->
-        <div id="aprs-panel" class="hidden">
-            <div class="panel-header">
-                <label>APRS Stations (144.390)</label>
-                <span id="aprs-count" class="flight-count">0 stations</span>
-            </div>
-            <div id="aprs-status">Listening for APRS packets…</div>
-            <div class="sei-table-wrap">
-                <table class="sei-emitter-table">
-                    <thead>
-                        <tr>
-                            <th>Station</th>
-                            <th>Type</th>
-                            <th>Position</th>
-                            <th>Info</th>
-                            <th>Pkts</th>
-                            <th>First Heard</th>
-                            <th>Last Heard</th>
-                        </tr>
-                    </thead>
-                    <tbody id="aprs-tbody"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- ACARS Panel (acarsdec) -->
-        <div id="acars-panel" class="hidden">
-            <div class="panel-header">
-                <label>ACARS Aircraft Messages</label>
-                <span id="acars-count" class="flight-count">0 aircraft</span>
-            </div>
-            <div id="acars-status">Listening for ACARS on 131.550 / 130.025 / 130.425 / 131.725 / 131.825 MHz…</div>
-            <div id="acars-feed" class="sei-recent-feed"></div>
-        </div>
-
-        <!-- Pager Panel (POCSAG/FLEX via multimon-ng) -->
-        <div id="pager-panel" class="hidden">
-            <div class="panel-header">
-                <label>Pager Messages (POCSAG / FLEX)</label>
-                <span id="pager-count" class="flight-count">0 addresses</span>
-            </div>
-            <div id="pager-status">Decoding pager traffic…</div>
-            <div id="pager-feed" class="sei-recent-feed"></div>
-        </div>
     </main>
 
     <script src="{{ asset('vendor/socket.io.min.js') }}"></script>

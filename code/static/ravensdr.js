@@ -141,6 +141,12 @@
         renderRadioLink(data);
     });
 
+    socket.on("signal_classified", function (data) {
+        // Surfaced on the tab so you can see the model working without
+        // sitting on the Classify view.
+        setBadge("classify", (data && data.modulation) || "", "live");
+    });
+
     socket.on("signal_level", function (data) {
         updateSignalMeter(data.rms);
     });
@@ -203,6 +209,7 @@
                     // up the full record — mode drives which tracker is shown.
                     var full = presets.find(function (p) { return p.id === actual.id; });
                     updatePanelsForPreset(full || actual);
+                    refreshEmptyStates();
                     return;
                 }
                 // Radio is idle. Show a tab, but leave the hardware alone —
@@ -239,6 +246,153 @@
     // The radio is separate hardware with a real switching delay, so the console
     // reports what it was COMMANDED to do, what it is ACTUALLY doing, and the
     // transition between the two.
+
+    // ── Tabbed workspace ──────────────────────────────────────────────────
+    // Twelve panels stacked in one scroll meant the classifier — the thing the
+    // node now spends most of its effort on — sat below the fold, and the
+    // decoders were somewhere past that. Views group them; the last one is
+    // remembered so a refresh does not dump you back at the top.
+    var VIEW_KEY = "ravensdr.view";
+
+    function showView(id) {
+        document.querySelectorAll(".view").forEach(function (v) {
+            v.classList.toggle("active", v.id === "view-" + id);
+        });
+        document.querySelectorAll(".view-tab").forEach(function (t) {
+            t.classList.toggle("active", t.dataset.view === id);
+        });
+        try { localStorage.setItem(VIEW_KEY, id); } catch (e) {}
+        if (id === "decoders" && window.ravenMap && mapVisible) {
+            // Leaflet mis-measures itself if it was sized while hidden.
+            setTimeout(function () { window.ravenMap.invalidateSize &&
+                                     window.ravenMap.invalidateSize(); }, 60);
+        }
+        if (id === "model") refreshModelView();
+        refreshEmptyStates();
+    }
+
+    // A view whose panels are all hidden (because the tuned preset does not
+    // feed it) renders as a blank tab. Swap in an explanation instead.
+    function refreshEmptyStates() {
+        ["decoders", "imagery", "science"].forEach(function (v) {
+            var view = document.getElementById("view-" + v);
+            var empty = document.getElementById("empty-" + v);
+            if (!view || !empty) return;
+            var panels = view.querySelectorAll('div[id$="-panel"], section');
+            var anyShown = false;
+            for (var i = 0; i < panels.length; i++) {
+                var el = panels[i];
+                if (el === empty || empty.contains(el)) continue;
+                // offsetParent is null for a hidden ancestor too, so read the
+                // element's own display rather than its rendered box.
+                if (getComputedStyle(el).display !== "none") { anyShown = true; break; }
+            }
+            empty.classList.toggle("hidden", anyShown);
+        });
+    }
+
+    function wireViews() {
+        var tabs = document.querySelectorAll(".view-tab");
+        if (!tabs.length) return;
+        tabs.forEach(function (t) {
+            t.addEventListener("click", function () { showView(t.dataset.view); });
+        });
+        var saved = null;
+        try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
+        showView(saved && document.getElementById("view-" + saved) ? saved : "listen");
+    }
+
+    // Badges: show activity without having to open the tab.
+    function setBadge(id, text, cls) {
+        var el = document.getElementById("badge-" + id);
+        if (!el) return;
+        el.textContent = text || "";
+        el.className = "view-badge" + (cls ? " " + cls : "");
+    }
+
+    function refreshModelView() {
+        fetch("/api/classifier/status").then(function (r) { return r.json(); })
+          .then(function (d) {
+              var set = function (id, v, cls) {
+                  var el = document.getElementById(id);
+                  if (!el) return;
+                  el.textContent = v;
+                  if (cls) el.className = cls;
+              };
+              var labels = { hailo: "Hailo NPU", onnx: "Trained model (CPU)",
+                             cpu: "Heuristic rules", none: "None" };
+              set("mdl-backend", labels[d.backend] || d.backend);
+              set("mdl-arch", d.model || "—");
+              set("mdl-total", (d.classifications_total || 0).toLocaleString());
+              set("mdl-acc", Math.round((d.accuracy_vs_presets || 0) * 100) + "%"
+                             + " (" + (d.correct_count || 0) + "/" + (d.compared_count || 0) + ")");
+              set("mdl-validated", (d.validated_classes || []).join(" ") || "none", "ok");
+              set("mdl-unproven", (d.unproven_classes || []).join(" ") || "none", "warn");
+              window._unproven = d.unproven_classes || [];
+          }).catch(function () {});
+
+        fetch("/api/iq-collect").then(function (r) { return r.json(); })
+          .then(function (d) {
+              var c = d.corpus || {}, band = d.current_band || {};
+              var set = function (id, v) {
+                  var el = document.getElementById(id); if (el) el.textContent = v;
+              };
+              set("mdl-collecting", d.capturing ? "capturing"
+                                   : (d.running ? "idle between bands" : "stopped"));
+              // band.label is the MODULATION class, not the channel — showing
+              // it here just repeated what the corpus bars already say. The
+              // useful answer is which frequency is being recorded right now.
+              set("mdl-band", band && band.id
+                  ? (band.freq_hz ? (band.freq_hz / 1e6).toFixed(3) + " MHz  " : "")
+                    + band.id
+                  : "— (" + (d.rotations || 0) + " rotations done)");
+              set("mdl-corpus", (c.total || 0).toLocaleString());
+              set("mdl-empty", ((c.skipped_empty || 0) +
+                                (c.skipped_low_snr || 0)).toLocaleString());
+              renderCorpusBars(c.per_class || {}, d.frequencies_per_class || {});
+              setBadge("model", d.capturing ? "REC" : "", d.capturing ? "live" : "");
+          }).catch(function () {});
+    }
+
+    function renderCorpusBars(perClass, perClassFreqs) {
+        var wrap = document.getElementById("mdl-corpus-bars");
+        if (!wrap) return;
+        var rows = Object.keys(perClass).map(function (k) {
+            return { k: k, v: perClass[k] };
+        }).sort(function (a, b) { return b.v - a.v; });
+        wrap.innerHTML = "";
+        if (!rows.length) { wrap.innerHTML = "<div class='mdl-note'>No samples yet.</div>"; return; }
+        var max = rows[0].v;
+        var unproven = window._unproven || [];
+        rows.forEach(function (r) {
+            var nf = (perClassFreqs || {})[r.k] || 0;
+            // Amber = the class was only ever heard on one frequency, so a high
+            // score cannot be distinguished from the model memorising that band.
+            var bad = unproven.indexOf(r.k) !== -1;
+            var row = document.createElement("div");
+            row.className = "mdl-bar-row";
+            row.innerHTML =
+                '<span class="mdl-bar-label">' + r.k + '</span>' +
+                '<span class="mdl-bar-track"><span class="mdl-bar-fill' +
+                    (bad ? " unproven" : "") + '" style="width:' +
+                    Math.max(2, 100 * r.v / max) + '%"></span></span>' +
+                '<span class="mdl-bar-count">' + r.v + '</span>' +
+                '<span class="mdl-bar-freqs" title="distinct frequencies">' +
+                    nf + (nf === 1 ? " freq" : " freqs") + '</span>';
+            wrap.appendChild(row);
+        });
+        var note = document.getElementById("mdl-balance");
+        if (note) {
+            var min = rows[rows.length - 1].v;
+            var ratio = min ? max / min : 0;
+            note.innerHTML = "Largest class is <b>" + ratio.toFixed(1) +
+                "&times;</b> the smallest. " + (ratio > 4
+                ? "Too skewed to train on — the model would learn to guess the majority."
+                : "Workable balance.") +
+                " Amber bars are classes seen on only one frequency.";
+        }
+    }
+
     // ── Automation master switch ──
     // Reflects whether schedulers (satellite passes, WEFAX, ADS-B scan) are
     // allowed to seize the SDR. Paused means the radio only does what you ask.
@@ -446,6 +600,9 @@
             "signal-section", "stats-section",
             "control-section", "advanced-panel",
             "audio-section", "tuned-section",
+            // The strip wrapping the first three; without it an empty grid
+            // still contributes its margin on decoder-only presets.
+            "listen-strip",
         ];
         var hasAudio = !isWefax && !isScience && !isAdsbOnly && !isAisOnly && !isIsm && !isAcars && !isPager;
 
@@ -520,6 +677,25 @@
         }
     }
 
+    // Tuning a decoder preset while sitting on another tab used to look like
+    // nothing happened — the data was rendering in a view you were not on.
+    // Follow the radio to wherever its output actually lands.
+    var MODE_VIEW = {
+        adsb: "decoders", ais: "decoders", ism: "decoders",
+        aprs: "decoders", acars: "decoders", pager: "decoders",
+        wefax: "imagery", apt: "imagery", satellite: "imagery",
+        // weather presets carry the NOAA APT decode, which renders in Imagery.
+        meteor: "science",
+    };
+
+    function followPresetToView(preset) {
+        if (!preset) return;
+        var byCategory = { science: "science", wefax: "imagery", weather: "imagery" };
+        var target = MODE_VIEW[preset.mode] || byCategory[preset.category] || "listen";
+        if (!document.getElementById("view-" + target)) return;
+        showView(target);
+    }
+
     function tunePreset(presetId) {
         var eb = document.getElementById("error-banner");
         if (eb) eb.classList.add("hidden");
@@ -538,6 +714,10 @@
                 renderPresetButtons(activeCategory);
 
                 updatePanelsForPreset(data.preset || {});
+                refreshEmptyStates();
+                // Only on an EXPLICIT tune. Doing this on page load would
+                // override the view the operator had open when they refreshed.
+                followPresetToView(data.preset || {});
             });
     }
 
@@ -864,6 +1044,8 @@
     // ── ADS-B Map ──
 
     socket.on("adsb_update", function (flights) {
+        setBadge("decoders", flights.length ? String(flights.length) : "",
+                 flights.length ? "live" : "");
         if (mapVisible && window.ravenMap) {
             window.ravenMap.updateAircraft(flights);
         }
@@ -897,6 +1079,13 @@
         }
         mapVisible = false;
     }
+
+    // ── Tabbed workspace ──
+    wireViews();
+    setInterval(function () {
+        var m = document.getElementById("view-model");
+        if (m && m.classList.contains("active")) refreshModelView();
+    }, 5000);
 
     // ── Automation switch ──
     wireAutomationToggle();

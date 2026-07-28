@@ -63,9 +63,25 @@
             addr.textContent = m.address || "—";
             item.appendChild(addr);
 
+            // A numeric-mode payload full of the unassigned BCD codes "[" and
+            // "]" is not a callback number — it is alphanumeric or binary
+            // content forced through the numeric table, or noise that got past
+            // BCH correction. Say so rather than presenting line noise as a
+            // message; the raw payload stays visible either way.
+            if (m.quality === "low") {
+                var warn = document.createElement("span");
+                warn.className = "pager-badge-undecoded";
+                warn.textContent = "not numeric data";
+                warn.title = "POCSAG numeric decode contains codes that carry no " +
+                             "meaning in paging. Likely an alphanumeric page read " +
+                             "in numeric mode, or noise that passed error correction.";
+                item.appendChild(warn);
+            }
+
             if (m.text) {
                 var txt = document.createElement("div");
-                txt.className = "acars-text";
+                txt.className = "acars-text" +
+                    (m.quality === "low" ? " pager-text-undecoded" : "");
                 txt.textContent = m.text;
                 item.appendChild(txt);
             }

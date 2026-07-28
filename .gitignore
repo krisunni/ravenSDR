@@ -35,3 +35,6 @@ code/static/images/
 
 # Trained model — 8.6MB binary, rebuilt from the corpus by the ML pipeline
 code/ravensdr/models/signal_classifier.onnx
+
+# Browser UI snapshots (code/scripts/ui_snapshot.py)
+.ui-snapshots/
