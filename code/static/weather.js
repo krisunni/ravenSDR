@@ -46,7 +46,9 @@
                 return r.json();
             })
             .then(function (data) {
-                if (data && !data.error) {
+                // available:false is a normal state — the node may simply not
+                // have been tuned to NOAA yet. Only render when there is data.
+                if (data && data.available !== false && !data.error) {
                     self._currentData = data;
                     self._addRawTranscript(data.raw_transcript);
                     self._render(data);

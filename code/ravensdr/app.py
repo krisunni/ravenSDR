@@ -11,7 +11,7 @@ import threading
 import numpy as np
 
 from flask import (Flask, Response, jsonify, make_response, render_template,
-                   request, stream_with_context)
+                   request, send_from_directory, stream_with_context)
 from flask_socketio import SocketIO
 
 from ravensdr.audio_router import audio_stream_generator
@@ -1180,6 +1180,14 @@ def api_iq_collect():
     return jsonify(snap)
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """Serve the app icon. Browsers request this unconditionally, and a 404 on
+    every page load is noise that hides real errors in the console."""
+    return send_from_directory(app.static_folder, "favicon.svg",
+                               mimetype="image/svg+xml")
+
+
 @app.route("/learn")
 def learn():
     """Static explainer: how RF becomes a spectrogram becomes a classification.
@@ -1449,9 +1457,22 @@ def api_pager_pages():
 
 @app.route("/api/weather/current")
 def api_weather_current():
+    """Latest decoded NOAA weather, or an explicit 'nothing yet'.
+
+    Returns 200 even with no data. 404 means "this resource does not exist",
+    but the endpoint exists and having decoded no weather yet is an ordinary
+    state — the node may simply not have been tuned to NOAA. Returning 404 made
+    every console log a red error on a healthy node.
+    """
     if _latest_weather is None:
-        return jsonify({"error": "No weather data received yet"}), 404
-    return jsonify(_latest_weather)
+        return jsonify({
+            "available": False,
+            "message": "No weather decoded yet — tune to a NOAA preset and "
+                       "wait for a transcript",
+        })
+    payload = dict(_latest_weather)
+    payload["available"] = True
+    return jsonify(payload)
 
 
 @app.route("/api/satellite/passes")

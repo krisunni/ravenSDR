@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#0d1117"/>
+  <!-- antenna mast -->
+  <rect x="30" y="26" width="4" height="26" rx="1" fill="#e6edf3"/>
+  <!-- dipole arms -->
+  <path d="M32 28 L18 14 M32 28 L46 14" stroke="#e6edf3" stroke-width="4"
+        stroke-linecap="round" fill="none"/>
+  <!-- radiating waves -->
+  <path d="M20 44 a16 16 0 0 1 24 0" stroke="#58a6ff" stroke-width="3.2"
+        fill="none" stroke-linecap="round" opacity="0.95"/>
+  <path d="M13 50 a26 26 0 0 1 38 0" stroke="#3fb950" stroke-width="2.8"
+        fill="none" stroke-linecap="round" opacity="0.7"/>
+</svg>
