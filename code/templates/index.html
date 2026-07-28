@@ -12,7 +12,10 @@
     <link rel="stylesheet" href="{{ asset('classifier.css') }}">
     <link rel="stylesheet" href="{{ asset('sei.css') }}">
     <link rel="stylesheet" href="{{ asset('settings.css') }}">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css" />
+    <!-- Vendored, not CDN. The node is meant to run air-gapped; loading
+         socket.io from the internet means NO data at all without an uplink,
+         which is how the console appeared broken while the server was fine. -->
+    <link rel="stylesheet" href="{{ asset('vendor/leaflet.css') }}">
 </head>
 <body>
     <header>
@@ -576,9 +579,9 @@
         </div>
     </main>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
-    <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-rotatedmarker@0.2.0/leaflet.rotatedMarker.js"></script>
+    <script src="{{ asset('vendor/socket.io.min.js') }}"></script>
+    <script src="{{ asset('vendor/leaflet.js') }}"></script>
+    <script src="{{ asset('vendor/leaflet.rotatedMarker.js') }}"></script>
     <script src="{{ asset('map.js') }}"></script>
     <script src="{{ asset('weather.js') }}"></script>
     <script src="{{ asset('satellite.js') }}"></script>
