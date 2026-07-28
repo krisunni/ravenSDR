@@ -94,7 +94,7 @@ def main():
 
     import torch
     import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
+    from torch.utils.data import DataLoader
     from torchvision import models
 
     print("Loading and grouping by frequency...")
@@ -110,14 +110,32 @@ def main():
         for cls, f in weak:
             print("  %-10s %.3f MHz" % (cls, f / 1e6))
 
-    print("\nTrain %d / Test %d over %d classes" % (len(tr_x), len(te_x), len(classes)))
+    print("\nTrain %d / Test %d over %d classes  (%.2f GB held as uint8)"
+          % (len(tr_x), len(te_x), len(classes),
+             (tr_x.nbytes + te_x.nbytes) / 1e9))
     if not len(te_x):
         print("No test data — nothing to validate.")
         return
 
-    def prep(x):
-        t = torch.from_numpy(x.astype(np.float32) / 255.0)
-        return t.unsqueeze(1).repeat(1, 3, 1, 1)
+    class Uint8Spectrograms(torch.utils.data.Dataset):
+        """Keeps images as uint8 and expands to float32 3-channel PER BATCH.
+
+        Materialising the whole set as float32 x3 channels needs
+        n * 224 * 224 * 3 * 4 bytes — 5.6 GB for 9353 samples, which OOM-killed
+        the training VM. Held as uint8 it is 0.47 GB, and the expansion costs
+        nothing when done one batch at a time.
+        """
+
+        def __init__(self, images, labels):
+            self.images = images
+            self.labels = torch.from_numpy(labels)
+
+        def __len__(self):
+            return len(self.images)
+
+        def __getitem__(self, i):
+            img = torch.from_numpy(self.images[i].astype(np.float32) / 255.0)
+            return img.unsqueeze(0).repeat(3, 1, 1), self.labels[i]
 
     # Class weights: the corpus is heavily skewed (FM ~1200 vs APRS ~60) and an
     # unweighted loss just learns to predict the majority class.
@@ -135,7 +153,7 @@ def main():
         {"params": model.classifier.parameters(), "lr": 1e-3},
     ])
 
-    loader = DataLoader(TensorDataset(prep(tr_x), torch.from_numpy(tr_y)),
+    loader = DataLoader(Uint8Spectrograms(tr_x, tr_y),
                         batch_size=args.batch_size, shuffle=True)
     for ep in range(args.epochs):
         model.train()
@@ -155,9 +173,10 @@ def main():
 
     model.eval()
     preds = []
+    test_loader = DataLoader(Uint8Spectrograms(te_x, te_y), batch_size=32)
     with torch.no_grad():
-        for i in range(0, len(te_x), 64):
-            preds.append(model(prep(te_x[i:i + 64])).argmax(1).numpy())
+        for xb, _ in test_loader:
+            preds.append(model(xb).argmax(1).numpy())
     preds = np.concatenate(preds)
 
     print("\n" + "=" * 62)
