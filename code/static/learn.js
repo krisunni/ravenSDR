@@ -618,4 +618,370 @@
         draw();
     })();
 
+    // ── 8a. feed-forward network, using OUR classes ──────────────────────
+    (function ffnet() {
+        var svg = d3.select("#s-ffnet");
+        if (svg.empty()) return;
+        var CLASSES = ["FM", "WFM", "OOK", "MSK", "FSK", "AFSK1200"];
+        var layers = [
+            { n: 8, x: 95,  label: "spectrogram pixels", sub: "224 x 224" },
+            { n: 6, x: 300, label: "edges / textures", sub: "borrowed layers" },
+            { n: 6, x: 505, label: "signal shapes", sub: "borrowed layers" },
+            { n: 6, x: 720, label: "our classes", sub: "retrained head" }
+        ];
+        var hint = document.getElementById("ff-hint");
+        var nodes = [], links = [];
+
+        layers.forEach(function (L, li) {
+            var gap = 250 / (L.n + 1);
+            for (var i = 0; i < L.n; i++) {
+                nodes.push({ li: li, i: i, x: L.x, y: 40 + gap * (i + 1) });
+            }
+            svg.append("text").attr("x", L.x).attr("y", 20).attr("text-anchor", "middle")
+               .attr("fill", li === 3 ? C.accent : C.dim)
+               .style("font", "11px ui-monospace").text(L.label);
+            svg.append("text").attr("x", L.x).attr("y", 33).attr("text-anchor", "middle")
+               .attr("fill", C.grid).style("font", "9px ui-monospace").text(L.sub);
+        });
+
+        for (var li = 0; li < layers.length - 1; li++) {
+            nodes.filter(function (n) { return n.li === li; }).forEach(function (a) {
+                nodes.filter(function (n) { return n.li === li + 1; }).forEach(function (b) {
+                    links.push({ a: a, b: b, w: Math.random() });
+                });
+            });
+        }
+
+        var lsel = svg.selectAll("line.lnk").data(links).enter().append("line")
+            .attr("class", "lnk")
+            .attr("x1", function (d) { return d.a.x; }).attr("y1", function (d) { return d.a.y; })
+            .attr("x2", function (d) { return d.b.x; }).attr("y2", function (d) { return d.b.y; })
+            .attr("stroke", C.grid)
+            .attr("stroke-width", function (d) { return 0.3 + d.w * 1.5; });
+
+        var nsel = svg.selectAll("circle.nd").data(nodes).enter().append("circle")
+            .attr("class", "nd")
+            .attr("cx", function (d) { return d.x; }).attr("cy", function (d) { return d.y; })
+            .attr("r", 8).attr("fill", "#1c2430").attr("stroke", C.grid);
+
+        // label the output neurons with the modulations this node actually collects
+        nodes.filter(function (n) { return n.li === 3; }).forEach(function (n, i) {
+            svg.append("text").attr("x", n.x + 16).attr("y", n.y + 4)
+               .attr("fill", C.dim).style("font", "10px ui-monospace").text(CLASSES[i]);
+        });
+
+        var busy = false, auto = null;
+        function pulse(dir) {
+            if (busy) return;
+            busy = true;
+            var order = dir > 0 ? [0, 1, 2, 3] : [3, 2, 1, 0];
+            var winner = Math.floor(Math.random() * CLASSES.length);
+            hint.innerHTML = dir > 0
+                ? "Forward: each neuron multiplies its inputs by its weights, sums them, "
+                  + "applies ReLU. The brightest output neuron wins &mdash; here <strong>"
+                  + CLASSES[winner] + "</strong>."
+                : "Backward: the error is pushed back through the same connections. Each "
+                  + "weight learns how much IT contributed, and moves a small step to "
+                  + "reduce it. That is backpropagation.";
+            order.forEach(function (li, step) {
+                setTimeout(function () {
+                    nsel.filter(function (d) { return d.li === li; })
+                        .transition().duration(160)
+                        .attr("fill", dir > 0 ? C.accent : C.yellow).attr("r", 10)
+                        .transition().duration(320)
+                        .attr("fill", function (d) {
+                            return (dir > 0 && li === 3 && d.i === winner) ? C.green : "#1c2430";
+                        })
+                        .attr("r", function (d) {
+                            return (dir > 0 && li === 3 && d.i === winner) ? 11 : 8;
+                        });
+                    lsel.filter(function (d) {
+                        return dir > 0 ? d.a.li === li : d.b.li === li;
+                    }).transition().duration(160)
+                      .attr("stroke", dir > 0 ? C.accent : C.yellow)
+                      .transition().duration(420).attr("stroke", C.grid);
+                    if (step === 3) setTimeout(function () { busy = false; }, 500);
+                }, step * 380);
+            });
+        }
+        document.getElementById("ff-forward").addEventListener("click", function () { pulse(1); });
+        document.getElementById("ff-back").addEventListener("click", function () { pulse(-1); });
+        document.getElementById("ff-auto").addEventListener("click", function () {
+            if (auto) { clearInterval(auto); auto = null; this.textContent = "run continuously"; }
+            else {
+                this.textContent = "stop";
+                var fwd = true;
+                auto = setInterval(function () { pulse(fwd ? 1 : -1); fwd = !fwd; }, 1900);
+            }
+        });
+        pulse(1);
+    })();
+
+    // ── 8b. activation functions ─────────────────────────────────────────
+    (function activation() {
+        var ctx = ctxOf("c-activation");
+        if (!ctx) return;
+        var kind = "relu", hint = document.getElementById("act-hint");
+        var notes = {
+            relu: "max(0, x). Cheap, and does not flatten out for large inputs — the " +
+                  "default in MobileNetV2 (which actually uses ReLU6, clipped at 6 to " +
+                  "stay friendly to 8-bit quantisation on chips like the Hailo).",
+            sigmoid: "Squashes everything into 0..1. Its slope vanishes at both ends, so " +
+                     "gradients die in deep stacks — this is why deep nets moved away from it.",
+            tanh: "Like sigmoid but centred on zero, which helps. Still saturates.",
+            linear: "No activation at all. Stack a hundred of these and you still only " +
+                    "have a linear function — depth buys you nothing. This is WHY " +
+                    "non-linearity is required."
+        };
+        wire("[data-act]", function (d) { kind = d.act; hint.textContent = notes[kind]; });
+        hint.textContent = notes.relu;
+
+        function f(x) {
+            if (kind === "relu") return Math.max(0, Math.min(6, x));   // ReLU6
+            if (kind === "sigmoid") return 1 / (1 + Math.exp(-x));
+            if (kind === "tanh") return Math.tanh(x);
+            return x;
+        }
+        function draw() {
+            var w = ctx._w, h = ctx._h, cx = w / 2, cy = h / 2 + 20;
+            ctx.clearRect(0, 0, w, h);
+            ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(40, cy); ctx.lineTo(w - 20, cy);
+            ctx.moveTo(cx, 16); ctx.lineTo(cx, h - 12); ctx.stroke();
+            ctx.fillStyle = C.dim; ctx.font = "10px ui-monospace, monospace";
+            ctx.fillText("input", w - 60, cy - 6); ctx.fillText("output", cx + 6, 24);
+
+            ctx.strokeStyle = C.accent; ctx.lineWidth = 2.2;
+            ctx.beginPath();
+            for (var px = 40; px < w - 20; px++) {
+                var x = (px - cx) / 42, y = cy - f(x) * 26;
+                y = Math.max(14, Math.min(h - 10, y));
+                px === 40 ? ctx.moveTo(px, y) : ctx.lineTo(px, y);
+            }
+            ctx.stroke();
+            requestAnimationFrame(draw);
+        }
+        draw();
+    })();
+
+    // ── 9a. convolution over a SPECTROGRAM ───────────────────────────────
+    (function convolution() {
+        var ctx = ctxOf("c-conv");
+        if (!ctx) return;
+        var N = 34, img = [], kern = "edge", pos = 0, out = [];
+
+        // synthesise something that looks like OUR data: a steady carrier plus a burst
+        for (var r = 0; r < N; r++) {
+            img.push([]);
+            for (var c = 0; c < N; c++) {
+                var v = 0.13 + Math.random() * 0.09;                  // noise floor
+                if (Math.abs(c - 11) < 2) v += 0.72;                  // continuous carrier
+                if (r > 12 && r < 19 && Math.abs(c - 23) < 4) v += 0.66; // a burst
+                img[r].push(Math.min(1, v));
+            }
+        }
+        var kernels = {
+            edge:  [[-1,-1,-1],[-1,8,-1],[-1,-1,-1]],
+            horiz: [[-1,-1,-1],[2,2,2],[-1,-1,-1]],
+            blur:  [[1,1,1],[1,1,1],[1,1,1]].map(function(r){return r.map(function(v){return v/9;});})
+        };
+        var notes = {
+            edge: "Fires where brightness changes sharply — it finds the EDGES of the " +
+                  "carrier and the burst, ignoring flat noise.",
+            horiz: "Tuned to horizontal structure — in a spectrogram that means events " +
+                   "spread across frequency, like a wideband burst.",
+            blur: "Averages its neighbours. Smooths noise away, but blurs the very edges " +
+                  "the first kernel was looking for."
+        };
+        var hint = document.getElementById("conv-hint");
+        wire("[data-kern]", function (d) { kern = d.kern; out = []; pos = 0;
+            hint.innerHTML = notes[kern] + " <strong>Nine weights, reused everywhere.</strong>"; });
+
+        function draw() {
+            var w = ctx._w, h = ctx._h, cell = 6, ox = 30, oy = 26;
+            ctx.clearRect(0, 0, w, h);
+            for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+                var v = Math.floor(img[r][c] * 255);
+                ctx.fillStyle = "rgb(" + Math.floor(v*0.3) + "," + Math.floor(v*0.7) + "," + v + ")";
+                ctx.fillRect(ox + c*cell, oy + r*cell, cell, cell);
+            }
+            ctx.fillStyle = C.dim; ctx.font = "10px ui-monospace, monospace";
+            ctx.fillText("input spectrogram", ox, 18);
+
+            var kr = Math.floor(pos / (N-2)), kc = pos % (N-2);
+            ctx.strokeStyle = C.yellow; ctx.lineWidth = 2;
+            ctx.strokeRect(ox + kc*cell, oy + kr*cell, cell*3, cell*3);
+
+            // the 3x3 kernel, drawn large
+            var kx = ox + N*cell + 40, ky = oy + 20;
+            ctx.fillStyle = C.dim; ctx.fillText("kernel (9 weights)", kx, 18);
+            var K = kernels[kern];
+            for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) {
+                ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+                ctx.strokeRect(kx + j*26, ky + i*26, 26, 26);
+                ctx.fillStyle = K[i][j] > 0 ? C.green : C.red;
+                ctx.font = "10px ui-monospace, monospace";
+                ctx.fillText(K[i][j].toFixed(K[i][j] % 1 ? 2 : 0), kx + j*26 + 5, ky + i*26 + 17);
+            }
+
+            // accumulate the output map
+            var acc = 0;
+            for (var a = 0; a < 3; a++) for (var b = 0; b < 3; b++)
+                acc += img[kr+a][kc+b] * K[a][b];
+            if (!out[kr]) out[kr] = [];
+            out[kr][kc] = Math.abs(acc);
+
+            var oxx = kx + 110;
+            ctx.fillStyle = C.dim; ctx.fillText("feature map", oxx, 18);
+            for (var rr = 0; rr < out.length; rr++)
+                for (var cc = 0; cc < (out[rr] || []).length; cc++) {
+                    var vv = Math.floor(Math.min(1, out[rr][cc]) * 255);
+                    ctx.fillStyle = "rgb(" + vv + "," + Math.floor(vv*0.8) + ",40)";
+                    ctx.fillRect(oxx + cc*cell, oy + rr*cell, cell, cell);
+                }
+
+            pos = (pos + 1) % ((N-2) * (N-2));
+            if (pos === 0) out = [];
+            requestAnimationFrame(draw);
+        }
+        draw();
+    })();
+
+    // ── 9b. depthwise separable convolution ──────────────────────────────
+    (function depthwise() {
+        var svg = d3.select("#s-depthwise");
+        if (svg.empty()) return;
+
+        function block(x, y, w, h, fill, stroke, label, sub) {
+            svg.append("rect").attr("x", x).attr("y", y).attr("width", w).attr("height", h)
+               .attr("rx", 5).attr("fill", fill).attr("stroke", stroke);
+            svg.append("text").attr("x", x + w/2).attr("y", y + h/2 + 1)
+               .attr("text-anchor", "middle").attr("fill", stroke)
+               .style("font", "11px ui-monospace").text(label);
+            if (sub) svg.append("text").attr("x", x + w/2).attr("y", y + h/2 + 15)
+               .attr("text-anchor", "middle").attr("fill", C.dim)
+               .style("font", "9px ui-monospace").text(sub);
+        }
+
+        svg.append("text").attr("x", 20).attr("y", 22).attr("fill", C.red)
+           .style("font", "12px ui-monospace").text("standard convolution");
+        block(20, 34, 250, 46, "#2a1a1a", C.red, "3x3 across ALL channels", "every input x every output");
+        svg.append("text").attr("x", 285).attr("y", 62).attr("fill", C.red)
+           .style("font", "12px ui-monospace").text("3 x 3 x 32 x 64  =  18,432 multiplies");
+
+        svg.append("text").attr("x", 20).attr("y", 116).attr("fill", C.green)
+           .style("font", "12px ui-monospace").text("depthwise separable (MobileNetV2)");
+        block(20, 128, 120, 46, "#16261c", C.green, "3x3 per channel", "filter only");
+        block(150, 128, 120, 46, "#16261c", C.green, "1x1 mix", "combine only");
+        svg.append("path").attr("d", "M141,151 L149,151").attr("stroke", C.green);
+        svg.append("text").attr("x", 285).attr("y", 156).attr("fill", C.green)
+           .style("font", "12px ui-monospace")
+           .text("3 x 3 x 32  +  32 x 64  =  2,336 multiplies");
+
+        svg.append("text").attr("x", 430).attr("y", 196).attr("text-anchor", "middle")
+           .attr("fill", C.accent).style("font", "13px ui-monospace")
+           .text("~8x less work for almost the same accuracy — this is why it fits on the Pi");
+    })();
+
+    // ── 9c. the real layer stack (numbers dumped from our actual model) ──
+    (function layerStack() {
+        var svg = d3.select("#s-layers");
+        if (svg.empty()) return;
+        var hint = document.getElementById("layers-hint");
+        var stack = [
+            { n: "input",   sp: 224, ch: 3,    p: 0,       d: "the spectrogram, greyscale repeated into 3 channels because the borrowed network expects RGB" },
+            { n: "conv 0",  sp: 112, ch: 32,   p: 928,     d: "first convolution. Halves the image, produces 32 edge-detector responses" },
+            { n: "1-3",     sp: 56,  ch: 24,   p: 14864,   d: "InvertedResidual x3 — simple textures at half resolution again" },
+            { n: "4-6",     sp: 28,  ch: 32,   p: 39696,   d: "stripes and gradients. A carrier's vertical edge is found around here" },
+            { n: "7-10",    sp: 14,  ch: 64,   p: 183872,  d: "combinations — 'narrow vertical band', 'wide horizontal smear'" },
+            { n: "11-13",   sp: 14,  ch: 96,   p: 303168,  d: "whole-structure features; spatial size held, depth increased" },
+            { n: "14-16",   sp: 7,   ch: 160,  p: 795264,  d: "only 7x7 pixels left. Almost all meaning, almost no detail" },
+            { n: "17",      sp: 7,   ch: 320,  p: 473920,  d: "the widest feature set before the final expansion" },
+            { n: "conv 18", sp: 7,   ch: 1280, p: 412160,  d: "1x1 expansion into the 1280-dimensional feature space" },
+            { n: "pool",    sp: 1,   ch: 1280, p: 0,       d: "average each channel over space — 1280 numbers describing the whole image" },
+            { n: "head",    sp: 1,   ch: 6,    p: 7686,    d: "Linear(1280, 6). THE ONLY PART WE TRAIN — one score per modulation" }
+        ];
+        var x0 = 34, gap = (860 - x0 - 30) / stack.length;
+        var maxH = 190;
+
+        stack.forEach(function (L, i) {
+            var x = x0 + i * gap;
+            var h = Math.max(9, maxH * Math.sqrt(L.sp / 224));
+            var y = 40 + (maxH - h) / 2;
+            var depth = Math.min(1, Math.log(L.ch + 1) / Math.log(1281));
+            var col = L.n === "head" ? C.accent
+                    : d3.interpolateRgb("#1e3a5f", C.purple)(depth);
+            var g = svg.append("g").style("cursor", "pointer");
+            g.append("rect").attr("x", x).attr("y", y)
+             .attr("width", gap - 7).attr("height", h).attr("rx", 3)
+             .attr("fill", col).attr("stroke", L.n === "head" ? C.accent : C.grid);
+            g.append("text").attr("x", x + (gap - 7) / 2).attr("y", 254)
+             .attr("text-anchor", "middle").attr("fill", C.dim)
+             .style("font", "9px ui-monospace").text(L.n);
+            g.append("text").attr("x", x + (gap - 7) / 2).attr("y", 268)
+             .attr("text-anchor", "middle").attr("fill", C.grid)
+             .style("font", "8px ui-monospace")
+             .text(L.sp > 1 ? L.sp + "²" : "");
+            g.append("text").attr("x", x + (gap - 7) / 2).attr("y", 281)
+             .attr("text-anchor", "middle").attr("fill", C.grid)
+             .style("font", "8px ui-monospace").text(L.ch + "ch");
+            g.on("mouseenter", function () {
+                hint.innerHTML = "<strong>" + L.n + "</strong> &mdash; " + L.d +
+                    (L.p ? "  <span class='mono' style='color:" + C.dim + "'>(" +
+                     L.p.toLocaleString() + " params)</span>" : "");
+            });
+            g.append("title").text(L.d);
+        });
+
+        svg.append("text").attr("x", 34).attr("y", 24).attr("fill", C.dim)
+           .style("font", "10px ui-monospace").text("spatial size shrinks →");
+        svg.append("text").attr("x", 430).attr("y", 310).attr("text-anchor", "middle")
+           .attr("fill", C.dim).style("font", "11px ui-monospace")
+           .text("2,231,558 parameters total  •  7,686 retrained (0.3%)");
+    })();
+
+    // ── 9d. one InvertedResidual block ───────────────────────────────────
+    (function invRes() {
+        var svg = d3.select("#s-invres");
+        if (svg.empty()) return;
+        function bar(x, y, w, h, fill, stroke, top, bottom) {
+            svg.append("rect").attr("x", x).attr("y", y).attr("width", w).attr("height", h)
+               .attr("rx", 4).attr("fill", fill).attr("stroke", stroke);
+            svg.append("text").attr("x", x + w/2).attr("y", y - 8).attr("text-anchor", "middle")
+               .attr("fill", stroke).style("font", "11px ui-monospace").text(top);
+            if (bottom) svg.append("text").attr("x", x + w/2).attr("y", y + h + 16)
+               .attr("text-anchor", "middle").attr("fill", C.dim)
+               .style("font", "9px ui-monospace").text(bottom);
+        }
+        // heights encode channel count: narrow -> wide -> narrow
+        bar(40,  78, 62, 44,  "#16202e", C.accent, "in", "24 ch");
+        bar(160, 44, 62, 112, "#241a2e", C.purple, "expand 1x1", "144 ch");
+        bar(280, 44, 62, 112, "#16261c", C.green,  "depthwise 3x3", "144 ch, 1 filter each");
+        bar(400, 78, 62, 44,  "#241a2e", C.purple, "project 1x1", "back to 24 ch");
+        bar(520, 78, 62, 44,  "#16202e", C.accent, "out", "24 ch");
+
+        [[102,160],[222,280],[342,400],[462,520]].forEach(function (p) {
+            svg.append("path").attr("d", "M" + p[0] + ",100 L" + (p[1]-6) + ",100")
+               .attr("stroke", C.grid).attr("stroke-width", 1.4);
+            svg.append("path").attr("d", "M" + (p[1]-6) + ",96 L" + p[1] + ",100 L" + (p[1]-6) + ",104")
+               .attr("fill", C.grid);
+        });
+
+        // the skip connection
+        svg.append("path").attr("d", "M71,78 C71,20 551,20 551,78")
+           .attr("fill", "none").attr("stroke", C.yellow).attr("stroke-dasharray", "5 4");
+        svg.append("text").attr("x", 311).attr("y", 22).attr("text-anchor", "middle")
+           .attr("fill", C.yellow).style("font", "11px ui-monospace")
+           .text("skip: add the input back (only when shapes match)");
+
+        svg.append("text").attr("x", 660).attr("y", 88).attr("fill", C.green)
+           .style("font", "11px ui-monospace").text("no ReLU after project —");
+        svg.append("text").attr("x", 660).attr("y", 104).attr("fill", C.green)
+           .style("font", "11px ui-monospace").text("a ReLU on a narrow layer");
+        svg.append("text").attr("x", 660).attr("y", 120).attr("fill", C.green)
+           .style("font", "11px ui-monospace").text("destroys information");
+        svg.append("text").attr("x", 660).attr("y", 140).attr("fill", C.dim)
+           .style("font", "10px ui-monospace").text("(\u201clinear bottleneck\u201d)");
+    })();
+
 })();

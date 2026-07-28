@@ -368,6 +368,293 @@ logits = bindings.output().get_buffer()
 probabilities = softmax(logits)         # the graph ends at a Linear layer</pre>
 </section>
 
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">8</span> Inside the network</h2>
+  <div class="lede">What is actually happening when a picture goes in and a label comes out.</div>
+
+  <p>A neural network is a stack of very simple things. One <strong>neuron</strong> does
+  exactly this and nothing more:</p>
+
+<pre>output = activation( w₁·x₁ + w₂·x₂ + … + wₙ·xₙ + bias )</pre>
+
+  <p>Multiply each input by a <strong>weight</strong>, add them up, add a
+  <strong>bias</strong>, then pass the result through an <strong>activation
+  function</strong>. That is the whole unit. "Learning" means finding good values for
+  the w's and b's — MobileNetV2 has about <strong>2.2 million</strong> of them.</p>
+
+  <div class="fig">
+    <div class="fig-title">Feed-forward &mdash; signal flowing left to right</div>
+    <svg id="s-ffnet" viewBox="0 0 860 300" width="860" height="300"></svg>
+    <div class="controls">
+      <button class="pill" id="ff-forward">forward pass</button>
+      <button class="pill" id="ff-back">backward pass (learning)</button>
+      <button class="pill" id="ff-auto">run continuously</button>
+    </div>
+    <div class="hint" id="ff-hint">Line brightness is the weight. Watch a value enter on
+      the left, get multiplied and summed at every node, and emerge as a decision.</div>
+  </div>
+
+  <div class="aside">
+    <strong>Why the activation function matters more than it looks.</strong> Without it,
+    stacking layers is pointless: a linear function of a linear function is still just a
+    linear function, so a hundred layers would collapse into the power of one. The
+    non-linearity is what lets depth buy you anything. Modern networks mostly use
+    <strong>ReLU</strong> — <code>max(0, x)</code> — because it is trivially cheap and
+    does not saturate the way older S-shaped functions did.
+  </div>
+
+  <div class="fig">
+    <div class="fig-title">Activation functions</div>
+    <canvas id="c-activation" width="860" height="200"></canvas>
+    <div class="controls">
+      <button class="pill active" data-act="relu">ReLU</button>
+      <button class="pill" data-act="sigmoid">Sigmoid</button>
+      <button class="pill" data-act="tanh">Tanh</button>
+      <button class="pill" data-act="linear">none (linear)</button>
+    </div>
+    <div class="hint" id="act-hint"></div>
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">How it learns: backpropagation</h3>
+  <p>The forward pass produces a guess. The <strong>loss</strong> turns "how wrong" into
+  a single number. Then the chain rule from calculus is applied backwards through the
+  network to work out, for every one of those 2.2&nbsp;million weights, <em>how much
+  this particular weight contributed to the error</em>. That quantity is the
+  <strong>gradient</strong>.</p>
+
+  <p>Each weight then moves a small step in the direction that reduces the error:</p>
+<pre>w  ←  w  −  learning_rate × ∂loss/∂w</pre>
+
+  <p>That single line is gradient descent. Everything else — Adam, momentum, schedules —
+  is refinement of <em>how big a step</em> and <em>in what direction</em>.</p>
+
+  <div class="aside warn">
+    <strong>The interview question hiding here:</strong> why not just solve for the best
+    weights directly? Because the loss surface over 2.2 million dimensions has no closed
+    form and is wildly non-convex. Gradient descent is not elegant, it is simply the only
+    thing that works at this scale.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">9</span> Why a <em>convolutional</em> network</h2>
+  <div class="lede">The idea that makes image recognition tractable at all.</div>
+
+  <p>Our spectrogram is 224&times;224. If the first layer were fully connected — every
+  pixel wired to every neuron — one layer of 1000 neurons would need
+  <strong>50&nbsp;million</strong> weights. For one layer. It would also be brittle:
+  move the signal 3&nbsp;pixels left and every weight is wrong.</p>
+
+  <p>A convolution instead slides one small <strong>kernel</strong> (say 3&times;3) across
+  the whole image, reusing the same nine weights everywhere:</p>
+
+  <div class="fig">
+    <div class="fig-title">A 3&times;3 kernel sliding across the image</div>
+    <canvas id="c-conv" width="860" height="250"></canvas>
+    <div class="controls">
+      <button class="pill active" data-kern="edge">edge detector</button>
+      <button class="pill" data-kern="horiz">horizontal lines</button>
+      <button class="pill" data-kern="blur">blur</button>
+    </div>
+    <div class="hint" id="conv-hint">Nine weights, reused across every position. That is
+      <strong>weight sharing</strong>, and it is why CNNs are small enough to train.</div>
+  </div>
+
+  <p>Two properties fall out of this, and both matter for radio:</p>
+  <ul style="margin:10px 0 10px 22px;color:var(--text-dim)">
+    <li><strong>Translation invariance</strong> — a burst is recognised wherever it
+      appears in the window, not only where it appeared in training.</li>
+    <li><strong>Parameter efficiency</strong> — 9 weights instead of 50 million.</li>
+  </ul>
+
+  <p>Stack these and the network builds a hierarchy on its own: early layers find edges,
+  middle layers find textures and stripes, later layers find whole structures. That is
+  exactly what we borrow from ImageNet — the early layers of a photo network are just as
+  useful on a spectrogram, because edges are edges.</p>
+
+  <h3 style="margin-top:26px;font-size:15px">The actual layers in our model</h3>
+  <p>Not a generic diagram &mdash; this is <code>torchvision.models.mobilenet_v2</code>
+  as we build it, with our 6-class head, dumped by walking the real network. Watch the
+  picture get <em>smaller</em> and <em>deeper</em> at every stage:</p>
+
+  <div class="fig">
+    <div class="fig-title">224&times;224 spectrogram &rarr; 6 class scores</div>
+    <svg id="s-layers" viewBox="0 0 860 330" width="860" height="330"></svg>
+    <div class="hint" id="layers-hint">Hover a stage. Height is spatial size, colour depth
+      is channel count.</div>
+  </div>
+
+  <table class="data">
+    <thead><tr><th>idx</th><th>block</th><th>output shape</th><th>params</th><th>what it is doing</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0</td><td class="mono">Conv2dNormActivation</td><td class="mono">32&times;112&times;112</td><td class="mono">928</td><td>first real convolution; halves the image, finds 32 kinds of edge</td></tr>
+      <tr><td class="mono">1</td><td class="mono">InvertedResidual</td><td class="mono">16&times;112&times;112</td><td class="mono">896</td><td>squeeze to 16 cheap channels</td></tr>
+      <tr><td class="mono">2&ndash;3</td><td class="mono">InvertedResidual &times;2</td><td class="mono">24&times;56&times;56</td><td class="mono">13,968</td><td>halve again; simple textures</td></tr>
+      <tr><td class="mono">4&ndash;6</td><td class="mono">InvertedResidual &times;3</td><td class="mono">32&times;28&times;28</td><td class="mono">39,696</td><td>stripes, gradients &mdash; carrier edges live here</td></tr>
+      <tr><td class="mono">7&ndash;10</td><td class="mono">InvertedResidual &times;4</td><td class="mono">64&times;14&times;14</td><td class="mono">183,872</td><td>combinations: "narrow vertical band", "wide smear"</td></tr>
+      <tr><td class="mono">11&ndash;13</td><td class="mono">InvertedResidual &times;3</td><td class="mono">96&times;14&times;14</td><td class="mono">303,168</td><td>whole-structure features</td></tr>
+      <tr><td class="mono">14&ndash;16</td><td class="mono">InvertedResidual &times;3</td><td class="mono">160&times;7&times;7</td><td class="mono">795,264</td><td>only 7&times;7 left &mdash; almost all meaning, no detail</td></tr>
+      <tr><td class="mono">17</td><td class="mono">InvertedResidual</td><td class="mono">320&times;7&times;7</td><td class="mono">473,920</td><td>widest feature set</td></tr>
+      <tr><td class="mono">18</td><td class="mono">Conv2dNormActivation</td><td class="mono">1280&times;7&times;7</td><td class="mono">412,160</td><td>1&times;1 expansion into the final feature space</td></tr>
+      <tr><td class="mono">&mdash;</td><td class="mono">AdaptiveAvgPool2d</td><td class="mono">1280</td><td class="mono">0</td><td>average each channel over space &rarr; one number per feature</td></tr>
+      <tr style="background:#16202e"><td class="mono">&mdash;</td><td class="mono">Linear(1280, 6)</td><td class="mono">6</td><td class="mono">7,686</td><td><strong>the only part we retrain</strong> &mdash; one score per modulation</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>2,231,558 parameters total</strong>, of which we train <strong>7,686</strong>
+  &mdash; 0.3%. Everything else is knowledge borrowed from photographs and left alone.</p>
+
+  <h3 style="margin-top:26px;font-size:15px">What one InvertedResidual actually does</h3>
+  <p>17 of the 19 blocks are this one pattern, so it is worth knowing cold. It is the
+  opposite shape to a classic ResNet block &mdash; hence "inverted":</p>
+
+  <div class="fig">
+    <div class="fig-title">Expand &rarr; filter cheaply &rarr; squeeze</div>
+    <svg id="s-invres" viewBox="0 0 860 220" width="860" height="220"></svg>
+    <div class="hint">The expensive 3&times;3 never touches the wide tensor &mdash; it only
+      ever runs one filter per channel. That is the whole trick.</div>
+  </div>
+
+  <ol style="margin:12px 0 12px 22px;color:var(--text-dim)">
+    <li><strong>Expand</strong> &mdash; a 1&times;1 convolution multiplies channels by 6
+      (e.g. 24&nbsp;&rarr;&nbsp;144). Cheap, because 1&times;1 does no spatial work.</li>
+    <li><strong>Depthwise 3&times;3</strong> &mdash; one small filter per channel,
+      independently. This is where spatial pattern-finding happens, and it costs
+      144&times;9 instead of 144&times;144&times;9.</li>
+    <li><strong>Project</strong> &mdash; a 1&times;1 squeezes back down (144&nbsp;&rarr;&nbsp;24).
+      <em>No activation here</em> &mdash; a ReLU on a narrow layer destroys information,
+      which is the "linear bottleneck" in the paper's title.</li>
+    <li><strong>Skip connection</strong> &mdash; if input and output shapes match, add the
+      input back. Gradients then have a short path back to early layers, which is what
+      makes deep networks trainable at all.</li>
+  </ol>
+
+  <div class="aside">
+    <strong>Reading the table above:</strong> blocks marked <code>+skip</code> in our dump
+    are the ones where that addition happens &mdash; they keep the same shape in and out.
+    Blocks that change shape (2, 4, 7, 11, 14, 17) cannot, so they do the downsampling.
+  </div>
+
+  <div class="aside warn">
+    <strong>Why this matters for the Hailo.</strong> Depthwise convolutions and 1&times;1
+    projections quantise to int8 well and are natively supported by the compiler.
+    Exotic architectures often will not compile at all &mdash; MobileNetV2 was chosen
+    partly because it is in the Hailo Model Zoo and known to produce a working
+    <code>.hef</code> for HAILO8L.
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">Why MobileNetV2 specifically</h3>
+  <p>The choice was made for the NPU, and it is worth being able to defend it.</p>
+
+  <table class="data">
+    <thead><tr><th>Reason</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Depthwise separable convolutions</td>
+          <td>Splits one convolution into a per-channel filter plus a 1&times;1 mix —
+              roughly <strong>8&ndash;9&times; less computation</strong> for nearly the
+              same accuracy.</td></tr>
+      <tr><td>Inverted residuals</td>
+          <td>Expand to a wide layer, filter cheaply, squeeze back down. Keeps the
+              expensive part narrow.</td></tr>
+      <tr><td>~3.4M parameters</td>
+          <td>ResNet-50 is 25M. Ours has to fit and run on a 13&nbsp;TOPS edge chip
+              alongside Whisper.</td></tr>
+      <tr><td>In the Hailo Model Zoo</td>
+          <td>Known to compile to <code>.hef</code> for HAILO8L. An architecture that
+              will not compile is worthless here however accurate it is.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="fig">
+    <div class="fig-title">Standard vs depthwise separable convolution</div>
+    <svg id="s-depthwise" viewBox="0 0 860 210" width="860" height="210"></svg>
+    <div class="hint">Same job, a fraction of the multiplications — which is the entire
+      reason this runs on a Pi instead of a workstation.</div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section>
+  <h2><span class="num">10</span> Explaining this in an interview</h2>
+  <div class="lede">The decisions, the trade-offs, and the failures worth admitting.</div>
+
+  <p>The engineering here is not the model — it is <strong>everything around the
+  model</strong>. Anyone can fine-tune MobileNetV2. What is worth talking about is the
+  data and the constraints.</p>
+
+  <h3 style="margin-top:22px;font-size:15px">Decisions you should be able to defend</h3>
+  <table class="data">
+    <thead><tr><th>Decision</th><th>Why</th><th>What it cost</th></tr></thead>
+    <tbody>
+      <tr><td>Spectrograms, not raw IQ</td>
+          <td>Turns a signal problem into an image problem, so a pre-trained vision
+              network can be reused.</td>
+          <td>Throws away absolute phase; the FFT window size fixes a
+              time/frequency trade-off.</td></tr>
+      <tr><td>Transfer learning</td>
+          <td>A few thousand samples is enough; from scratch would need millions.</td>
+          <td>Inherits ImageNet's biases and a fixed 224&times;224 input.</td></tr>
+      <tr><td>Preset as ground truth</td>
+          <td>Free labels — tuned to 94.9&nbsp;MHz means the sample <em>is</em> WFM.</td>
+          <td>Only true if the antenna can hear that band, and only during a burst on
+              bursty protocols.</td></tr>
+      <tr><td>int8 quantisation</td>
+          <td>Required by the NPU; makes it fast and low-power.</td>
+          <td>Small accuracy loss, and calibration data must match production data.</td></tr>
+      <tr><td>Train off-node</td>
+          <td>Hailo's compiler is x86-only; the Pi is ARM.</td>
+          <td>A deploy pipeline instead of a single machine.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:22px;font-size:15px">The failures — these are the good part</h3>
+  <p>An interviewer learns far more from how you found a bug than from a headline number.
+  Every one of these was a <strong>data</strong> problem wearing a modelling costume:</p>
+
+  <table class="data">
+    <thead><tr><th>Symptom</th><th>Actual cause</th><th>How it surfaced</th></tr></thead>
+    <tbody>
+      <tr><td>99.1% test accuracy</td>
+          <td>Each class came from exactly one frequency, so the model could learn the
+              <em>band</em> and never the modulation.</td>
+          <td>Held whole frequencies out of training; FM recall fell to 0.38.</td></tr>
+      <tr><td>1921 "OOK" samples</td>
+          <td>Empty channel. 0% contained a burst, only 2&times; the noise floor.</td>
+          <td>Compared spectral peak-to-median against a known-noise reference.</td></tr>
+      <tr><td>Strong "APRS" samples</td>
+          <td>A steady carrier parked on 144.390 — not packets at all.</td>
+          <td>High spectral energy but 3% burst rate: contradictory for a packet mode.</td></tr>
+      <tr><td>Half the corpus vanished</td>
+          <td>Preset modulations were never in the class list; the loader dropped them
+              silently.</td>
+          <td>Sample count did not match what was on disk.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="aside">
+    <strong>The line worth having ready:</strong> "A random train/test split cannot detect
+    a confound where each class only appears in one context. I split by frequency instead —
+    held entire bands out of training — and accuracy dropped from 99% to 38%, which told me
+    the first number was measuring the wrong thing."
+  </div>
+
+  <h3 style="margin-top:22px;font-size:15px">Numbers to know</h3>
+  <table class="data">
+    <tbody>
+      <tr><td class="mono">2.4 MHz</td><td>capture bandwidth — one window at a time</td></tr>
+      <tr><td class="mono">24,000</td><td>IQ samples per training window (10&nbsp;ms)</td></tr>
+      <tr><td class="mono">256 / 128</td><td>FFT size / hop, giving 186 frames</td></tr>
+      <tr><td class="mono">224&times;224</td><td>image size MobileNetV2 expects</td></tr>
+      <tr><td class="mono">~3.4M</td><td>model parameters</td></tr>
+      <tr><td class="mono">~13 min</td><td>training time, 8 CPU cores, ~2000 samples</td></tr>
+      <tr><td class="mono">int8</td><td>quantisation on the Hailo-8L</td></tr>
+      <tr><td class="mono">13 TOPS</td><td>NPU throughput, shared with Whisper</td></tr>
+    </tbody>
+  </table>
+</section>
+
 <footer class="learn-foot">
   ravenSDR &mdash; <a href="/">console</a> &middot;
   <span class="mono" id="foot-stats">&mdash;</span>
