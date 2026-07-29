@@ -194,6 +194,11 @@
           "type": "changed",
           "date": "2026-07-29",
           "description": "/learn: expanded the two spots where a metaphor was doing the explanation's work. Transfer learning now answers the obvious objection \u2014 why would a network trained on photographs know anything about radio \u2014 with the layer hierarchy (early layers learn edges and stripes, which are generic to ANY image; only the top is about dogs) and ties it to what our spectrograms actually look like: FSK is two parallel stripes, OOK is a stripe that blinks. Gradient descent now says what the hill IS \u2014 position is the weights, height is the loss, slope is the gradient \u2014 and what the one-dimensional cartoon hides about a 2.2-million-axis surface"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-29",
+          "description": "ISM sensor table was permanently empty while showing a live device count above it. ism.js called fmtFirstSeen(), which is only defined inside aprs.js's IIFE \u2014 so every render threw a ReferenceError, and it threw AFTER the tbody had been cleared, leaving nothing behind. The function is now defined where it is used, and each row is built in isolation so one malformed device cannot blank the whole table"
         }
       ]
     },

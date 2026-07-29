@@ -20,6 +20,19 @@
         });
     }
 
+    // Defined here, not borrowed. This was called by _render() while only
+    // existing inside aprs.js's IIFE, so every ISM render threw a ReferenceError
+    // — and it threw AFTER the tbody had been cleared, which is why the panel
+    // showed a live device count above a permanently empty table.
+    function fmtFirstSeen(v) {
+        if (!v) return "\u2014";
+        var d = new Date(v * 1000);
+        var age = (Date.now() / 1000) - v;
+        if (age > 86400) return Math.floor(age / 86400) + "d ago";
+        if (age > 3600) return Math.floor(age / 3600) + "h ago";
+        return d.toLocaleTimeString();
+    }
+
     function fmtReadings(d) {
         var parts = [];
         if (d.temperature_C != null) parts.push(d.temperature_C + "°C");
@@ -63,6 +76,19 @@
 
         var self = this;
         this.devices.forEach(function (d) {
+            try {
+                self._appendRow(tbody, d);
+            } catch (e) {
+                // One malformed device must not blank the whole table, which is
+                // exactly what happened here: the throw landed after the clear.
+                if (window.console) console.error("ISM row failed", d, e);
+            }
+        });
+    };
+
+    IsmPanel.prototype._appendRow = function (tbody, d) {
+        var self = this;
+        {
             var row = document.createElement("tr");
             row.className = "ism-row";
             [
@@ -100,7 +126,7 @@
                 self._expanded[key] = !self._expanded[key];
                 detail.classList.toggle("hidden", !self._expanded[key]);
             });
-        });
+        }
     };
 
     IsmPanel.prototype.show = function () {
