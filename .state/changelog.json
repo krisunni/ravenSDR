@@ -189,6 +189,11 @@
           "type": "added",
           "date": "2026-07-28",
           "description": "Deliberate 'unknown' collection for negative examples \u2014 the gap that blocks a spectrum sweep, since with no none-of-the-above class the model must force every input into one of six and can never decline. Accidental unknown (a preset that never declared a modulation) is still refused; only an armed burst carries the intent. Negatives also bypass the signal-presence gates, because for this class the empty channel IS the example"
+        },
+        {
+          "type": "changed",
+          "date": "2026-07-29",
+          "description": "/learn: expanded the two spots where a metaphor was doing the explanation's work. Transfer learning now answers the obvious objection \u2014 why would a network trained on photographs know anything about radio \u2014 with the layer hierarchy (early layers learn edges and stripes, which are generic to ANY image; only the top is about dogs) and ties it to what our spectrograms actually look like: FSK is two parallel stripes, OOK is a stripe that blinks. Gradient descent now says what the hill IS \u2014 position is the weights, height is the loss, slope is the gradient \u2014 and what the one-dimensional cartoon hides about a 2.2-million-axis surface"
         }
       ]
     },

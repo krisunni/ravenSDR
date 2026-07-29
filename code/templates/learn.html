@@ -354,10 +354,45 @@
   </div>
 
   <h3 style="margin-top:26px;font-size:15px">Step 2 &mdash; borrowing a network that can already see</h3>
-  <p>We do not build a network from scratch. <strong>MobileNetV2</strong> has already
-  been trained on a million photographs, so it knows edges, textures and stripes. We
-  keep all of that and replace only the final layer &mdash; the part that says which
-  of 1000 everyday objects it is &mdash; with one that picks between our modulations:</p>
+
+  <p>The obvious objection first: <em>why would a network trained on photographs of
+  dogs and cars know anything about radio?</em></p>
+
+  <p>Because of how a convolutional network is built. It does not learn "dog" in one
+  go. It learns a <strong>hierarchy</strong>, and only the top of that hierarchy is
+  about dogs:</p>
+
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Depth</th><th>What that layer learns</th><th>Specific to photos?</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">early</td><td>edges, corners, blobs of contrast</td>
+          <td><span class="pill-tag ok">no &mdash; any image</span></td></tr>
+      <tr><td class="mono">middle</td><td>textures, stripes, repeating patterns, gradients</td>
+          <td><span class="pill-tag ok">no &mdash; any image</span></td></tr>
+      <tr><td class="mono">late</td><td>eyes, wheels, fur, faces</td>
+          <td><span class="pill-tag no">yes &mdash; photos only</span></td></tr>
+      <tr><td class="mono">final</td><td>"this is a golden retriever"</td>
+          <td><span class="pill-tag no">yes &mdash; useless to us</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Now look at what our spectrograms actually are. FSK is <em>two parallel bright
+  stripes</em>. OOK is <em>a stripe that blinks on and off</em>. MSK is <em>a stripe that
+  slides</em>. Those are edges, stripes and repeating patterns &mdash; exactly what the
+  early and middle layers already detect, learned from fences, zebras and venetian
+  blinds. An edge is an edge whether it came from a rooftop or a carrier.</p>
+
+  <div class="aside">
+    <strong>So what are we actually teaching it?</strong> Not how to see. It can already
+    do that. Only how to <em>name</em> what it sees: "two stripes this far apart, held
+    steady" &rarr; FSK. We are replacing the vocabulary, not the eyes. That is the whole
+    trick, and it is why a few thousand samples is enough &mdash; we are not paying for
+    the expensive part.
+  </div>
+
+  <p>Concretely: keep everything, throw away only the last layer &mdash; the one that
+  names which of 1000 everyday objects it is &mdash; and bolt on one that picks between
+  our modulations instead:</p>
 <pre>model = torchvision.models.mobilenet_v2(weights=IMAGENET1K_V1)
 model.classifier[1] = nn.Linear(1280, num_classes)   # 1000 objects -> our classes</pre>
 
@@ -369,8 +404,12 @@ model.classifier[1] = nn.Linear(1280, num_classes)   # 1000 objects -> our class
     <svg id="s-transfer" viewBox="0 0 860 170" width="860" height="170"></svg>
   </div>
 
-  <p>The two halves even learn at different speeds &mdash; nudge the borrowed layers
-  gently, teach the new one properly:</p>
+  <p>The two halves then learn at <strong>different speeds</strong>, and the reason is
+  worth spelling out. The borrowed layers are already nearly right, so large changes
+  would <em>destroy</em> knowledge that took a million photographs to acquire &mdash; they
+  get tiny nudges. The new final layer starts as random numbers and knows nothing at
+  all, so it needs to move fast. Same optimiser, two learning rates, a hundredfold
+  apart:</p>
 <pre>optimizer = optim.Adam([
     {"params": model.features.parameters(),   "lr": 1e-5},   # already knows how to see
     {"params": model.classifier.parameters(), "lr": 1e-3},   # knows nothing yet
@@ -389,6 +428,48 @@ model.classifier[1] = nn.Linear(1280, num_classes)   # 1000 objects -> our class
   working out how much each of the 2.2 million weights contributed to the error.
   <code>optimizer.step()</code> then moves each one a little in the direction that would
   have been less wrong. Do that tens of thousands of times and the network has learned.</p>
+
+  <p>"Rolling downhill" gets used for this constantly and almost never explained, so:
+  <strong>what hill?</strong> There is no hill in the data. The hill is a picture of
+  something else entirely.</p>
+
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>In the picture</th><th>Actually means</th></tr></thead>
+    <tbody>
+      <tr><td>where the ball is (left/right)</td>
+          <td>the current value of the weights &mdash; every knob the network has</td></tr>
+      <tr><td>height of the ground</td>
+          <td>the loss: how wrong the network is with those weights</td></tr>
+      <tr><td>the slope under the ball</td>
+          <td>the <strong>gradient</strong> &mdash; which way to change each weight to be
+              less wrong, and by how much</td></tr>
+      <tr><td>one step downhill</td>
+          <td><code>optimizer.step()</code></td></tr>
+      <tr><td>how big a step</td>
+          <td>the learning rate</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>So the landscape is not made of signals or images &mdash; it is made of
+  <em>settings</em>. Every possible combination of the 2.2 million weights is a position,
+  and the height there is how badly that combination classifies our spectrograms.
+  Training is the search for a low spot.</p>
+
+  <div class="aside">
+    <strong>Why a cartoon, and what it hides.</strong> The drawing below has one weight
+    on the horizontal axis, so the landscape is a curve. The real one has
+    <strong>2.2 million</strong> axes &mdash; a surface in 2.2-million-dimensional space,
+    which nobody can draw or picture. What survives the simplification is the part that
+    matters: you cannot see the whole landscape, you can only feel the slope where you
+    are standing, and you step that way. What it hides is that in that many dimensions
+    there is almost always <em>some</em> direction that goes down, which is a large part
+    of why this works at all despite the surface being nothing like as smooth as a hill.
+  </div>
+
+  <p>And note what <code>backward()</code> and <code>step()</code> divide between them:
+  <code>backward()</code> measures the slope, <code>step()</code> takes the step. That is
+  the entire loop. Everything else in modern training &mdash; Adam, momentum, schedules
+  &mdash; is refinement of <em>how big a step to take and in what direction</em>.</p>
 
   <div class="fig">
     <div class="fig-title">Gradient descent &mdash; rolling downhill to the lowest error</div>
