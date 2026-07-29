@@ -42,7 +42,7 @@ CDP_PORT = 9444
 # real numbers rather than placeholder zeros.
 API_ENDPOINTS = [
     "/api/presets", "/api/status", "/api/config", "/api/config/secondary",
-    "/api/automation", "/api/sdr/state", "/api/classifier/status",
+    "/api/automation", "/api/sdr/state", "/api/radio-activity", "/api/classifier/status",
     "/api/iq-collect", "/api/sei/status", "/api/emitters",
     "/api/adsb/aircraft", "/api/ism/devices", "/api/aprs/stations",
     "/api/acars/messages", "/api/pager/pages",

@@ -25,7 +25,7 @@ class IQCollectScheduler:
 
     def __init__(self, bands, start_slot, stop_slot, is_enabled,
                  dwell_s=DEFAULT_DWELL_S, idle_s=DEFAULT_IDLE_S,
-                 sleep_fn=None, on_change=None, dwell_fn=None):
+                 sleep_fn=None, on_change=None, dwell_fn=None, should_yield=None):
         """
         bands       — list of {"id", "freq_hz", "label"} to rotate through
         start_slot  — fn(band) -> bool, takes the dongle and begins capture
@@ -47,6 +47,8 @@ class IQCollectScheduler:
         self._labels = sorted(self._groups)
         self._cursor = {lab: 0 for lab in self._labels}
         self._start_slot = start_slot
+        # Predicate: True when the radio should be handed back immediately.
+        self._should_yield = should_yield or (lambda: False)
         self._stop_slot = stop_slot
         self._is_enabled = is_enabled
         self.dwell_s = max(MIN_DWELL_S, dwell_s)
@@ -162,6 +164,13 @@ class IQCollectScheduler:
         while self._running and waited < dwell:
             if not self._is_enabled():
                 break               # operator paused mid-slot
+            if self._should_yield():
+                # Somebody tuned. Corpus building is opportunistic and has no
+                # deadline, so it gives the radio back inside a second rather
+                # than making a person wait out a dwell that can run to 4 min.
+                log.info("IQ collect: yielding %s — operator took the radio",
+                         band.get("id"))
+                break
             self._sleep(1)
             waited += 1
 

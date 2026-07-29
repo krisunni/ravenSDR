@@ -144,6 +144,21 @@
           "type": "fixed",
           "date": "2026-07-28",
           "description": "Empty transcript with no explanation: the background IQ collector takes the dongle on a rotation, but _start_collect_slot did it by calling input_source.stop() directly, bypassing the arbiter \u2014 while _stop_collect_slot handed the radio back THROUGH the arbiter. So the console kept reporting LOCKED on the operator's preset while the radio was off collecting on another band, with a dead audio path and a transcript filling with filtered [inaudible]. The collector now reports via adopt(), and the Listen view says who has the radio and how to keep it"
+        },
+        {
+          "type": "changed",
+          "date": "2026-07-28",
+          "description": "Corpus collection is now opportunistic rather than pre-emptive. One dongle has three kinds of claimant and they are not equally urgent: an operator tune wins immediately, a satellite pass may pre-empt because it happens now or not at all, and IQ collection \u2014 which has no deadline \u2014 runs only on an idle radio. Any tune, squelch or gain change takes a 10-minute lease that the collector yields to within a second, and that lapses on its own so overnight collection needs no intervention. Previously all three sat under one Auto toggle, which made it modal: you had to know to switch automation off BEFORE tuning or your click quietly did not stick"
+        },
+        {
+          "type": "added",
+          "date": "2026-07-28",
+          "description": "/api/radio-activity joins the arbiter state, collector snapshot and scheduler modes into one answer to 'what is the radio doing and why'. The Listen view renders it as a strip naming the current claimant \u2014 including the countdown until background collection resumes"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "#automation-status shares .secondary-indicator with the Dongle-2 lamp, which styles it as an 8px dot \u2014 but renderAutomation writes the word 'paused' into it, so the text spilled across the header. It is now a badge, hidden when empty"
         }
       ]
     },

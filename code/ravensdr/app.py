@@ -7,6 +7,7 @@ import logging
 import signal
 import sys
 import threading
+import time as _time
 
 import numpy as np
 
@@ -101,6 +102,40 @@ VERSION = "1.3.0"
 # Modes whose IQ never reaches the classifier: a separate dongle, or a decoder
 # that consumes the stream itself. Their presets must not label the corpus.
 NON_IQ_MODES = {"adsb", "ais"}
+
+# ── Who gets the radio ──
+#
+# One dongle, three kinds of claimant, and they are NOT equally urgent:
+#
+#   operator    an explicit tune. Wins immediately — a person asked.
+#   scheduled   a satellite pass or WEFAX slot. Happens now or not at all,
+#               so it may pre-empt; _start_collect_slot already yields to it.
+#   background  IQ corpus collection. Opportunistic, no deadline, and it has
+#               no business taking the radio from someone who is listening.
+#
+# Lumping all three under one "Auto" toggle meant tuning to weather and getting
+# silence, because the corpus rotation took the dongle on its next slot. Worse,
+# it made the toggle modal: you had to know to switch automation off BEFORE
+# tuning, or your click quietly did not stick.
+#
+# Collection now runs only on an idle radio. Any operator action refreshes the
+# lease; when it lapses, collecting resumes on its own. Nobody has to know the
+# toggle exists to use the radio.
+OPERATOR_LEASE_S = 600          # 10 min, refreshed by any interaction
+_last_operator_action = 0.0
+
+
+def note_operator_action():
+    """Mark the radio as in use by a person."""
+    global _last_operator_action
+    _last_operator_action = _time.time()
+
+
+def operator_lease_remaining():
+    """Seconds until background collection may resume; 0 when it is free."""
+    if not _last_operator_action:
+        return 0.0
+    return max(0.0, OPERATOR_LEASE_S - (_time.time() - _last_operator_action))
 
 # ── Flask + Socket.IO ──
 app = Flask(
@@ -734,6 +769,7 @@ def api_tune():
     the transition via `sdr_state` / `status` events. That gap between "request"
     and "actually switched" is what used to let rapid clicks race on the dongle.
     """
+    note_operator_action()   # a person asked for this frequency
     data = request.get_json(force=True)
     preset_id = data.get("preset_id")
     preset = get_preset_by_id(preset_id)
@@ -1154,6 +1190,11 @@ def _start_collect_slot(band):
     _collect_duty = band.get("duty", "burst")
     if input_source.apt_mode or input_source.wefax_mode:
         return False        # a scheduled pass outranks corpus building
+    if operator_lease_remaining() > 0:
+        # Somebody is listening. Corpus building has no deadline; waiting costs
+        # nothing, and taking the radio here is what made the transcript go
+        # silently empty.
+        return False
     input_source.stop()
     signal_classifier.collect_label = band["label"]
     ok = iq_collector.start(band["freq_hz"])
@@ -1222,9 +1263,53 @@ iq_collect_scheduler = IQCollectScheduler(
     start_slot=_start_collect_slot,
     stop_slot=_stop_collect_slot,
     is_enabled=lambda: is_automation_enabled("iq_collect"),
+    should_yield=lambda: operator_lease_remaining() > 0,
     sleep_fn=eventlet.sleep,
     on_change=lambda snap: emit_safe("iq_collect", snap),
 )
+
+
+@app.route("/api/radio-activity")
+def api_radio_activity():
+    """What the radio is doing right now, and why — in one call.
+
+    The console had the pieces (arbiter state, collector snapshot, scheduler
+    modes) but nothing joined them, so an idle audio path looked like a fault
+    instead of a node quietly doing its other job.
+    """
+    lease = operator_lease_remaining()
+    collecting = iq_collector.is_running
+    band = (iq_collect_scheduler.snapshot() or {}).get("current_band") or {}
+
+    if input_source.apt_mode:
+        who, detail = "scheduled", "Satellite pass recording"
+    elif input_source.wefax_mode:
+        who, detail = "scheduled", "WEFAX slot recording"
+    elif collecting:
+        hz = band.get("freq_hz") or 0
+        detail = "Building the training corpus"
+        if hz:
+            detail += " on %.4f MHz" % (hz / 1e6)
+        who = "background"
+    elif lease > 0:
+        who = "operator"
+        detail = "You have the radio"
+    else:
+        who = "idle"
+        detail = "Radio free"
+
+    return jsonify({
+        "who": who,
+        "detail": detail,
+        "lease_remaining_s": round(lease),
+        "collecting": collecting,
+        "collect_band": band.get("id"),
+        "collect_enabled": is_automation_enabled("iq_collect"),
+        # Collection is opportunistic: it waits for an idle radio rather than
+        # competing for one. Surfaced so the console can say when it resumes.
+        "collect_blocked_by": ("operator" if lease > 0 and not collecting
+                               else None),
+    })
 
 
 @app.route("/api/iq-collect")
@@ -1380,6 +1465,7 @@ def api_stop():
 
 @app.route("/api/squelch", methods=["POST"])
 def api_squelch():
+    note_operator_action()
     data = request.get_json(force=True)
     level = data.get("level", 0)
     input_source.set_squelch(int(level))
@@ -1389,6 +1475,7 @@ def api_squelch():
 
 @app.route("/api/gain", methods=["POST"])
 def api_gain():
+    note_operator_action()
     data = request.get_json(force=True)
     value = data.get("value", "auto")
     input_source.set_gain(value)

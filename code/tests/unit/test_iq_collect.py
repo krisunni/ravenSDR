@@ -354,3 +354,61 @@ class TestNonIqModesNeverLabel:
              "expected_modulation": "ADSB", "duty": "burst"},
         ])
         assert app._collect_bands() == []
+
+
+class TestOperatorYield:
+    """Corpus building must never outrank a person.
+
+    One dongle, three claimants, and they are not equally urgent. A satellite
+    pass happens now or not at all, so it may pre-empt. IQ collection is
+    opportunistic — waiting costs nothing — so it has no business holding the
+    radio while somebody is listening. It used to, which is how tuning to a
+    weather preset produced a silently empty transcript.
+    """
+
+    def _sched(self, h, should_yield):
+        return IQCollectScheduler(
+            _bands(), h.start_slot, h.stop_slot, h.is_enabled,
+            sleep_fn=h.sleep, dwell_s=30, idle_s=0,
+            should_yield=should_yield)
+
+    def test_dwell_is_cut_short_when_the_operator_tunes(self):
+        h = _Harness()
+        holding = {"v": False}
+        sched = self._sched(h, lambda: holding["v"])
+        sched._running = True
+
+        # Ten seconds in, somebody tunes.
+        real_sleep = h.sleep
+
+        def sleep(sec):
+            real_sleep(sec)
+            if h.ticks == 10:
+                holding["v"] = True
+
+        h.sleep = sleep
+        sched._sleep = sleep
+        sched._run_slot(_bands()[0])
+
+        # Yielded promptly rather than serving out a 30s dwell.
+        assert h.ticks <= 12, "held the radio for %d ticks" % h.ticks
+        assert h.stopped == ["fm"], "must release the band it was holding"
+
+    def test_full_dwell_when_nobody_is_listening(self):
+        h = _Harness()
+        sched = self._sched(h, lambda: False)
+        sched._running = True
+        sched._sleep = h.sleep
+        sched._run_slot(_bands()[0])
+        assert h.ticks == 30, "an idle radio should serve the whole dwell"
+
+    def test_yield_defaults_to_never_when_unwired(self):
+        """A scheduler built without the predicate must behave as before."""
+        h = _Harness()
+        sched = IQCollectScheduler(
+            _bands(), h.start_slot, h.stop_slot, h.is_enabled,
+            sleep_fn=h.sleep, dwell_s=5, idle_s=0)
+        sched._running = True
+        sched._sleep = h.sleep
+        sched._run_slot(_bands()[0])
+        assert h.ticks == 5

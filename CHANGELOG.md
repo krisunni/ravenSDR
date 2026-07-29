@@ -32,6 +32,7 @@ browser-based UI verification.
 
 ### Changed
 
+- **Corpus collection is opportunistic, not pre-emptive.** One dongle, three kinds of claimant, and they are not equally urgent: an operator tune wins immediately; a satellite pass may pre-empt because it happens now or not at all; IQ collection has no deadline and now runs only on an idle radio. Any tune, squelch or gain change takes a 10-minute lease that the collector yields to within a second and that lapses on its own, so overnight collection still needs no intervention. All three previously sat under one `Auto` toggle, which made it modal — you had to know to switch automation off *before* tuning, or your click quietly did not stick.
 - **Typography split** — monospace for data (frequencies, counts, callsigns), a UI sans for labels and prose. The whole document had been monospace.
 - **Transcript feed** sized to content between bounds instead of a fixed 300px box that was mostly empty on a quiet channel.
 - **Preset list** capped and internally scrollable on small screens; a category like Public Safety was 530px of buttons before you reached the tabs.

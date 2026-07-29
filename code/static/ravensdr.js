@@ -430,28 +430,59 @@
     }
 
 
-    // Banner on the Listen view while the background collector holds the radio.
-    // It is not an error — corpus building is meant to pre-empt idle listening —
-    // but silence with no explanation reads as a broken node.
-    function showCollectingNotice(active, actual) {
+    // ── Radio activity ──
+    // One dongle, three kinds of claimant, and only one of them is a person.
+    // Without saying which has it, an idle audio path and an empty transcript
+    // look identical to a broken node — which is exactly how this was reported.
+    var RADIO_ACTIVITY = {
+        operator:   { icon: "\u25B6", cls: "ra-operator" },
+        background: { icon: "\u25C9", cls: "ra-background" },
+        scheduled:  { icon: "\u23F1", cls: "ra-scheduled" },
+        idle:       { icon: "\u25CB", cls: "ra-idle" }
+    };
+
+    function renderRadioActivity(d) {
         var host = document.getElementById("view-listen");
-        if (!host) return;
-        var el = document.getElementById("collect-notice");
-        if (!active) {
-            if (el) el.remove();
-            return;
-        }
+        if (!host || !d) return;
+        var el = document.getElementById("radio-activity");
         if (!el) {
             el = document.createElement("div");
-            el.id = "collect-notice";
-            el.className = "collect-notice";
+            el.id = "radio-activity";
             host.insertBefore(el, host.firstChild);
         }
-        var where = (actual && actual.freq) ? " on " + actual.freq : "";
+        var kind = RADIO_ACTIVITY[d.who] || RADIO_ACTIVITY.idle;
+        el.className = "radio-activity " + kind.cls;
+
+        var extra = "";
+        if (d.who === "background") {
+            extra = "Tune any preset and it hands the radio back within a second.";
+        } else if (d.who === "operator" && d.collect_blocked_by === "operator") {
+            extra = "Corpus collection is paused" +
+                (d.lease_remaining_s ? ", resuming in " + fmtMMSS(d.lease_remaining_s) : "") +
+                ". Any tune or squelch change extends this.";
+        } else if (d.who === "scheduled") {
+            extra = "A pass happens now or not at all, so it takes priority.";
+        } else if (d.who === "idle" && d.collect_enabled === false) {
+            extra = "Background collection is switched off in the header.";
+        }
+
         el.innerHTML =
-            '<b>Corpus collector has the radio</b>' + where +
-            '. Audio and transcription resume when the slot ends \u2014 or turn ' +
-            '<em>Auto</em> off in the header to keep the radio on your preset.';
+            '<span class="ra-icon">' + kind.icon + '</span>' +
+            '<span class="ra-text"><b>' + escapeHtml(d.detail || "") + '</b>' +
+            (extra ? '<span class="ra-extra">' + extra + '</span>' : '') +
+            '</span>';
+    }
+
+    function fmtMMSS(sec) {
+        var m = Math.floor(sec / 60), s2 = Math.round(sec % 60);
+        return m + ":" + (s2 < 10 ? "0" : "") + s2;
+    }
+
+    function pollRadioActivity() {
+        fetch("/api/radio-activity")
+            .then(function (r) { return r.json(); })
+            .then(renderRadioActivity)
+            .catch(function () {});
     }
 
     function renderSdrC2(snap) {
@@ -477,9 +508,11 @@
             // The corpus collector takes the dongle on a rotation. Without
             // saying so, the operator sees their preset in CMD, a dead audio
             // path, and an empty transcript, with nothing connecting the three.
-            var collecting = !!(snap.actual && snap.actual.collecting);
-            actualEl.classList.toggle("is-collecting", collecting);
-            showCollectingNotice(collecting, snap.actual);
+            actualEl.classList.toggle("is-collecting",
+                !!(snap.actual && snap.actual.collecting));
+            // The radio-activity strip explains the rest; refresh it now so the
+            // banner turns over in the same frame as the C2 lamp.
+            pollRadioActivity();
         }
         if (cmdEl) {
             cmdEl.textContent = describeC2(snap.commanded);
@@ -1110,6 +1143,10 @@
         }
         mapVisible = false;
     }
+
+    // ── Radio activity ──
+    pollRadioActivity();
+    setInterval(pollRadioActivity, 5000);
 
     // ── Tabbed workspace ──
     wireViews();
