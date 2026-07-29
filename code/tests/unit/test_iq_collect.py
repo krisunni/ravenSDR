@@ -412,3 +412,30 @@ class TestOperatorYield:
         sched._sleep = h.sleep
         sched._run_slot(_bands()[0])
         assert h.ticks == 5
+
+
+class TestManualBurstTimeout:
+    """A burst must be given time proportional to what was asked for.
+
+    Collection is rate-limited to one sample per class every 2s, and gated
+    windows are skipped on top of that — a measured burst averaged ~7.8s per
+    sample. A flat 180s budget silently truncated anything over ~25 samples,
+    which is how a 30-sample request finished with 7 unfilled.
+    """
+
+    def _t(self, n):
+        from ravensdr.app import _manual_burst_timeout
+        return _manual_burst_timeout(n)
+
+    def test_small_requests_get_a_floor(self):
+        assert self._t(1) == 60
+        assert self._t(5) == 60
+
+    def test_budget_scales_with_count(self):
+        # The case that failed: 30 samples needed well over the old flat 180s.
+        assert self._t(30) >= 240
+        assert self._t(100) > self._t(30)
+
+    def test_large_requests_are_capped(self):
+        """A big count must not let a burst hold the dongle indefinitely."""
+        assert self._t(10_000) == 900

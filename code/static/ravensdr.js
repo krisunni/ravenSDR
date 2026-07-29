@@ -308,6 +308,58 @@
         el.className = "view-badge" + (cls ? " " + cls : "");
     }
 
+    // ── Manual collection ──
+    // The rotation is capped and only knows preset frequencies. This lets the
+    // operator collect where they are actually tuned, which is the only way to
+    // add the frequency diversity that validation needs.
+    var collectWired = false;
+
+    function wireCollectHere(classes) {
+        var sel = document.getElementById("collect-label");
+        var btn = document.getElementById("collect-go");
+        var status = document.getElementById("collect-status");
+        if (!sel || !btn) return;
+
+        if (!sel.options.length && classes && classes.length) {
+            classes.forEach(function (c) {
+                var o = document.createElement("option");
+                o.value = c; o.textContent = c;
+                sel.appendChild(o);
+            });
+        }
+        if (collectWired) return;
+        collectWired = true;
+
+        btn.addEventListener("click", function () {
+            var count = parseInt(
+                document.getElementById("collect-count").value, 10) || 300;
+            status.textContent = "arming\u2026";
+            status.className = "collect-status";
+            btn.disabled = true;
+            fetch("/api/collect-here", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({label: sel.value, count: count})
+            }).then(function (r) {
+                return r.json().then(function (d) { return {ok: r.ok, d: d}; });
+            }).then(function (res) {
+                btn.disabled = false;
+                if (!res.ok) {
+                    status.textContent = res.d.error || "failed";
+                    status.className = "collect-status err";
+                    return;
+                }
+                status.textContent = "collecting " + res.d.armed + " as " +
+                    res.d.label + " on " + (res.d.freq || "current frequency");
+                status.className = "collect-status ok";
+            }).catch(function () {
+                btn.disabled = false;
+                status.textContent = "request failed";
+                status.className = "collect-status err";
+            });
+        });
+    }
+
     function refreshModelView() {
         fetch("/api/classifier/status").then(function (r) { return r.json(); })
           .then(function (d) {
@@ -327,6 +379,7 @@
               set("mdl-validated", (d.validated_classes || []).join(" ") || "none", "ok");
               set("mdl-unproven", (d.unproven_classes || []).join(" ") || "none", "warn");
               window._unproven = d.unproven_classes || [];
+              wireCollectHere(Object.keys(d.validation || {}).sort());
           }).catch(function () {});
 
         fetch("/api/iq-collect").then(function (r) { return r.json(); })
@@ -347,6 +400,13 @@
               set("mdl-corpus", (c.total || 0).toLocaleString());
               set("mdl-empty", ((c.skipped_empty || 0) +
                                 (c.skipped_low_snr || 0)).toLocaleString());
+              // A burst in flight is the operator's own request — show it
+              // finishing rather than leaving the button looking inert.
+              var st = document.getElementById("collect-status");
+              if (st && c.burst_remaining) {
+                  st.textContent = c.burst_remaining + " samples remaining";
+                  st.className = "collect-status ok";
+              }
               renderCorpusBars(c.per_class || {}, d.frequencies_per_class || {});
               setBadge("model", d.capturing ? "REC" : "", d.capturing ? "live" : "");
           }).catch(function () {});

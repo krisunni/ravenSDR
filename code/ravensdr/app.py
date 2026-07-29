@@ -1106,7 +1106,11 @@ def _on_collect_iq(iq_samples, frequency_hz):
     # loaded, working and idle.
     _classify_and_waterfall(iq_samples, frequency_hz, label)
 
-    if _collect_duty != "continuous":
+    # A manual burst is an explicit request for THIS frequency, so the
+    # continuous-only rule does not apply: the operator has said what the band
+    # carries, which is the same guarantee a preset gives.
+    if _collect_duty != "continuous" and \
+            signal_classifier.burst_status()["remaining"] <= 0:
         return
     signal_classifier.collect_sample(iq_samples, label, frequency_hz)
 
@@ -1269,6 +1273,104 @@ iq_collect_scheduler = IQCollectScheduler(
 )
 
 
+@app.route("/api/collect-here", methods=["POST"])
+def api_collect_here():
+    """Collect a burst of training samples on the CURRENT frequency.
+
+    The background rotation can only visit frequencies someone thought to add
+    as a preset, and its per-class cap means a class that is already full
+    collects nothing more — including on a frequency it has never seen. That is
+    backwards: a second frequency for OOK is worth more than a twelve-thousandth
+    sample from the first, because held-out-frequency validation needs one.
+
+    So this is operator-driven: tune anywhere, say what it is, collect a burst.
+    """
+    data = request.get_json(force=True) or {}
+    label = (data.get("label") or "").strip()
+    count = max(1, min(int(data.get("count", 300)), 2000))
+
+    if label not in MODULATION_CLASSES:
+        return jsonify({"error": "unknown modulation '%s'" % label,
+                        "classes": MODULATION_CLASSES}), 400
+
+    preset = input_source.current_preset or {}
+    if not input_source.is_running:
+        return jsonify({"error": "Tune to a frequency first — "
+                                 "there is nothing to collect."}), 409
+
+    hz = _freq_to_hz(preset.get("freq") or "")
+    if not hz:
+        return jsonify({"error": "cannot parse the tuned frequency"}), 409
+
+    note_operator_action()          # this is a person; hold off the rotation
+    signal_classifier.collect_label = label
+    armed = signal_classifier.collect_burst(count, label)
+
+    # rtl_fm gives demodulated audio, not IQ, so the burst needs the dongle on
+    # rtl_sdr. Take it, capture, hand it straight back to whatever was tuned.
+    eventlet.spawn_n(_run_manual_burst, preset, hz, label, count)
+
+    log.info("Manual collect: %d samples as %s on %s",
+             armed, label, preset.get("freq") or "?")
+    return jsonify({
+        "armed": armed,
+        "label": label,
+        "freq": preset.get("freq"),
+        "preset": preset.get("id"),
+    })
+
+
+# Collection is rate-limited to one sample per class every
+# COLLECT_MIN_INTERVAL_S (2s), and gated windows are skipped on top of that — a
+# measured burst ran ~7.8s per sample, not 2s. A flat 180s therefore truncated
+# any request over ~25 samples, which is how a 30-sample burst finished with 7
+# unfilled. Budget from the request instead, with a ceiling so a large count
+# cannot hold the dongle indefinitely.
+MANUAL_BURST_PER_SAMPLE_S = 8
+MANUAL_BURST_MIN_S = 60
+MANUAL_BURST_MAX_S = 900
+
+
+def _manual_burst_timeout(count):
+    return max(MANUAL_BURST_MIN_S,
+               min(count * MANUAL_BURST_PER_SAMPLE_S, MANUAL_BURST_MAX_S))
+
+
+def _run_manual_burst(preset, hz, label, count):
+    """Hold the dongle on rtl_sdr until the burst fills, then restore audio."""
+    global _collect_duty
+    was = _collect_duty
+    _collect_duty = "continuous"    # the operator vouched for this band
+    input_source.stop()
+    if not iq_collector.start(hz):
+        _collect_duty = was
+        log.warning("Manual collect: could not start IQ capture on %.4f MHz",
+                    hz / 1e6)
+        signal_classifier.collect_burst(0)
+        sdr_arbiter.request(preset)
+        return
+
+    sdr_arbiter.adopt(_collect_preset_view(
+        {"id": preset.get("id"), "freq_hz": hz, "label": label,
+         "category": preset.get("category")}))
+
+    budget = _manual_burst_timeout(count)
+    waited = 0
+    while waited < budget:
+        if signal_classifier.burst_status()["remaining"] <= 0:
+            break
+        eventlet.sleep(1)
+        waited += 1
+
+    remaining = signal_classifier.burst_status()["remaining"]
+    signal_classifier.collect_burst(0)
+    iq_collector.stop()
+    _collect_duty = was
+    log.info("Manual collect finished on %.4f MHz (%s): %d/%d collected in %ds",
+             hz / 1e6, label, count - remaining, count, waited)
+    sdr_arbiter.request(preset)     # give the operator their frequency back
+
+
 @app.route("/api/radio-activity")
 def api_radio_activity():
     """What the radio is doing right now, and why — in one call.
@@ -1286,11 +1388,19 @@ def api_radio_activity():
     elif input_source.wefax_mode:
         who, detail = "scheduled", "WEFAX slot recording"
     elif collecting:
+        burst = signal_classifier.burst_status()
         hz = band.get("freq_hz") or 0
-        detail = "Building the training corpus"
-        if hz:
-            detail += " on %.4f MHz" % (hz / 1e6)
-        who = "background"
+        if burst.get("remaining"):
+            # Requested by a person, so do not file it under "background" —
+            # that reads as the node having taken the radio on its own.
+            who = "operator"
+            detail = "Collecting %d more %s samples at your request" % (
+                burst["remaining"], burst.get("label") or "")
+        else:
+            who = "background"
+            detail = "Building the training corpus"
+            if hz:
+                detail += " on %.4f MHz" % (hz / 1e6)
     elif lease > 0:
         who = "operator"
         detail = "You have the radio"

@@ -159,6 +159,21 @@
           "type": "fixed",
           "date": "2026-07-28",
           "description": "#automation-status shares .secondary-indicator with the Dongle-2 lamp, which styles it as an 8px dot \u2014 but renderAutomation writes the word 'paused' into it, so the text spilled across the header. It is now a badge, hidden when empty"
+        },
+        {
+          "type": "added",
+          "date": "2026-07-28",
+          "description": "Manual 'Collect here' in the Model tab: tune anywhere, name the modulation, collect a burst. The background rotation could only visit preset frequencies and its per-class cap meant a full class collected nothing more even on a frequency it had never seen \u2014 which is exactly the data validation needs, since a class observed on one frequency can never pass a held-out-frequency test. A burst is allowed past the cap, bounded by the requested count"
+        },
+        {
+          "type": "changed",
+          "date": "2026-07-28",
+          "description": "Background IQ collection is off by default. The corpus stood at 64,325 samples and 19GB with every class past the 5,000 cap, so the rotation was spinning the dongle and writing nothing. Half of it is OOK/FSK/AFSK1200 from a single frequency each, where more samples provably cannot change the validation outcome"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "/api/radio-activity polled config from disk every 5s per open tab and load_config logged at INFO, burying the transcriber's own output in the journal. Now DEBUG"
         }
       ]
     },

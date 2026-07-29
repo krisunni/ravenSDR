@@ -630,6 +630,28 @@
             <div class="mdl-kv"><span>Rejected as noise</span><b id="mdl-empty">0</b></div>
           </div>
         </section>
+        <!-- Operator-driven collection. The background rotation can only visit
+             frequencies someone added as a preset, and its per-class cap means
+             a full class collects nothing more even on a frequency it has never
+             seen — which is precisely the data that would validate it. -->
+        <section class="mdl-card mdl-wide" id="collect-here-card">
+          <div class="mdl-card-title">Collect here</div>
+          <p class="mdl-note" style="margin-top:0">
+            Tune to a frequency, say what modulation it carries, and grab a burst.
+            A <b>new frequency</b> for an existing class is worth far more than more
+            samples from one already covered &mdash; validation holds whole
+            frequencies out, so a class seen on only one can never pass.
+          </p>
+          <div class="collect-row">
+            <label for="collect-label">Modulation</label>
+            <select id="collect-label"></select>
+            <label for="collect-count">Samples</label>
+            <input type="number" id="collect-count" value="300" min="1" max="2000">
+            <button id="collect-go" class="btn">Collect on current frequency</button>
+            <span id="collect-status" class="collect-status"></span>
+          </div>
+        </section>
+
         <section class="mdl-card mdl-wide">
           <div class="mdl-card-title">Training corpus by class</div>
           <div id="mdl-corpus-bars" class="mdl-bars"></div>

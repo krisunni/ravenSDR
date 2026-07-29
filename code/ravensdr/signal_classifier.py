@@ -215,6 +215,8 @@ class SignalClassifier:
         self._backend = "none"
         self._collect_last_ts = {}      # label -> last save time (rate limit)
         self._collect_counts = {}       # label -> files on disk (cap)
+        self._burst_remaining = 0       # manual 'collect here' allowance
+        self._burst_label = None
         self._collected_total = 0
         self._collect_skipped_snr = 0
         self._collect_skipped_empty = 0
@@ -434,6 +436,26 @@ class SignalClassifier:
         return classification
 
 
+    def collect_burst(self, count, label=None):
+        """Arm a manual collection burst of `count` samples.
+
+        The standing per-class cap exists to stop the rotation filling the SD
+        card, but it also blocks the one case most worth collecting: a NEW
+        frequency for a class that is already full. OOK has 12,000 samples from
+        a single frequency, and not one more of those can validate it — whereas
+        a few hundred from a second frequency can.
+
+        A burst is therefore allowed past the cap, bounded by `count` so it
+        cannot run away.
+        """
+        with self._lock:
+            self._burst_remaining = max(0, int(count))
+            self._burst_label = label
+        return self._burst_remaining
+
+    def burst_status(self):
+        return {"remaining": self._burst_remaining, "label": self._burst_label}
+
     def collect_sample(self, iq_samples, label, frequency_hz, snr_db=None):
         """Save a labelled IQ sample, using the preset as ground truth.
 
@@ -475,7 +497,11 @@ class SignalClassifier:
                 self._collect_counts[label] = len(
                     [f for f in os.listdir(save_dir) if f.endswith(".npy")])
             if self._collect_counts[label] >= COLLECT_MAX_PER_CLASS:
-                return None
+                # A manual burst deliberately overrides the cap — see
+                # collect_burst(). Everything else stops here.
+                if self._burst_remaining <= 0:
+                    return None
+                self._burst_remaining -= 1
 
             ts = datetime.datetime.now(datetime.timezone.utc).strftime(
                 "%Y%m%d_%H%M%S_%f")
@@ -513,6 +539,7 @@ class SignalClassifier:
             "min_peak_ratio": COLLECT_MIN_PEAK_RATIO,
             "min_snr_db": COLLECT_MIN_SNR_DB,
             "max_per_class": COLLECT_MAX_PER_CLASS,
+            "burst_remaining": self._burst_remaining,
         }
 
     def classify_segment(self, segment):

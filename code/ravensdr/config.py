@@ -68,7 +68,10 @@ def load_config():
             with open(CONFIG_FILE) as f:
                 file_config = json.load(f)
             _merge(config, file_config)
-            log.info("Config loaded from %s", CONFIG_FILE)
+            # DEBUG, not INFO: this is read on every automation check, and the
+            # console polls radio activity every 5s per open tab. At INFO it
+            # buried the transcriber's own output in the journal.
+            log.debug("Config loaded from %s", CONFIG_FILE)
             return config
         except (OSError, json.JSONDecodeError) as e:
             log.warning("Failed to load config.json: %s — using env vars", e)

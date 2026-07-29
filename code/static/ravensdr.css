@@ -1241,3 +1241,30 @@ select {
     white-space: nowrap;
 }
 #automation-status:empty { display: none; }
+
+/* Manual collection controls. */
+.collect-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 9px;
+    margin-top: 12px;
+}
+.collect-row label {
+    font: 10px var(--font-mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+.collect-row select, .collect-row input[type="number"] {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: 12px var(--font-mono);
+}
+.collect-row input[type="number"] { width: 82px; }
+.collect-status { font: 12px var(--font-mono); color: var(--text-dim); }
+.collect-status.ok { color: var(--green); }
+.collect-status.err { color: var(--red); }
