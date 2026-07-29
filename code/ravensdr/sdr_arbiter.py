@@ -197,6 +197,9 @@ def _brief(preset):
         "freq": preset.get("freq"),
         "mode": preset.get("mode"),
         "category": preset.get("category"),
+        # True while the background corpus collector holds the dongle, so the
+        # console can explain an idle audio path instead of leaving it blank.
+        "collecting": bool(preset.get("collecting")),
     }
 
 

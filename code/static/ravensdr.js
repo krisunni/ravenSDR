@@ -429,6 +429,31 @@
             .catch(function () { /* radio may be down; leave default */ });
     }
 
+
+    // Banner on the Listen view while the background collector holds the radio.
+    // It is not an error — corpus building is meant to pre-empt idle listening —
+    // but silence with no explanation reads as a broken node.
+    function showCollectingNotice(active, actual) {
+        var host = document.getElementById("view-listen");
+        if (!host) return;
+        var el = document.getElementById("collect-notice");
+        if (!active) {
+            if (el) el.remove();
+            return;
+        }
+        if (!el) {
+            el = document.createElement("div");
+            el.id = "collect-notice";
+            el.className = "collect-notice";
+            host.insertBefore(el, host.firstChild);
+        }
+        var where = (actual && actual.freq) ? " on " + actual.freq : "";
+        el.innerHTML =
+            '<b>Corpus collector has the radio</b>' + where +
+            '. Audio and transcription resume when the slot ends \u2014 or turn ' +
+            '<em>Auto</em> off in the header to keep the radio on your preset.';
+    }
+
     function renderSdrC2(snap) {
         if (!snap) return;
         const prev = sdrC2;
@@ -447,7 +472,15 @@
         stateEl.textContent = state;
         stateEl.className = "c2-state is-" + key;
 
-        if (actualEl) actualEl.textContent = describeC2(snap.actual);
+        if (actualEl) {
+            actualEl.textContent = describeC2(snap.actual);
+            // The corpus collector takes the dongle on a rotation. Without
+            // saying so, the operator sees their preset in CMD, a dead audio
+            // path, and an empty transcript, with nothing connecting the three.
+            var collecting = !!(snap.actual && snap.actual.collecting);
+            actualEl.classList.toggle("is-collecting", collecting);
+            showCollectingNotice(collecting, snap.actual);
+        }
         if (cmdEl) {
             cmdEl.textContent = describeC2(snap.commanded);
             cmdEl.classList.toggle("is-pending", !!snap.in_transition);

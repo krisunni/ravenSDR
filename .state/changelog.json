@@ -139,6 +139,11 @@
           "type": "changed",
           "date": "2026-07-28",
           "description": "CLASSIFIER_HEF_PATH now defaults to models/signal_classifier_h8l.hef, matching how the ONNX path already defaulted \u2014 previously the NPU could only be reached by setting an environment variable"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "Empty transcript with no explanation: the background IQ collector takes the dongle on a rotation, but _start_collect_slot did it by calling input_source.stop() directly, bypassing the arbiter \u2014 while _stop_collect_slot handed the radio back THROUGH the arbiter. So the console kept reporting LOCKED on the operator's preset while the radio was off collecting on another band, with a dead audio path and a transcript filling with filtered [inaudible]. The collector now reports via adopt(), and the Listen view says who has the radio and how to keep it"
         }
       ]
     },

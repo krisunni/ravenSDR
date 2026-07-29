@@ -1160,8 +1160,32 @@ def _start_collect_slot(band):
     if ok:
         log.info("IQ collect: %s @ %.3f MHz (label %s)",
                  band["id"], band["freq_hz"] / 1e6, band["label"])
+        # Tell the arbiter what the hardware is REALLY doing. This path takes
+        # the dongle directly, and _stop_collect_slot hands it back through the
+        # arbiter — so without this the console kept reporting LOCKED on the
+        # operator's preset while the radio was off collecting on another band
+        # entirely. The transcript then sat empty with nothing to explain why.
+        # adopt() exists for exactly this: state set outside the arbiter.
+        sdr_arbiter.adopt(_collect_preset_view(band))
         emit_safe("iq_collect", iq_collect_scheduler.snapshot())
     return ok
+
+
+def _collect_preset_view(band):
+    """A preset-shaped view of a collection band, for the C2 display.
+
+    Marked with collecting=True so the console can say the corpus builder has
+    the radio rather than implying the operator's preset is live.
+    """
+    hz = band.get("freq_hz") or 0
+    return {
+        "id": band.get("id"),
+        "label": "%s (collecting %s)" % (band.get("id"), band.get("label")),
+        "freq": "%.4fM" % (hz / 1e6) if hz else "",
+        "mode": "iq-collect",
+        "category": band.get("category"),
+        "collecting": True,
+    }
 
 
 def _stop_collect_slot(band):

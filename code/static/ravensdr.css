@@ -1191,3 +1191,20 @@ select {
     opacity: 0.75;
     word-break: break-all;
 }
+
+/* The corpus collector pre-empts idle listening by design. Saying so turns a
+   dead audio path and an empty transcript into an explained state. */
+.collect-notice {
+    background: #1b2430;
+    border: 1px solid #2b3a4d;
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 11px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.5;
+}
+.collect-notice b { color: var(--text); }
+.collect-notice em { color: var(--accent); font-style: normal; }
+.c2-val.is-collecting { color: var(--accent); }

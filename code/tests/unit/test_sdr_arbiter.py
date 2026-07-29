@@ -83,8 +83,32 @@ class TestRequestAndApply:
         arb = SdrArbiter(apply_fn=_Recorder())
         arb.request(_preset("a", note="secret", stream_url="http://x"))
         _drain(arb)
-        assert set(arb.snapshot()["actual"]) == {
-            "id", "label", "freq", "mode", "category"}
+        actual = arb.snapshot()["actual"]
+        assert set(actual) == {
+            "id", "label", "freq", "mode", "category", "collecting"}
+        # The point of the brief view: verbose or sensitive preset fields must
+        # not ride along into every status payload.
+        assert "note" not in actual
+        assert "stream_url" not in actual
+
+    def test_collecting_defaults_false_for_operator_presets(self):
+        """Only the corpus collector sets this; a normal tune must not."""
+        arb = SdrArbiter(apply_fn=_Recorder())
+        arb.request(_preset("a"))
+        _drain(arb)
+        assert arb.snapshot()["actual"]["collecting"] is False
+
+    def test_adopt_carries_the_collecting_flag(self):
+        """The collector takes the dongle outside the arbiter and reports it
+        via adopt(); without the flag the console shows the operator's preset
+        as live while the radio is off building the corpus elsewhere."""
+        arb = SdrArbiter(apply_fn=_Recorder())
+        arb.adopt({"id": "aprs-144390", "label": "aprs-144390 (collecting "
+                   "AFSK1200)", "freq": "144.3900M", "mode": "iq-collect",
+                   "collecting": True})
+        snap = arb.snapshot()
+        assert snap["actual"]["collecting"] is True
+        assert snap["actual"]["id"] == "aprs-144390"
 
 
 class TestCoalescing:
