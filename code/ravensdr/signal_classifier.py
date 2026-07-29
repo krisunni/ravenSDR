@@ -97,19 +97,36 @@ HAILO_TIMEOUT_MS = 10000
 #   OOK / FSK / AFSK1200 — one frequency each, so UNPROVEN by construction.
 #   144.390 is the only APRS channel in North America, so AFSK1200 can never be
 #   validated on this node however long it collects.
+# Three states, not two. "unproven" and "unprovable" make different claims and
+# conflating them hides which ones are worth spending nights collecting for.
+#
+#   validated   generalises across held-out frequencies
+#   unproven    seen on one frequency SO FAR — more frequencies would settle it
+#   unprovable  cannot be settled by this node, at this location, ever
 CLASS_VALIDATION = {
     "WFM": "validated",
     "FM": "validated",
     "MSK": "validated",
-    "OOK": "unproven",
-    "FSK": "unproven",
-    "AFSK1200": "unproven",
+    "OOK": "unproven",          # ISM carries OOK on 315/433/915 too
+    "FSK": "unproven",          # other pager and utility channels exist
+    # 144.390 is the ONLY APRS channel in North America. Held-out-frequency
+    # validation needs a second frequency and there is not one to collect, so
+    # this is a dead end rather than a backlog item. Marked as such so nobody
+    # burns another night of collection expecting it to resolve.
+    "AFSK1200": "unprovable",
 }
+
+UNTRUSTED = ("unproven", "unprovable")
 
 
 def class_confidence_note(modulation):
     """Human-readable caveat for a predicted class, or None if it is trusted."""
-    if CLASS_VALIDATION.get(modulation) == "unproven":
+    state = CLASS_VALIDATION.get(modulation)
+    if state == "unprovable":
+        return ("only one frequency carries this mode here (144.390 MHz is the "
+                "sole APRS channel in North America), so it can never be "
+                "validated across frequencies — treat with permanent caution")
+    if state == "unproven":
         return ("only ever observed on one frequency — this prediction may be "
                 "recognising the band rather than the modulation")
     return None
@@ -462,8 +479,18 @@ class SignalClassifier:
         Returns the path written, or None if the sample was declined. Never
         raises — collection must not be able to break reception.
         """
-        if not label or label == "unknown":
+        if not label:
             return None
+        if label == "unknown":
+            # "unknown" is normally the ABSENCE of a label — a preset that never
+            # declared what it carries — and collecting that would file arbitrary
+            # signals under a class name. But deliberate negative examples are
+            # the single most valuable thing missing from this corpus: with no
+            # "none of the above" class the model must force every input into one
+            # of six, so it can never decline, which is what blocks a spectrum
+            # sweep. An armed burst carries that intent explicitly.
+            if self._burst_label != "unknown" or self._burst_remaining <= 0:
+                return None
         # The label becomes a directory name and a training class, so it must be
         # exactly one known modulation. "OOK/FSK" (declared by the 433/915 ISM
         # presets, where devices genuinely use either) created a NESTED
@@ -477,13 +504,21 @@ class SignalClassifier:
                             "(ambiguous or unrecognised labels poison training)",
                             label)
             return None
-        if snr_db is not None and snr_db < COLLECT_MIN_SNR_DB:
-            self._collect_skipped_snr += 1
-            return None
+        # The presence gates exist to keep empty channels out of the corpus —
+        # they are why 1,921 "OOK" samples containing no burst were caught. But
+        # for the "unknown" class the empty channel IS the example: we are
+        # teaching the model what "nothing I recognise" looks like, so requiring
+        # a strong peak would reject every valid negative.
+        collecting_negatives = (label == "unknown")
 
-        if spectral_peak_ratio(iq_samples) < COLLECT_MIN_PEAK_RATIO:
-            self._collect_skipped_empty += 1
-            return None
+        if not collecting_negatives:
+            if snr_db is not None and snr_db < COLLECT_MIN_SNR_DB:
+                self._collect_skipped_snr += 1
+                return None
+
+            if spectral_peak_ratio(iq_samples) < COLLECT_MIN_PEAK_RATIO:
+                self._collect_skipped_empty += 1
+                return None
 
         now = time.time()
         last = self._collect_last_ts.get(label, 0.0)
@@ -496,12 +531,16 @@ class SignalClassifier:
             if self._collect_counts.get(label) is None:
                 self._collect_counts[label] = len(
                     [f for f in os.listdir(save_dir) if f.endswith(".npy")])
-            if self._collect_counts[label] >= COLLECT_MAX_PER_CLASS:
+            over_cap = self._collect_counts[label] >= COLLECT_MAX_PER_CLASS
+            if over_cap or collecting_negatives:
                 # A manual burst deliberately overrides the cap — see
-                # collect_burst(). Everything else stops here.
+                # collect_burst(). Negatives always run from a burst too, so
+                # they are bounded by the requested count rather than the cap.
                 if self._burst_remaining <= 0:
-                    return None
-                self._burst_remaining -= 1
+                    if over_cap:
+                        return None
+                else:
+                    self._burst_remaining -= 1
 
             ts = datetime.datetime.now(datetime.timezone.utc).strftime(
                 "%Y%m%d_%H%M%S_%f")
@@ -731,6 +770,10 @@ class SignalClassifier:
                                         if v == "validated"),
             "unproven_classes": sorted(k for k, v in CLASS_VALIDATION.items()
                                        if v == "unproven"),
+            # Kept separate from "unproven": no amount of collecting will move
+            # these, so the UI should not invite the attempt.
+            "unprovable_classes": sorted(k for k, v in CLASS_VALIDATION.items()
+                                         if v == "unprovable"),
         }
 
     def stop(self):

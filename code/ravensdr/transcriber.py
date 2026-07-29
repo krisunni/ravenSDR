@@ -659,9 +659,18 @@ class Transcriber:
             if len(data) >= 4096:
                 rms = compute_rms(data[-4096:])
                 preset = self._current_preset or {}
+                noise = getattr(segmenter, "noise", None)
+                # Excess over the measured floor, not raw level. On FM an ABSENT
+                # carrier demodulates to full-scale hiss, so a loud meter can
+                # mean nothing is there — which is exactly how a dead NOAA
+                # channel read at 85% of scale.
                 self.emit_fn("signal_level", {
                     "rms": round(rms, 1),
                     "freq": preset.get("freq", ""),
+                    "noise_floor_db": (round(noise.noise_floor_db, 1)
+                                       if noise and noise.ready else None),
+                    "excess_db": (round(noise.excess_db(rms), 1)
+                                  if noise and noise.ready else None),
                 })
 
             # Feed into segmenter — get back segments (VAD or time-based)
@@ -760,6 +769,10 @@ class Transcriber:
                                     "freq": preset.get("freq", ""),
                                     "noise_floor_db": (
                                         round(segmenter.noise.noise_floor_db, 1)
+                                        if getattr(segmenter, "noise", None)
+                                        and segmenter.noise.ready else None),
+                                    "excess_db": (
+                                        round(segmenter.noise.excess_db(rms), 1)
                                         if getattr(segmenter, "noise", None)
                                         and segmenter.noise.ready else None),
                                 })

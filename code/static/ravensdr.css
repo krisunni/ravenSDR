@@ -246,9 +246,15 @@ section > label {
     border-radius: 2px;
 }
 
-.level-low { background: var(--green); }
-.level-mid { background: var(--yellow); }
-.level-high { background: var(--red); }
+/* Signal meter, coloured by excess over the noise floor rather than raw level.
+   The previous scheme was audio-clipping semantics — green when quiet, red when
+   loud — which is inverted for a receiver, and worse on FM: an absent carrier
+   demodulates to full-scale hiss, so a dead channel showed a full red bar as
+   though it were a strong station. */
+.level-signal   { background: var(--green); }   /* clearly above the floor */
+.level-marginal { background: var(--yellow); }  /* barely above it */
+.level-noise    { background: #3d4450; }        /* floor — nothing there */
+.level-unknown  { background: var(--border); }  /* floor still settling */
 
 .meter-value {
     font-size: 12px;

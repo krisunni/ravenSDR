@@ -439,3 +439,40 @@ class TestManualBurstTimeout:
     def test_large_requests_are_capped(self):
         """A big count must not let a burst hold the dongle indefinitely."""
         assert self._t(10_000) == 900
+
+
+class TestUnknownClassCollection:
+    """Negative examples are the gap that blocks a spectrum sweep.
+
+    With no "none of the above" class the model must force every input into one
+    of the six it knows, so it can never decline — point it at an unfamiliar
+    transmitter and it will confidently call it FM. But "unknown" is also what a
+    preset that never declared a modulation looks like, and collecting THAT
+    would file arbitrary signals under a class name. Intent is the difference.
+    """
+
+    def _clf(self, tmp_path, monkeypatch):
+        import ravensdr.signal_classifier as sc
+        monkeypatch.setattr(sc, "COLLECTED_DIR", str(tmp_path))
+        return sc.SignalClassifier(onnx_path=None, hef_path=None)
+
+    def test_accidental_unknown_is_still_refused(self, tmp_path, monkeypatch):
+        import numpy as np
+        clf = self._clf(tmp_path, monkeypatch)
+        iq = (np.random.randn(24000) + 1j * np.random.randn(24000)).astype(np.complex64)
+        assert clf.collect_sample(iq, "unknown", 433_920_000) is None
+
+    def test_deliberate_unknown_burst_collects(self, tmp_path, monkeypatch):
+        import numpy as np
+        clf = self._clf(tmp_path, monkeypatch)
+        clf.collect_burst(3, "unknown")
+        iq = (np.random.randn(24000) + 1j * np.random.randn(24000)).astype(np.complex64)
+        assert clf.collect_sample(iq, "unknown", 433_920_000) is not None
+
+    def test_a_burst_for_another_class_does_not_unlock_unknown(
+            self, tmp_path, monkeypatch):
+        import numpy as np
+        clf = self._clf(tmp_path, monkeypatch)
+        clf.collect_burst(3, "OOK")
+        iq = (np.random.randn(24000) + 1j * np.random.randn(24000)).astype(np.complex64)
+        assert clf.collect_sample(iq, "unknown", 433_920_000) is None

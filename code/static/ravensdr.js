@@ -146,7 +146,7 @@
     // confidence and frequency that make it mean anything.
 
     socket.on("signal_level", function (data) {
-        updateSignalMeter(data.rms);
+        updateSignalMeter(data.rms, data.excess_db);
     });
 
     socket.on("transcript", function (data) {
@@ -889,18 +889,39 @@
 
     // ── Signal Meter ──
 
-    function updateSignalMeter(rms) {
+    // Colour by how far the audio sits ABOVE the measured noise floor, not by
+    // raw level. The old thresholds were audio-clipping semantics — green quiet,
+    // red loud — which is backwards for a receiver AND actively misleading on
+    // FM: an absent carrier demodulates to full-scale hiss, so a dead channel
+    // pegged the meter red as though it were a strong signal. Measured on a
+    // silent NOAA channel: 8,488 RMS, 85% of scale, nothing transmitting.
+    //
+    // Excess over the floor answers the question the meter is actually for:
+    // is there anything here?
+    function updateSignalMeter(rms, excessDb) {
         var pct = Math.min(100, (rms / 10000) * 100);
         signalBar.style.width = pct + "%";
         signalRms.textContent = Math.round(rms);
 
-        if (pct < 30) {
-            signalBar.className = "meter-bar level-low";
-        } else if (pct < 70) {
-            signalBar.className = "meter-bar level-mid";
+        var cls, title;
+        if (excessDb === null || excessDb === undefined) {
+            // Floor still settling — say nothing rather than guess.
+            cls = "level-unknown";
+            title = "Measuring the noise floor\u2026";
+        } else if (excessDb >= 10) {
+            cls = "level-signal";
+            title = "Signal " + excessDb.toFixed(1) + " dB above the noise floor";
+        } else if (excessDb >= 3) {
+            cls = "level-marginal";
+            title = "Marginal — only " + excessDb.toFixed(1) + " dB over the floor";
         } else {
-            signalBar.className = "meter-bar level-high";
+            cls = "level-noise";
+            title = "Noise only (" + excessDb.toFixed(1) +
+                " dB over the floor) — nothing is transmitting here";
         }
+        signalBar.className = "meter-bar " + cls;
+        var wrap = signalBar.parentElement;
+        if (wrap) wrap.title = title;
     }
 
     // ── Inference Stats ──

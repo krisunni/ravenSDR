@@ -50,21 +50,40 @@
         var el = document.getElementById("clf-warning");
         if (!el || !this.status) return;
         var unproven = this.status.unproven_classes || [];
+        var unprovable = this.status.unprovable_classes || [];
         var validated = this.status.validated_classes || [];
-        if (!unproven.length) { el.classList.add("hidden"); return; }
+        if (!unproven.length && !unprovable.length) {
+            el.classList.add("hidden");
+            return;
+        }
+        var code = function (list) {
+            return list.map(function (c) {
+                return "<code>" + c + "</code>"; }).join(" ");
+        };
 
         el.classList.remove("hidden");
-        el.innerHTML =
+        var html =
             "<strong>Model limitations.</strong> Trained on " +
-            (validated.length + unproven.length) + " classes; only <strong>" +
-            validated.length + "</strong> could be validated across more than one " +
-            "frequency (" + validated.map(function (c) {
-                return "<code>" + c + "</code>"; }).join(" ") + "). " +
-            unproven.map(function (c) {
-                return "<code>" + c + "</code>"; }).join(" ") +
-            " were each seen on a single frequency, so a confident label there may " +
-            "be recognising the <em>band</em> rather than the modulation. Anything " +
-            "outside these classes will still be forced into one of them.";
+            (validated.length + unproven.length + unprovable.length) +
+            " classes; only <strong>" + validated.length + "</strong> could be " +
+            "validated across more than one frequency (" + code(validated) + "). ";
+
+        if (unproven.length) {
+            html += code(unproven) + " " + (unproven.length === 1 ? "was" : "were") +
+                " seen on a single frequency <em>so far</em>, so a confident label " +
+                "there may be recognising the <em>band</em> rather than the " +
+                "modulation \u2014 collecting the same mode elsewhere would settle it. ";
+        }
+        // Distinct from "unproven": collecting more cannot fix these, so the
+        // wording must not imply a backlog item.
+        if (unprovable.length) {
+            html += code(unprovable) + " can <strong>never</strong> be validated " +
+                "here \u2014 only one frequency carries that mode in this region " +
+                "(144.390 MHz is the sole APRS channel in North America), and the " +
+                "test needs a second one. Permanent caution, not a to-do. ";
+        }
+        html += "Anything outside these classes will still be forced into one of them.";
+        el.innerHTML = html;
     };
 
     ClassifierPanel.prototype._onClassification = function (data) {
@@ -95,7 +114,8 @@
         modEl.className = "clf-mod-type clf-mod-" + (data.modulation || "unknown").toLowerCase();
         // An unproven class gets a visible marker and the reason on hover, so a
         // confident-looking label is never mistaken for a trustworthy one.
-        if (data.validation === "unproven") {
+        if (data.validation === "unproven" ||
+            data.validation === "unprovable") {
             modEl.classList.add("clf-unproven");
             modEl.title = data.caveat || "this class was only observed on one frequency";
         } else {
@@ -150,7 +170,10 @@
             item.className = "clf-history-item";
             if (idx === 0) item.classList.add("clf-history-new");
             if (evt.uncertain) item.classList.add("clf-uncertain-item");
-            if (evt.validation === "unproven") item.classList.add("clf-unproven-item");
+            if (evt.validation === "unproven" ||
+                evt.validation === "unprovable") {
+                item.classList.add("clf-unproven-item");
+            }
 
             var ts = document.createElement("span");
             ts.className = "clf-history-ts";

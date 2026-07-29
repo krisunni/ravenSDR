@@ -174,6 +174,21 @@
           "type": "fixed",
           "date": "2026-07-28",
           "description": "/api/radio-activity polled config from disk every 5s per open tab and load_config logged at INFO, burying the transcriber's own output in the journal. Now DEBUG"
+        },
+        {
+          "type": "fixed",
+          "date": "2026-07-28",
+          "description": "Signal meter was coloured green-quiet to red-loud \u2014 audio-clipping semantics, inverted for a receiver and actively misleading on FM, where an ABSENT carrier demodulates to full-scale hiss. A dead NOAA channel measured 8,488 RMS (85% of scale) and showed a full red bar as though it were a strong station. It now colours by excess over the measured noise floor, which is the question a signal meter is for: noise-only, marginal, or signal, with the dB on hover"
+        },
+        {
+          "type": "changed",
+          "date": "2026-07-28",
+          "description": "AFSK1200 is marked 'unprovable' rather than 'unproven'. Those are different claims: unproven means more frequencies would settle it, unprovable means they cannot exist. 144.390 MHz is the sole APRS channel in North America, so held-out-frequency validation has no second frequency to hold out \u2014 permanent caution, not a backlog item. The classifier warning now says so explicitly instead of implying it is collectable"
+        },
+        {
+          "type": "added",
+          "date": "2026-07-28",
+          "description": "Deliberate 'unknown' collection for negative examples \u2014 the gap that blocks a spectrum sweep, since with no none-of-the-above class the model must force every input into one of six and can never decline. Accidental unknown (a preset that never declared a modulation) is still refused; only an armed burst carries the intent. Negatives also bypass the signal-presence gates, because for this class the empty channel IS the example"
         }
       ]
     },
