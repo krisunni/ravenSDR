@@ -578,7 +578,12 @@ log.info("Signal classifier initialized (backend: %s)", signal_classifier.backen
 
 # ── Specific Emitter Identification ──
 _sei_hef = _os.environ.get("SEI_HEF_PATH")
-sei_model = SEIModel(emit_fn=_late_emit, hef_path=_sei_hef)
+# emit_safe, not _late_emit: identify() is reached from the IQ collector's
+# real OS thread (iq_collector._read_loop -> classify_iq -> _forward_to_sei),
+# and socketio.emit from there touches green locks and a green socket in
+# ipc_server.broadcast — the greenlet.error emit_bridge exists to prevent.
+# The classifier was nulled and meteor was wrapped; SEI was missed.
+sei_model = SEIModel(emit_fn=emit_safe, hef_path=_sei_hef)
 signal_classifier.set_sei_model(sei_model)
 log.info("SEI model initialized (backend: %s, %d emitters loaded)",
          sei_model.backend, sei_model.get_status()["emitter_count"])
