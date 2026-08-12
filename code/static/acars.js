@@ -20,7 +20,34 @@
             self.aircraft = (list || []).length;
             self._renderCount();
         });
+        // The feed accumulates client-side and the count comes from the server,
+        // so a backend restart leaves them disagreeing: the server forgets every
+        // aircraft while this panel keeps every message it was ever sent. That
+        // is how the panel came to show five messages under the words
+        // "0 aircraft". Re-seed from the server whenever the link comes back so
+        // the two can never drift apart. The panel is constructed once, inside
+        // ravensdr.js's connect handler, so a reconnect does not re-run the
+        // constructor — this listener is the only thing that fires again.
+        this.socket.on("connect", function () {
+            self._resync();
+        });
     }
+
+    AcarsPanel.prototype._resync = function () {
+        var self = this;
+        fetch("/api/acars/messages")
+            .then(function (r) { return r.json(); })
+            .then(function (list) {
+                list = list || [];
+                self.aircraft = list.length;
+                // One merged record per aircraft, newest first — that is the
+                // entirety of what the server knows, so it becomes the feed.
+                self.messages = list.slice(0, MAX_FEED);
+                self._renderCount();
+                self._renderFeed();
+            })
+            .catch(function () {});
+    };
 
     AcarsPanel.prototype._prepend = function (msg) {
         this.messages.unshift(msg);
@@ -96,14 +123,7 @@
     AcarsPanel.prototype.show = function () {
         var p = document.getElementById("acars-panel");
         if (p) p.classList.remove("hidden");
-        var self = this;
-        fetch("/api/acars/messages")
-            .then(function (r) { return r.json(); })
-            .then(function (list) {
-                self.aircraft = (list || []).length;
-                self._renderCount();
-            })
-            .catch(function () {});
+        this._resync();
     };
 
     AcarsPanel.prototype.hide = function () {
