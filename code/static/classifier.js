@@ -249,25 +249,37 @@
             this.spectrogramData.shift();
         }
 
+        // Skip the paint entirely when nobody can see it. The rows are still
+        // retained above, so switching back to the tab shows recent history
+        // rather than an empty canvas.
+        if (document.hidden) return;
+        var panel = document.getElementById("classifier-panel");
+        if (panel && (panel.classList.contains("hidden") || panel.offsetParent === null)) {
+            return;
+        }
+
         var canvas = this.canvas;
         var ctx = this.ctx;
         var w = canvas.width;
         var h = canvas.height;
-        var rows = this.spectrogramData;
 
-        ctx.clearRect(0, 0, w, h);
-
+        // Scroll the existing image up by one row and paint only the new row.
+        //
+        // This used to clearRect and repaint all 100 retained rows x 256 bins on
+        // every incoming row — 25,600 fillRect calls, each allocating an
+        // "rgb(r,g,b)" string, at ~3.3 rows/sec. That is ~85,000 fillRect and
+        // 85,000 string allocations per second, on a Pi-class browser, forever,
+        // whether or not the Classify tab was even open.
         var rowHeight = h / this.maxRows;
-        var colWidth = w / (spectrogramRow.length || 1);
+        var bins = spectrogramRow.length || 1;
+        var colWidth = w / bins;
 
-        for (var r = 0; r < rows.length; r++) {
-            var row = rows[r];
-            var y = h - (rows.length - r) * rowHeight;
-            for (var c = 0; c < row.length; c++) {
-                var val = row[c]; // 0-255
-                ctx.fillStyle = this._waterfallColor(val);
-                ctx.fillRect(c * colWidth, y, colWidth + 1, rowHeight + 1);
-            }
+        ctx.drawImage(canvas, 0, -rowHeight);
+
+        var y = h - rowHeight;
+        for (var c = 0; c < bins; c++) {
+            ctx.fillStyle = this._waterfallColor(spectrogramRow[c]);
+            ctx.fillRect(c * colWidth, y, colWidth + 1, rowHeight + 1);
         }
     };
 

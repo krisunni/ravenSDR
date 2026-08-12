@@ -16,7 +16,28 @@
             self.addresses = (list || []).length;
             self._renderCount();
         });
+        // Same split as the ACARS panel had: the feed accumulates client-side
+        // from pager_message while the address count comes from the server, so
+        // a backend restart left "0 addresses" sitting above 120 retained
+        // messages. The panel is built once inside ravensdr.js's connect
+        // handler, so a reconnect does not re-run this constructor — the
+        // listener below is the only thing that fires again.
+        this.socket.on("connect", function () { self._resync(); });
     }
+
+    PagerPanel.prototype._resync = function () {
+        var self = this;
+        fetch("/api/pager/pages")
+            .then(function (r) { return r.json(); })
+            .then(function (list) {
+                list = list || [];
+                self.addresses = list.length;
+                self.messages = list.slice(0, MAX_FEED);
+                self._renderCount();
+                self._renderFeed();
+            })
+            .catch(function () {});
+    };
 
     PagerPanel.prototype._prepend = function (m) {
         this.messages.unshift(m);
@@ -93,11 +114,7 @@
     PagerPanel.prototype.show = function () {
         var p = document.getElementById("pager-panel");
         if (p) p.classList.remove("hidden");
-        var self = this;
-        fetch("/api/pager/pages")
-            .then(function (r) { return r.json(); })
-            .then(function (list) { self.addresses = (list || []).length; self._renderCount(); })
-            .catch(function () {});
+        this._resync();
     };
 
     PagerPanel.prototype.hide = function () {

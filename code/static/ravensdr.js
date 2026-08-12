@@ -81,7 +81,11 @@
         if (window.IsmPanel && !ismPanel) {
             ismPanel = new window.IsmPanel(socket);
         }
-        if (window.AprsPanel) {
+        // The !aprsPanel half was missing, so every reconnect built ANOTHER
+        // panel that subscribed to aprs_update/aprs_packet and was never
+        // released. After N drops, each 3s update triggered N+1 full table
+        // rebuilds. Every other panel here was already guarded.
+        if (window.AprsPanel && !aprsPanel) {
             aprsPanel = new window.AprsPanel(socket);
         }
         if (window.AcarsPanel && !acarsPanel) {
