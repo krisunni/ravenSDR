@@ -427,8 +427,17 @@ class SignalClassifier:
             self._compared_vs_preset += 1
             if modulation == expected_modulation:
                 self._correct_vs_preset += 1
-                # Self-supervised: save confirmed IQ chunk
-                self._save_collected_sample(iq_samples, modulation, frequency_hz)
+                # NOTE: this used to also write the IQ chunk to the corpus via a
+                # second, completely ungated path. It had no per-class cap, no
+                # SNR gate, no rate limit and no length trim, and it swallowed
+                # write errors at debug level — so it silently produced 312,362
+                # of the 323,185 files on disk (89 GB, filling the SD card to
+                # 96%) while collect_sample's 5,000/class cap correctly held its
+                # own path to 10,246. Worse, "the model agreed with the preset"
+                # is the weakest possible label: it only ever collects what the
+                # classifier already gets right, so it reinforces existing bias
+                # instead of correcting it. All collection now goes through
+                # collect_sample(), which is gated on purpose.
 
         utcnow = datetime.datetime.now(datetime.timezone.utc)
         now = utcnow.strftime("%Y-%m-%dT%H:%M:%S.") + \
@@ -736,17 +745,6 @@ class SignalClassifier:
         probs = [p / total for p in probs]
 
         return modulation, confidence, probs
-
-    def _save_collected_sample(self, iq_samples, modulation, frequency_hz):
-        """Save confirmed IQ chunk for self-supervised retraining."""
-        try:
-            save_dir = os.path.join(COLLECTED_DIR, modulation)
-            os.makedirs(save_dir, exist_ok=True)
-            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{ts}_{frequency_hz}.npy"
-            np.save(os.path.join(save_dir, filename), iq_samples)
-        except Exception as e:
-            log.debug("Failed to save collected sample: %s", e)
 
     def get_status(self):
         """Return classifier status dict for API."""
