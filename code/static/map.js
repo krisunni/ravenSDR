@@ -3,6 +3,20 @@
 (function () {
     "use strict";
 
+    // Leaflet renders string tooltip/popup content as HTML (_updateContent does
+    // `innerHTML = e`), and everything plotted here arrives off-air from a
+    // stranger with a transmitter. AIS ship names and destinations are ITU-R
+    // M.1371 6-bit ASCII, a charset that includes < and > — and a 20-character
+    // shipname field is enough for <svg onload=...>. Permanent tooltips render
+    // with no click at all, so a hostile vessel appearing on the map would be
+    // sufficient. Escape everything that came out of a radio.
+    function esc(v) {
+        if (v === undefined || v === null) return "";
+        return String(v)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
     var SEATAC = [47.4502, -122.3088];
     var map = null;
     var markers = {};  // hex -> { marker, label }
@@ -75,7 +89,10 @@
 
                 var callsign = (f.flight || "").trim();
                 var alt = f.altitude ? Math.round(f.altitude / 100) * 100 : "";
-                var labelText = callsign || f.hex || "???";
+                // Also a permanent tooltip, so it renders unprompted. ADS-B
+                // callsigns are a narrow charset, but nothing validates what
+                // dump1090 hands over, so treat it like any other off-air field.
+                var labelText = esc(callsign || f.hex || "???");
                 if (alt) labelText += " " + (alt >= 10000 ? "FL" + Math.round(alt / 100) : alt + "ft");
 
                 if (markers[id]) {
@@ -104,9 +121,9 @@
                         var spd = f.speed ? f.speed + " kt" : "n/a";
                         var hdg = f.track !== undefined ? Math.round(f.track) + "\u00b0" : "n/a";
                         var vr = f.vert_rate !== undefined ? (f.vert_rate > 0 ? "+" : "") + f.vert_rate + " fpm" : "";
-                        var sq = f.squawk || "";
-                        var popup = "<b>" + (callsign || f.hex) + "</b><br>" +
-                            "ICAO: " + (f.hex || "?") + "<br>" +
+                        var sq = esc(f.squawk || "");
+                        var popup = "<b>" + esc(callsign || f.hex) + "</b><br>" +
+                            "ICAO: " + esc(f.hex || "?") + "<br>" +
                             "Alt: " + (alt || "?") + "<br>" +
                             "Spd: " + spd + "<br>" +
                             "Hdg: " + hdg +
@@ -146,7 +163,7 @@
                 seen[id] = true;
                 count++;
 
-                var name = (v.name || "").trim() || v.mmsi;
+                var name = esc((v.name || "").trim() || v.mmsi);
                 var spd = v.speed !== undefined ? v.speed.toFixed(1) + " kt" : "";
                 var labelText = name;
                 if (spd) labelText += " " + spd;
@@ -175,12 +192,12 @@
                         var crs = v.course !== undefined ? Math.round(v.course) + "\u00b0" : "n/a";
                         var hdg = v.heading !== undefined ? Math.round(v.heading) + "\u00b0" : "";
                         var popup = "<b>" + name + "</b><br>" +
-                            "MMSI: " + v.mmsi + "<br>" +
-                            (v.ship_type_label ? "Type: " + v.ship_type_label + "<br>" : "") +
+                            "MMSI: " + esc(v.mmsi) + "<br>" +
+                            (v.ship_type_label ? "Type: " + esc(v.ship_type_label) + "<br>" : "") +
                             (spd ? "Speed: " + spd + "<br>" : "") +
                             "Course: " + crs +
                             (hdg ? "<br>Heading: " + hdg : "") +
-                            (v.destination ? "<br>Dest: " + v.destination : "");
+                            (v.destination ? "<br>Dest: " + esc(v.destination) + "" : "");
                         m.bindPopup(popup).openPopup();
                     });
 
