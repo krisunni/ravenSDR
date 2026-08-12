@@ -952,6 +952,7 @@ def _apply_tune(preset):
             adsb_receiver.stop()
             _resume_adsb_scan()
         ism_receiver.frequency = preset.get("freq", ism_receiver.frequency)
+        ism_receiver.sample_rate = preset.get("sample_rate")
         ism_receiver.start()
         if not ism_receiver.is_running:
             reason = ism_receiver.last_error or "unknown error"
@@ -1657,6 +1658,20 @@ def api_adsb_flights():
 @app.route("/api/ais/vessels")
 def api_ais_vessels():
     return jsonify(ais_receiver.get_vessels())
+
+
+@app.route("/api/ism/clear", methods=["POST"])
+def api_ism_clear():
+    """Drop every remembered ISM device.
+
+    Useful after a decoder fix or a change of band: the table keeps history
+    across retunes, so stale entries can outlive the conditions that produced
+    them and read as though they were heard on the current frequency.
+    """
+    n = ism_receiver.clear_records()
+    log.info("ISM device list cleared (%d dropped)", n)
+    emit_safe("ism_update", ism_receiver.get_records())
+    return jsonify({"cleared": n})
 
 
 @app.route("/api/ism/devices")

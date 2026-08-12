@@ -219,6 +219,20 @@ class SubprocessDecoder:
             for k in [k for k, v in self._records.items() if v.get("seen", 0) < cutoff]:
                 del self._records[k]
 
+    def clear_records(self):
+        """Forget everything heard so far. Returns how many were dropped.
+
+        The panels accumulate across retunes by design — that history is the
+        point — but it also means records outlive the conditions that produced
+        them: a decoder bug that has since been fixed, or a frequency the radio
+        left an hour ago. Clearing is the operator saying "start from what is
+        true now".
+        """
+        with self._lock:
+            n = len(self._records)
+            self._records.clear()
+        return n
+
     def get_records(self):
         """Return current (non-stale) records as a list, newest activity first."""
         self._expire()

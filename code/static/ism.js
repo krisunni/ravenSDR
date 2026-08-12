@@ -66,7 +66,7 @@
         if (this.devices.length === 0) {
             var row = document.createElement("tr");
             var td = document.createElement("td");
-            td.colSpan = 7;
+            td.colSpan = 8;
             td.className = "sei-no-data";
             td.textContent = "No ISM devices heard yet";
             row.appendChild(td);
@@ -94,6 +94,7 @@
             [
                 d.model || "?",
                 String(d.id != null ? d.id : ""),
+                d.freq_mhz != null ? d.freq_mhz.toFixed(3) + " MHz" : "\u2014",
                 fmtReadings(d),
                 d.rssi != null ? d.rssi + " dB" : "—",
                 d.count != null ? String(d.count) : "—",
@@ -113,7 +114,7 @@
             detail.className = "ism-raw-row";
             if (!self._expanded[key]) detail.classList.add("hidden");
             var cell = document.createElement("td");
-            cell.colSpan = 7;
+            cell.colSpan = 8;
             var pre = document.createElement("pre");
             pre.className = "ism-raw";
             pre.textContent = JSON.stringify(d.raw || d, null, 2);
@@ -129,9 +130,25 @@
         }
     };
 
+    IsmPanel.prototype._wireClear = function () {
+        var btn = document.getElementById("ism-clear");
+        if (!btn || btn._wired) return;
+        btn._wired = true;
+        var self = this;
+        btn.addEventListener("click", function () {
+            btn.disabled = true;
+            fetch("/api/ism/clear", {method: "POST"})
+                .then(function (r) { return r.json(); })
+                .then(function () { self.devices = []; self._render(); })
+                .catch(function () {})
+                .then(function () { btn.disabled = false; });
+        });
+    };
+
     IsmPanel.prototype.show = function () {
         var p = document.getElementById("ism-panel");
         if (p) p.classList.remove("hidden");
+        this._wireClear();
         var self = this;
         fetch("/api/ism/devices")
             .then(function (r) { return r.json(); })

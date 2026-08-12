@@ -3,7 +3,7 @@
 import json
 import time
 
-from ravensdr.ism_receiver import IsmReceiver
+from ravensdr.ism_receiver import IsmReceiver, _heard_on
 
 
 def _rx():
@@ -122,3 +122,47 @@ class TestNonWeatherPassthrough:
         rec = self._rx().parse_line(json.dumps(
             {"model": "Oregon-v1", "id": 15, "temperature_C": 18.8}))
         assert rec["temperature_C"] == 18.8
+
+
+class TestHeardOnFrequency:
+    """Which frequency a device was decoded at.
+
+    The panel keeps history across retunes on purpose, so without this a
+    315 MHz TPMS sits in the same table as a 912 MHz meter with nothing to
+    distinguish them — stale TPMS rows read as though they had been heard on
+    the ERT band.
+    """
+
+    def test_ook_reports_a_single_freq(self):
+        assert _heard_on({"freq": 433.905}) == 433.905
+
+    def test_fsk_uses_the_midpoint_of_the_tone_pair(self):
+        # FSK reports the two tones; the carrier sits between them.
+        assert _heard_on({"freq1": 912.489, "freq2": 912.497}) == 912.493
+
+    def test_falls_back_to_freq1_alone(self):
+        assert _heard_on({"freq1": 315.001}) == 315.001
+
+    def test_absent_when_the_decoder_reports_neither(self):
+        assert _heard_on({"model": "Acurite-Tower"}) is None
+
+    def test_parse_line_carries_it_onto_the_record(self):
+        rec = _rx().parse_line(json.dumps({
+            "model": "LandisGyr-GS", "id": "907b1f6a",
+            "freq1": 912.489, "freq2": 912.497}))
+        assert rec["freq_mhz"] == 912.493
+
+
+class TestClearRecords:
+    def test_clear_drops_everything_and_reports_the_count(self):
+        rx = _rx()
+        for i in range(3):
+            rec = rx.parse_line(json.dumps(
+                {"model": "Acurite-Tower", "id": i, "temperature_C": 20}))
+            rx._store(rec)
+        assert len(rx.get_records()) == 3
+        assert rx.clear_records() == 3
+        assert rx.get_records() == []
+
+    def test_clear_on_an_empty_store_is_harmless(self):
+        assert _rx().clear_records() == 0
