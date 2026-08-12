@@ -3,10 +3,23 @@
 import logging
 import queue
 
-# Use the REAL subprocess module, not eventlet's green version.
+# Use the REAL subprocess and queue modules, not eventlet's green versions.
+#
+# Both queues are written by real OS threads (tuner._read_loop,
+# stream_source._read_loop) and read by the transcriber (also a real thread)
+# and the /audio-stream generator (a greenthread). A green queue cannot carry
+# that: eventlet's Queue signals waiters by switching greenlets, which from a
+# foreign OS thread raises "greenlet.error: Cannot switch to a different
+# thread". Reproduced — the consumer never saw a producer notify and woke only
+# on its own timeout, so /audio-stream delivered audio in 5-SECOND BURSTS
+# (get(timeout=5)) and the transcriber added ~1s of latency per read.
+#
+# A real queue fixes the wakeups, but means no greenthread may ever block on
+# one — see audio_router.audio_stream_generator, which polls and yields.
 try:
     from eventlet.patcher import original
     subprocess = original("subprocess")
+    queue = original("queue")
 except ImportError:
     import subprocess
 

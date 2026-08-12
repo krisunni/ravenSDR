@@ -172,7 +172,9 @@ log.info("Mode: %s (SDR detected: %s)", mode, sdr_available)
 
 # ── Core components ──
 input_source = InputSource(mode)
-transcriber = Transcriber(input_source.pcm_queue, emit_fn=_late_emit)
+# emit_safe, not _late_emit: the inference loop is a real OS thread now, and
+# socketio.emit from there hits green locks in ipc_server.broadcast.
+transcriber = Transcriber(input_source.pcm_queue, emit_fn=emit_safe)
 
 # ── Persistent config ──
 _config = load_config()

@@ -5,6 +5,24 @@ import logging
 import os
 import threading
 import time
+
+# The inference thread must be a REAL OS thread, not a greenthread. Its body is
+# a sequence of blocking C calls — encoder_configured.run(), then one
+# decoder_configured.run() per token, each with timeout_ms=10000 — and a
+# greenthread running those never yields, so the eventlet hub stops entirely:
+# no HTTP, no Socket.IO, no arbiter tick, no broadcast loop, for as long as the
+# transcript takes. Measured at up to ~2.5s per segment. The codebase already
+# blamed this without naming it — see apt_scheduler's note about the poll loop
+# drifting when "starved by ... Hailo inference".
+#
+# Only Thread and Event are taken real. Nothing in the loop calls time.sleep(),
+# so green time is not a hazard here; timing uses time.monotonic(), which is
+# not patched in a way that matters.
+try:
+    from eventlet.patcher import original
+    threading = original("threading")
+except ImportError:
+    pass
 from datetime import datetime
 
 import numpy as np
