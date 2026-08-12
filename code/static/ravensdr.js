@@ -147,10 +147,12 @@
 
     socket.on("signal_level", function (data) {
         updateSignalMeter(data.rms, data.excess_db);
+        updateTranscribeStatus(data.segment);
     });
 
     socket.on("transcript", function (data) {
         addTranscriptEntry(data);
+        flashTranscribed();
     });
 
     socket.on("inference_stats", function (stats) {
@@ -452,36 +454,86 @@
     }
 
     // ── Automation master switch ──
-    // Reflects whether schedulers (satellite passes, WEFAX, ADS-B scan) are
-    // allowed to seize the SDR. Paused means the radio only does what you ask.
+    // Two independent claims on one dongle, each with its own switch:
+    //   Sched   — schedulers (satellite passes, WEFAX, ADS-B scan) may seize it
+    //   Collect — background IQ collection, the only live feed for the waterfall
+    // They were conflated behind one box, so ticking "Auto" appeared to do
+    // nothing for anyone chasing a blank spectrum.
+    var AUTO_SWITCHES = [
+        {
+            key: "enabled",
+            box: "automation-enabled",
+            label: "sched-switch",
+            status: "automation-status",
+            offClass: "is-paused",
+            offText: "paused",
+            onTitle: "Schedulers may take the SDR for satellite passes and WEFAX",
+            offTitle: "Schedulers will not take the SDR; passes are still predicted",
+            defaultOn: true,
+        },
+        {
+            key: "iq_collect",
+            box: "automation-iq-collect",
+            label: "collect-switch",
+            status: "iq-collect-status",
+            offClass: "is-off",
+            offText: "off",
+            onTitle: "Collecting IQ in the background — the spectrum waterfall is live, "
+                   + "and audio stops during each dwell",
+            offTitle: "No IQ is captured, so the spectrum waterfall stays blank. "
+                    + "Audio is never interrupted.",
+            defaultOn: false,
+            // Suppressed by the master switch server-side; say so rather than
+            // showing a ticked box for work that is not happening.
+            gatedByMaster: true,
+        },
+    ];
+
     function renderAutomation(auto) {
-        var box = document.getElementById("automation-enabled");
-        var wrap = box && box.closest(".automation-config");
-        var status = document.getElementById("automation-status");
-        if (!box || !auto) return;
-        var on = auto.enabled !== false;
-        box.checked = on;
-        if (wrap) wrap.classList.toggle("is-paused", !on);
-        if (status) {
-            status.textContent = on ? "" : "paused";
-            status.title = on
-                ? "Schedulers may take the SDR for satellite passes and WEFAX"
-                : "Schedulers will not take the SDR; passes are still predicted";
-        }
+        if (!auto) return;
+        // The master switch wins server-side (config.is_automation_enabled
+        // returns false for every task when `enabled` is off). A ticked Collect
+        // box under a disabled master therefore reads as "collecting" while
+        // nothing is — the exact confusion the split toggles were meant to end.
+        var masterOff = auto.enabled === false;
+        AUTO_SWITCHES.forEach(function (s) {
+            var box = document.getElementById(s.box);
+            if (!box) return;
+            // Absent key means the server never sent it; fall back to the
+            // shipped default rather than silently reading it as "off".
+            var on = auto[s.key] === undefined ? s.defaultOn : auto[s.key] !== false;
+            box.checked = on;
+
+            var gated = s.gatedByMaster && masterOff && on;
+            var label = document.getElementById(s.label);
+            if (label) label.classList.toggle(s.offClass, !on || gated);
+            var status = document.getElementById(s.status);
+            if (status) {
+                status.textContent = gated ? "blocked" : (on ? "" : s.offText);
+                status.title = gated
+                    ? "Ticked, but Sched is off and the master switch disables "
+                      + "every task — nothing is being collected."
+                    : (on ? s.onTitle : s.offTitle);
+            }
+        });
     }
 
     function wireAutomationToggle() {
-        var box = document.getElementById("automation-enabled");
-        if (!box) return;
-        box.addEventListener("change", function () {
-            fetch("/api/automation", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ enabled: box.checked }),
-            })
-                .then(function (r) { return r.json(); })
-                .then(renderAutomation)
-                .catch(function () { box.checked = !box.checked; });
+        AUTO_SWITCHES.forEach(function (s) {
+            var box = document.getElementById(s.box);
+            if (!box) return;
+            box.addEventListener("change", function () {
+                var patch = {};
+                patch[s.key] = box.checked;
+                fetch("/api/automation", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(patch),
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(renderAutomation)
+                    .catch(function () { box.checked = !box.checked; });
+            });
         });
         fetch("/api/automation")
             .then(function (r) { return r.json(); })
@@ -523,7 +575,8 @@
         } else if (d.who === "scheduled") {
             extra = "A pass happens now or not at all, so it takes priority.";
         } else if (d.who === "idle" && d.collect_enabled === false) {
-            extra = "Background collection is switched off in the header.";
+            extra = "Background collection is off — tick “Collect” in the header. "
+                  + "It is also the only live source for the spectrum waterfall.";
         }
 
         el.innerHTML =
@@ -848,6 +901,7 @@
     // ── Status ──
 
     function updateStatus(data) {
+        setTranscribeRunning(data.running);
         stopBtn.disabled = !data.running;
         audioToggle.disabled = !data.running;
 
@@ -963,6 +1017,80 @@
     }
 
     // ── Transcript ──
+
+    // ── Transcription status ────────────────────────────────────────────
+    // Transcription does NOT depend on the audio stream — the tuner feeds the
+    // transcriber and the browser from two separate queues. But a continuous
+    // broadcast uses fixed 30s segments, so after tuning there is a full half
+    // minute of empty panel before the first line lands, and that reads as
+    // broken. This says "working, N seconds in" for that whole window.
+    var tsEl = document.getElementById("transcribe-status");
+    var tsLabel = tsEl && tsEl.querySelector(".ts-label");
+    var tsBar = tsEl && tsEl.querySelector(".ts-bar i");
+    var tsFlashUntil = 0;
+
+    function updateTranscribeStatus(seg) {
+        if (!tsEl) return;
+        tsLastSignal = Date.now();
+        if (!seg) {                       // no transcriber, or a mode without one
+            tsEl.className = "ts-status idle";
+            if (tsLabel) tsLabel.textContent = "not transcribing";
+            if (tsBar) tsBar.style.width = "0%";
+            return;
+        }
+        if (Date.now() < tsFlashUntil) return;   // let the "transcribed" flash sit
+
+        var pct = seg.target_s ? Math.min(100, (seg.buffered_s / seg.target_s) * 100) : 0;
+        tsEl.className = "ts-status live";
+        if (tsBar) tsBar.style.width = pct.toFixed(0) + "%";
+        if (tsLabel) {
+            // The two segmenters mean different things by "target", so they get
+            // different wording: continuous counts DOWN to a fixed cut, VAD just
+            // accumulates until the talker stops.
+            tsLabel.textContent = seg.mode === "continuous"
+                ? "segment " + Math.max(0, seg.target_s - seg.buffered_s).toFixed(0) + "s"
+                : (seg.buffered_s > 0.2 ? "capturing " + seg.buffered_s.toFixed(0) + "s" : "listening");
+        }
+    }
+
+    // A squelched preset (every ham and public-safety channel here) produces NO
+    // audio at all while the channel is quiet — rtl_fm emits nothing, so there
+    // are no signal_level events and nothing above ever runs. Without this the
+    // indicator would sit at its initial dash forever on exactly the presets
+    // where "is this thing working?" matters most. Silence is a state, so say so.
+    var tsLastSignal = 0;
+    var tsRunning = false;
+
+    function setTranscribeRunning(running) {
+        tsRunning = !!running;
+        if (!tsRunning) tsIdleCheck();
+    }
+
+    function tsIdleCheck() {
+        if (!tsEl) return;
+        if (Date.now() < tsFlashUntil) return;
+        var quietFor = Date.now() - tsLastSignal;
+        if (!tsRunning) {
+            tsEl.className = "ts-status idle";
+            if (tsLabel) tsLabel.textContent = "radio stopped";
+            if (tsBar) tsBar.style.width = "0%";
+        } else if (quietFor > 3000) {
+            // Armed and waiting. Distinct wording from "radio stopped" because
+            // the operator's next action differs: nothing, vs. go tune something.
+            tsEl.className = "ts-status idle";
+            if (tsLabel) tsLabel.textContent = "squelch closed";
+            if (tsBar) tsBar.style.width = "0%";
+        }
+    }
+    setInterval(tsIdleCheck, 1000);
+
+    function flashTranscribed() {
+        if (!tsEl) return;
+        tsFlashUntil = Date.now() + 1200;
+        tsEl.className = "ts-status hit";
+        if (tsLabel) tsLabel.textContent = "transcribed";
+        if (tsBar) tsBar.style.width = "100%";
+    }
 
     function addTranscriptEntry(data) {
         var entry = document.createElement("div");

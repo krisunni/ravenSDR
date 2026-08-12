@@ -55,14 +55,24 @@
             </div>
             <span id="c2-fault" class="c2-fault hidden"></span>
         </div>
-        <!-- Automation: whether schedulers may seize the SDR on their own.
-             Off = the radio only ever does what the operator asked. -->
-        <div class="automation-config" title="Allow satellite/WEFAX/ADS-B schedulers to take the SDR">
-            <label class="auto-switch">
+        <!-- Two independent claims on the one dongle, so two switches. A single
+             "Auto" box governed only the schedulers, while the radio-activity
+             panel told operators background collection was "switched off in the
+             header" — pointing at a checkbox that was already ticked and could
+             not turn it on. Each flag now has its own control. -->
+        <div class="automation-config">
+            <label class="auto-switch" id="sched-switch"
+                   title="Let satellite/WEFAX/ADS-B schedulers take the SDR for a pass. Off = the radio only does what you ask.">
                 <input type="checkbox" id="automation-enabled" checked>
-                <span>Auto</span>
+                <span>Sched</span>
             </label>
             <span id="automation-status" class="secondary-indicator"></span>
+            <label class="auto-switch" id="collect-switch"
+                   title="Background IQ collection: builds the training corpus and is the only live source for the spectrum waterfall. Takes the dongle, so audio stops during each 60s dwell.">
+                <input type="checkbox" id="automation-iq-collect">
+                <span>Collect</span>
+            </label>
+            <span id="iq-collect-status" class="secondary-indicator"></span>
         </div>
         <a href="/learn" class="btn btn-sm btn-advanced" style="text-decoration:none" title="How this node works">? How it works</a>
         <button id="settings-toggle" class="btn btn-sm btn-advanced" title="NPU & alert settings">⚙ Settings</button>
@@ -175,6 +185,14 @@
         <section id="transcript-section">
             <div class="transcript-header">
                 <label>Transcript</label>
+                <!-- Transcription runs whether or not anyone is listening to the
+                     audio. Without this indicator a 30s broadcast segment looks
+                     identical to a dead pipeline, which is exactly how it read. -->
+                <div class="ts-status" id="transcribe-status" title="Transcription is independent of audio playback">
+                    <span class="ts-dot"></span>
+                    <span class="ts-label">&mdash;</span>
+                    <span class="ts-bar"><i></i></span>
+                </div>
                 <div>
                     <button id="clear-btn" class="btn btn-sm">Clear</button>
                     <button id="copy-btn" class="btn btn-sm">Copy</button>
@@ -396,6 +414,8 @@
             <div class="panel-header">
                 <label>ISM Sensors (rtl_433)</label>
                 <span id="ism-count" class="flight-count">0 devices</span>
+                <button id="ism-clear" class="btn btn-sm"
+                        title="Forget every device heard so far. The table keeps history across retunes, so entries can outlive the band they were heard on.">Clear</button>
             </div>
             <div id="ism-status">Listening for ISM devices…</div>
             <div class="sei-table-wrap">
@@ -404,6 +424,7 @@
                         <tr>
                             <th>Model</th>
                             <th>ID</th>
+                            <th>Heard on</th>
                             <th>Readings</th>
                             <th>RSSI</th>
                             <th>Pkts</th>

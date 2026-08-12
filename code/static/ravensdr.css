@@ -898,8 +898,11 @@ select {
 
 .auto-switch input { cursor: pointer; }
 
-/* Paused is a deliberate operator choice, so it reads as a state, not an error. */
-.automation-config.is-paused .auto-switch { color: var(--yellow); }
+/* Paused is a deliberate operator choice, so it reads as a state, not an error.
+   Scoped to the individual switch: the two flags are independent, and colouring
+   the whole group made one paused switch look like both were. */
+.auto-switch.is-paused { color: var(--yellow); }
+.auto-switch.is-off { color: var(--text-dim); }
 
 /* ── Tabbed workspace ──
    Twelve panels in one scroll made the AI work invisible below the fold and
@@ -1234,7 +1237,7 @@ select {
    renderAutomation writes the word "paused" into it — text inside an 8px dot,
    which spilled across the header. It is a badge when it has something to say
    and absent when it does not. */
-#automation-status {
+#automation-status, #iq-collect-status {
     width: auto;
     height: auto;
     border-radius: 999px;
@@ -1246,7 +1249,14 @@ select {
     padding: 2px 7px;
     white-space: nowrap;
 }
-#automation-status:empty { display: none; }
+#automation-status:empty, #iq-collect-status:empty { display: none; }
+
+/* Collection off is the shipped default, not an intervention, so its badge is
+   informational rather than the yellow used for a paused scheduler. */
+#iq-collect-status {
+    background: #24282e;
+    color: var(--text-dim);
+}
 
 /* Manual collection controls. */
 .collect-row {
@@ -1274,3 +1284,68 @@ select {
 .collect-status { font: 12px var(--font-mono); color: var(--text-dim); }
 .collect-status.ok { color: var(--green); }
 .collect-status.err { color: var(--red); }
+
+/* ── Transcription status ─────────────────────────────────────────────────
+   Sits in the transcript header. Exists because transcription is invisible
+   between segments: a broadcast preset buffers 30s before it can emit a line,
+   and a blank panel for half a minute is indistinguishable from a crash. The
+   bar is the honest answer to "is it doing anything". */
+.transcript-header .ts-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    margin-right: 10px;
+    font-size: 11px;
+    color: var(--text-dim, #8b949e);
+    white-space: nowrap;
+}
+
+.transcript-header .ts-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #8b949e;
+    flex: none;
+}
+
+.ts-status.live .ts-dot {
+    background: #3fb950;
+    animation: ts-pulse 2s ease-in-out infinite;
+}
+.ts-status.hit .ts-dot { background: #58a6ff; animation: none; }
+.ts-status.idle .ts-dot { background: #6e7681; animation: none; }
+.ts-status.hit .ts-label { color: #58a6ff; }
+
+@keyframes ts-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Fixed width so the label changing length cannot shuffle the buttons beside it. */
+.transcript-header .ts-label {
+    min-width: 74px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.transcript-header .ts-bar {
+    display: block;
+    width: 46px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(139, 148, 158, 0.25);
+    overflow: hidden;
+    flex: none;
+}
+.transcript-header .ts-bar i {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 2px;
+    background: #3fb950;
+    transition: width 0.3s linear;
+}
+.ts-status.hit .ts-bar i { background: #58a6ff; }
+
+@media (max-width: 620px) {
+    .transcript-header .ts-bar { display: none; }
+    .transcript-header .ts-label { min-width: 0; }
+}
