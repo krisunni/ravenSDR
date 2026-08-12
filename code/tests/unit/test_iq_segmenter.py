@@ -64,8 +64,14 @@ class TestBoundaryDetection:
         signal = 10.0 * np.exp(2j * np.pi * 50000 * t)
         seg.feed(signal.astype(np.complex64))
 
-        # Silence again (triggers end of TX after hysteresis)
-        noise2 = 0.001 * (np.random.randn(10240) + 1j * np.random.randn(10240))
+        # Silence again (triggers end of TX after hysteresis).
+        # HYSTERESIS_MS=100 at 1.024 MS/s is 100 chunks, so ending the TX needs
+        # >102,400 samples of quiet. This fed 10,240 and still passed, because
+        # the noise floor used to be updated from in-transmission chunks and
+        # climbed into the signal until it stopped clearing the threshold —
+        # the TX was ended by that bug, not by silence. With the floor frozen
+        # during TX the test has to supply the silence it always claimed to.
+        noise2 = 0.001 * (np.random.randn(122880) + 1j * np.random.randn(122880))
         seg.feed(noise2.astype(np.complex64))
 
         assert len(segments) >= 1
@@ -170,8 +176,10 @@ class TestHysteresis:
         s2 = 10.0 * np.exp(2j * np.pi * 50000 * t2)
         seg.feed(s2.astype(np.complex64))
 
-        # End with enough silence for hysteresis
-        noise_post = 0.001 * (np.random.randn(20480) + 1j * np.random.randn(20480))
+        # End with enough silence for hysteresis: 100 chunks at this rate, so
+        # >102,400 samples. See test_clear_transmission_detected for why 20,480
+        # used to be sufficient and no longer is.
+        noise_post = 0.001 * (np.random.randn(122880) + 1j * np.random.randn(122880))
         seg.feed(noise_post.astype(np.complex64))
 
         # Should be 1 segment (not 2) — the 1-chunk dropout is within hysteresis

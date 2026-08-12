@@ -4,6 +4,7 @@
 # Segments individual transmissions for signal classification (phase 16) and
 # specific emitter identification (phase 17).
 
+import collections
 import datetime
 import logging
 import threading
@@ -15,6 +16,8 @@ log = logging.getLogger(__name__)
 # Segmentation parameters
 DEFAULT_THRESHOLD_DB = 10       # dB above noise floor to trigger
 NOISE_FLOOR_WINDOW_SEC = 5.0   # rolling noise floor window
+NOISE_FLOOR_PERCENTILE = 10    # low percentile, not the median — see _update_noise_floor
+NOISE_FLOOR_RECOMPUTE_EVERY = 32  # chunks between percentile recomputes
 MIN_TX_MS = 50                  # minimum transmission duration
 MAX_TX_SEC = 30                 # maximum transmission duration
 HYSTERESIS_MS = 100             # power must stay below threshold this long to end TX
@@ -78,10 +81,19 @@ class IQSegmenter:
         self._buffer_pos = 0  # write position
         self._buffer_filled = 0  # total samples written (may wrap)
 
-        # Noise floor tracking
-        self._noise_samples = []
+        # Noise floor tracking.
+        # deque, not a list: this is appended 2,344x/sec at 2.4 MS/s, and the old
+        # `self._noise_samples[-N:]` reslice reallocated an 11,718-element list
+        # every time — ~27M element-copies/sec, which with a median per chunk put
+        # feed() at 237% of one core.
         self._noise_floor_db = -100.0
         self._noise_window_samples = int(NOISE_FLOOR_WINDOW_SEC * sample_rate / 1024)
+        self._noise_samples = collections.deque(maxlen=self._noise_window_samples)
+        self._chunks_since_floor = 0
+        # Until a real floor exists, -100.0 dB is a placeholder that ANY input
+        # clears by 60 dB. Detection must not run against it, and the freeze
+        # below must not latch on it — see _check_threshold.
+        self._floor_ready = False
 
         # Transmission state
         self._in_tx = False
@@ -157,16 +169,55 @@ class IQSegmenter:
             self._check_threshold(power_db, chunk)
 
     def _update_noise_floor(self, power_db):
-        """Update rolling noise floor estimate."""
-        self._noise_samples.append(power_db)
-        if len(self._noise_samples) > self._noise_window_samples:
-            self._noise_samples = self._noise_samples[-self._noise_window_samples:]
+        """Update the rolling noise floor from quiet chunks only.
 
-        if len(self._noise_samples) >= 5:
-            self._noise_floor_db = float(np.median(self._noise_samples))
+        Two bugs lived here and they compounded.
+
+        The floor was updated on EVERY chunk, including chunks belonging to the
+        transmission being measured, so a long signal walked its own floor
+        upward until it no longer cleared the threshold. Measured: -37.0 dB on
+        noise, +3.0 dB after 20s of carrier — the floor had become the signal. A
+        single 20s transmission came out as a 0.1s fragment, a 2.6s fragment,
+        then 17.4s of deafness, reporting ~0 dB SNR for something 40 dB up. That
+        bogus SNR silently disabled sei_model.identify (needs 15 dB) and
+        collect_sample (needs 10 dB), and those fragments are where the 50 MB
+        .npy files on disk came from.
+
+        It also used the median — the level exceeded half the time, which on a
+        busy channel IS the signal. transcriber.NoiseFloorTracker documents both
+        problems and uses a low percentile over quiet frames; this is the same
+        approach, applied where it was missing.
+        """
+        # Freeze only once a real floor exists. Freezing before that deadlocks
+        # cold start: the placeholder floor makes chunk 1 look like a
+        # transmission, _in_tx latches, and the floor can then never be learned.
+        if self._in_tx and self._floor_ready:
+            return                      # never measure the floor from the signal
+
+        self._noise_samples.append(power_db)   # deque(maxlen) evicts for us
+        self._chunks_since_floor += 1
+
+        # The percentile spans 5s, so recomputing it 2,344x/sec buys nothing — it
+        # cannot move meaningfully between adjacent chunks. The FIRST estimate is
+        # exempt: throttling it too would leave _floor_ready false for 32 chunks,
+        # during which detection is disabled and a transmission starting inside
+        # the warm-up is missed entirely.
+        due = (not self._floor_ready
+               or self._chunks_since_floor >= NOISE_FLOOR_RECOMPUTE_EVERY)
+        if len(self._noise_samples) >= 5 and due:
+            self._chunks_since_floor = 0
+            self._noise_floor_db = float(
+                np.percentile(self._noise_samples, NOISE_FLOOR_PERCENTILE))
+            self._floor_ready = True
 
     def _check_threshold(self, power_db, chunk):
         """Check if power exceeds threshold and manage TX state."""
+        if not self._floor_ready:
+            # No floor yet, so "10 dB above the floor" is meaningless. Detecting
+            # against the -100 dB placeholder fires on the first chunk of noise
+            # and reports the whole warm-up as one transmission.
+            return
+
         excess = power_db - self._noise_floor_db
         now = datetime.datetime.now(datetime.timezone.utc)
 
@@ -282,7 +333,8 @@ class IQSegmenter:
             self._tx_power_samples = []
             self._tx_chunk_count = 0
             self._below_threshold_count = 0
-            self._noise_samples = []
+            self._noise_samples.clear()
+            self._floor_ready = False
             self._noise_floor_db = -100.0
             self._buffer_filled = 0
             self._buffer_pos = 0
