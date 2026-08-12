@@ -391,6 +391,14 @@ PRESETS = [
         "expected_modulation": "WFM",
     },
     {
+    # A Spanish-language preset on 99.3 was added here and removed again: every
+    # segment the language detector returned from that frequency came back as
+    # English at 0.98+ confidence (CDC public-health advertising), so whatever
+    # is receivable on 99.3 at this location is not the station intended. A
+    # preset that claims a language it does not carry is worse than no preset —
+    # it would make the translator look broken. Finding a genuine non-English
+    # source here means HF/shortwave, which needs an antenna this node
+    # currently lacks.
         "id": "king-fm",
         "duty": "continuous",
         "label": "KING 98.1",

@@ -49,7 +49,13 @@ DEFAULT_CONFIG = {
         "sei_match_threshold": 0.85,      # sei_model.MATCH_THRESHOLD
         "segmenter_threshold_db": 10,     # iq_segmenter.DEFAULT_THRESHOLD_DB
         "silence_threshold": 500,         # transcriber.SILENCE_THRESHOLD (absolute fallback)
-        "vad_threshold_db": 8.0,          # transcriber.VAD_THRESHOLD_DB — dB over noise floor
+        "vad_threshold_db": 8.0,
+        # Whisper's <|translate|> task. Same model, same NPU graph — it turns
+        # 99 languages into English. There is no target-language setting
+        # because the model cannot go the other way; English -> X would need a
+        # separate NMT model entirely.
+        "translate_enabled": False,
+        "source_language": "auto",          # transcriber.VAD_THRESHOLD_DB — dB over noise floor
         "classifier_confidence": 0.7,     # signal_classifier.CONFIDENCE_THRESHOLD
     },
 }

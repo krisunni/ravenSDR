@@ -79,6 +79,34 @@ LANG_TOKEN_LAST = 50357       # last language token, immediately before <|transl
 # NMT model, so the UI must never offer a non-English target.
 _translate_enabled = False
 _source_language = "auto"
+
+# Whisper's language tokens sit contiguously between <|en|> and <|translate|>,
+# which is what makes auto-detect cheap: one decoder step off a bare
+# <|startoftranscript|>, then argmax over that slice. Roughly one extra token
+# of work (~70ms) per segment, versus a whole separate detection model.
+LANGUAGE_NAMES = {
+    "auto": "Auto-detect", "en": "English", "es": "Spanish", "fr": "French",
+    "de": "German", "it": "Italian", "pt": "Portuguese", "ru": "Russian",
+    "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "ar": "Arabic",
+    "hi": "Hindi", "vi": "Vietnamese", "tl": "Tagalog", "uk": "Ukrainian",
+    "fa": "Persian", "pl": "Polish", "tr": "Turkish", "nl": "Dutch",
+    "sv": "Swedish", "he": "Hebrew", "th": "Thai", "id": "Indonesian",
+}
+
+
+def set_translation(enabled=None, source_language=None):
+    """Set the decode task and source language for subsequent segments.
+
+    Whisper is multilingual in ONE direction: it turns 99 languages into
+    English and cannot go the other way. There is deliberately no target
+    setting — offering one would imply a capability the model does not have.
+    """
+    global _translate_enabled, _source_language
+    if enabled is not None:
+        _translate_enabled = bool(enabled)
+    if source_language is not None:
+        _source_language = str(source_language) or "auto"
+    return {"translate": _translate_enabled, "source_language": _source_language}
 REPETITION_PENALTY = 1.5
 REPETITION_WINDOW = 8
 EXCLUDED_TOKENS = {11, 13}  # punctuation tokens excluded from penalty
@@ -645,6 +673,13 @@ class Transcriber:
 
     def apply_settings(self, settings):
         """Apply runtime settings from the Settings tab (see config.py)."""
+        # Translation is a runtime switch, not a restart: the operator flips it
+        # while listening to a foreign broadcast and expects the next segment to
+        # come back in English.
+        set_translation(
+            enabled=settings.get("translate_enabled"),
+            source_language=settings.get("source_language"),
+        )
         global _silence_threshold, _vad_threshold_db
         try:
             _silence_threshold = float(settings.get(
@@ -910,11 +945,42 @@ class Transcriber:
 
                                     # --- Decoder (iterative) ---
                                     t_dec_start = time.monotonic()
+
+                                    # One decoder step, reusable for both the
+                                    # language probe and the token loop.
+                                    def _run_step(ids, pos):
+                                        tok_ids = self._tokenization(ids)
+                                        decoder_bindings.input(f"{decoder_model_name}/input_layer1").set_buffer(encoded_features)
+                                        decoder_bindings.input(f"{decoder_model_name}/input_layer2").set_buffer(tok_ids)
+                                        bufs = [np.zeros(decoder_model.output(n).shape, dtype=np.float32)
+                                                for n in sorted_output_names]
+                                        for n, b in zip(sorted_output_names, bufs):
+                                            decoder_bindings.output(n).set_buffer(b)
+                                        decoder_configured.run([decoder_bindings], timeout_ms)
+                                        out = np.concatenate(
+                                            [decoder_bindings.output(n).get_buffer()
+                                             for n in sorted_output_names], axis=2)
+                                        return out[:, pos].squeeze()
+
+                                    # Task and source language are per-segment:
+                                    # the operator can flip Translate on, or
+                                    # retune to a different country, mid-run.
+                                    detected_code = None
+                                    detected_conf = None
+                                    if _source_language == "auto":
+                                        try:
+                                            lang_token, detected_code, detected_conf = \
+                                                self._detect_language(_run_step)
+                                        except Exception as e:
+                                            log.debug("Language detect failed: %s", e)
+                                            lang_token = LANG_TOKEN_ID
+                                    else:
+                                        lang_token = self._lang_token(_source_language) or LANG_TOKEN_ID
+
+                                    prefix = self._decode_prefix(lang_token)
                                     decoder_input_ids = np.zeros((1, DECODER_SEQUENCE_LENGTH), dtype=np.int64)
-                                    # Seed with Whisper decode prefix:
-                                    # <|startoftranscript|> <|en|> <|transcribe|> <|notimestamps|>
-                                    prefix_len = len(DECODE_PREFIX)
-                                    for pi, tok in enumerate(DECODE_PREFIX):
+                                    prefix_len = len(prefix)
+                                    for pi, tok in enumerate(prefix):
                                         decoder_input_ids[0][pi] = tok
                                     generated_tokens = []
 
@@ -986,6 +1052,19 @@ class Transcriber:
                                             "label": preset.get("label", ""),
                                             "text": text_clean,
                                             "rms": round(compute_rms(chunk), 1),
+                                            # The UI must be able to say WHAT it
+                                            # is showing. "translated" text with
+                                            # no indication of the source
+                                            # language is untrustworthy.
+                                            "task": ("translate" if _translate_enabled
+                                                     else "transcribe"),
+                                            "language": detected_code or (
+                                                _source_language
+                                                if _source_language != "auto" else "en"),
+                                            "language_confidence": (
+                                                round(detected_conf, 3)
+                                                if detected_conf is not None else None),
+                                            "detected": detected_code is not None,
                                         }
                                         self.emit_fn("transcript", segment)
                                         if parsed_data and self._weather_callback:
@@ -1006,6 +1085,48 @@ class Transcriber:
                 self._backend = "cpu"
                 self._init_faster_whisper()
                 self._inference_loop_cpu()
+
+    def _lang_token(self, code):
+        """Token id for a language code, or None if the tokenizer lacks it."""
+        try:
+            tok = self._tokenizer.convert_tokens_to_ids(f"<|{code}|>")
+        except Exception:
+            return None
+        if tok is None or not (LANG_TOKEN_FIRST <= tok <= LANG_TOKEN_LAST):
+            return None
+        return tok
+
+    def _decode_prefix(self, lang_token):
+        """Whisper's four seed tokens for the current task."""
+        task = TRANSLATE_TOKEN_ID if _translate_enabled else TRANSCRIBE_TOKEN_ID
+        return [START_TOKEN_ID, lang_token, task, NO_TIMESTAMPS_TOKEN_ID]
+
+    def _detect_language(self, run_step):
+        """Detect the spoken language in one extra decoder step.
+
+        Whisper predicts the language token immediately after
+        <|startoftranscript|>, so seeding with just that token and taking the
+        argmax over the contiguous language range is the whole algorithm — no
+        separate model, no extra pass over the audio.
+
+        run_step(decoder_input_ids) must return the logits for the position
+        after the last seeded token.
+        """
+        ids = np.zeros((1, DECODER_SEQUENCE_LENGTH), dtype=np.int64)
+        ids[0][0] = START_TOKEN_ID
+        logits = run_step(ids, 0)
+        lang_slice = logits[LANG_TOKEN_FIRST:LANG_TOKEN_LAST + 1]
+        best = int(np.argmax(lang_slice))
+        token = LANG_TOKEN_FIRST + best
+        # Softmax over just the language tokens: a confidence relative to the
+        # other languages, which is the question actually being asked.
+        exp = np.exp(lang_slice - np.max(lang_slice))
+        conf = float(exp[best] / exp.sum()) if exp.sum() else 0.0
+        try:
+            code = self._tokenizer.convert_ids_to_tokens(token).strip("<|>")
+        except Exception:
+            code = "??"
+        return token, code, conf
 
     def _tokenization(self, decoder_input_ids):
         """Token embedding lookup → add positional bias → reshape to NHWC."""

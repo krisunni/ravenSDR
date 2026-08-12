@@ -57,6 +57,7 @@
         connectionBanner.classList.add("hidden");
         fetchPresets();
         fetchSecondaryConfig();
+        loadTranslationSettings();
         if (window.WeatherPanel && !weatherPanel) {
             weatherPanel = new window.WeatherPanel(socket);
         }
@@ -1088,6 +1089,48 @@
     }
     setInterval(tsIdleCheck, 1000);
 
+    // ── Translation controls ────────────────────────────────────────────
+    // Whisper here is the multilingual model, so <|translate|> in place of
+    // <|transcribe|> in the decode prefix turns it into a 99-language ->
+    // English translator with no second model and no extra pass over the
+    // audio. Source "auto" costs one additional decoder step to read the
+    // language token the model predicts first.
+    var xlateToggle = document.getElementById("translate-enabled");
+    var xlateSource = document.getElementById("translate-source");
+
+    function loadTranslationSettings() {
+        if (!xlateToggle || !xlateSource) return;
+        fetch("/api/languages")
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                xlateSource.innerHTML = "";
+                (d.languages || []).forEach(function (l) {
+                    var o = document.createElement("option");
+                    o.value = l.code;
+                    o.textContent = l.code === "auto" ? l.name : l.name;
+                    xlateSource.appendChild(o);
+                });
+                xlateSource.value = d.source_language || "auto";
+                xlateToggle.checked = !!d.translate_enabled;
+            })
+            .catch(function () {});
+    }
+
+    function saveTranslationSettings() {
+        if (!xlateToggle || !xlateSource) return;
+        fetch("/api/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                translate_enabled: xlateToggle.checked,
+                source_language: xlateSource.value,
+            }),
+        }).catch(function () {});
+    }
+
+    if (xlateToggle) xlateToggle.addEventListener("change", saveTranslationSettings);
+    if (xlateSource) xlateSource.addEventListener("change", saveTranslationSettings);
+
     function flashTranscribed() {
         if (!tsEl) return;
         tsFlashUntil = Date.now() + 1200;
@@ -1099,9 +1142,21 @@
     function addTranscriptEntry(data) {
         var entry = document.createElement("div");
         entry.className = "transcript-entry";
+        // Mark translated lines with their SOURCE language. English text that
+        // silently came from Spanish audio is not something a reader should
+        // have to infer, and a wrong detection is only debuggable if shown.
+        var tag = "";
+        if (data.task === "translate") {
+            var lang = (data.language || "??").toUpperCase();
+            var conf = data.language_confidence;
+            tag = '<span class="xlate-tag" title="Translated to English from '
+                + escapeHtml(lang) + (conf ? " (confidence " + conf + ")" : "")
+                + '">' + escapeHtml(lang) + '&rarr;EN</span> ';
+        }
         entry.innerHTML =
-            '<span class="ts">' + data.timestamp + '</span> ' +
-            '<span class="freq">[' + data.label + ']</span> ' +
+            '<span class="ts">' + escapeHtml(data.timestamp) + '</span> ' +
+            '<span class="freq">[' + escapeHtml(data.label) + ']</span> ' +
+            tag +
             '<span class="text">' + escapeHtml(data.text) + '</span>';
         transcriptFeed.appendChild(entry);
         transcriptFeed.scrollTop = transcriptFeed.scrollHeight;

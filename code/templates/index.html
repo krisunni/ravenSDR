@@ -193,6 +193,19 @@
                     <span class="ts-label">&mdash;</span>
                     <span class="ts-bar"><i></i></span>
                 </div>
+                <!-- Translation is the same NPU graph with one token changed in
+                     the decode prefix, so it belongs beside the transcript
+                     rather than in a tab of its own. Target is English only and
+                     is deliberately not offered as a choice: Whisper cannot
+                     translate out of English. -->
+                <div class="xlate-controls">
+                    <label class="xlate-switch" title="Whisper's translate task: any of 99 languages into English, on the NPU, offline">
+                        <input type="checkbox" id="translate-enabled">
+                        <span>&rarr; EN</span>
+                    </label>
+                    <select id="translate-source" class="xlate-select"
+                            title="Source language. Auto costs one extra decoder step per segment."></select>
+                </div>
                 <div>
                     <button id="clear-btn" class="btn btn-sm">Clear</button>
                     <button id="copy-btn" class="btn btn-sm">Copy</button>

@@ -1527,6 +1527,25 @@ def learn():
     return resp
 
 
+@app.route("/api/languages")
+def api_languages():
+    """Source languages offered for translation, plus the current setting.
+
+    Only the source is selectable. Whisper translates INTO English and cannot
+    do the reverse, so exposing a target would advertise something the model
+    cannot do.
+    """
+    from ravensdr.transcriber import LANGUAGE_NAMES
+    settings = get_settings()
+    return jsonify({
+        "languages": [{"code": c, "name": n} for c, n in LANGUAGE_NAMES.items()],
+        "source_language": settings.get("source_language", "auto"),
+        "translate_enabled": bool(settings.get("translate_enabled", False)),
+        "target": "en",
+        "backend": transcriber.backend,
+    })
+
+
 @app.route("/learn/code")
 def learn_code():
     """Companion to /learn, aimed at engineers rather than at the curious.

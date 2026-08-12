@@ -1349,3 +1349,54 @@ select {
     .transcript-header .ts-bar { display: none; }
     .transcript-header .ts-label { min-width: 0; }
 }
+
+/* ── Translation controls ─────────────────────────────────────────────────
+   Beside the transcript, because translation IS transcription here — the same
+   NPU graph with one token changed in the decode prefix. There is no target
+   selector on purpose: Whisper translates into English only, and offering a
+   target would advertise a capability the model does not have. */
+.transcript-header .xlate-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 10px;
+}
+
+.transcript-header .xlate-switch {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-dim, #8b949e);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.transcript-header .xlate-switch input { cursor: pointer; margin: 0; }
+.transcript-header .xlate-switch input:checked + span { color: var(--accent, #58a6ff); }
+
+.transcript-header .xlate-select {
+    background: var(--surface2, #1c2430);
+    color: var(--text, #e6edf3);
+    border: 1px solid var(--border, #30363d);
+    border-radius: 4px;
+    font-size: 11px;
+    padding: 2px 4px;
+    max-width: 120px;
+}
+
+/* Source language on a translated line. Without it, English text that came
+   from Spanish audio is indistinguishable from English audio. */
+.transcript-entry .xlate-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-family: var(--font-mono, monospace);
+    color: #bc8cff;
+    border: 1px solid #3d2f52;
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-right: 4px;
+}
+
+@media (max-width: 620px) {
+    .transcript-header .xlate-select { max-width: 84px; }
+}
