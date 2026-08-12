@@ -383,31 +383,50 @@ transcriber.set_transcript_callback(_on_transcript)
 apt_decoder = AptDecoder(emit_fn=_late_emit)
 
 
+def _dedicated_decoders():
+    """Every decoder that opens the RTL-SDR directly, as (receiver, label).
+
+    One list instead of the eleven hand-maintained tuples this replaced. Those
+    had drifted: aprs_receiver was added later and never joined the APT, WEFAX,
+    pager or /api/stop sets, so an APRS session held the dongle straight through
+    a scheduled satellite pass. Several branches were only safe by accident of
+    ordering — a fall-through stop below them happened to catch what their own
+    tuple missed. Adding a decoder should mean editing one place.
+    """
+    return (
+        (ism_receiver, "ISM"),
+        (acars_receiver, "ACARS"),
+        (pager_receiver, "Pager"),
+        (aprs_receiver, "APRS"),
+        (ais_receiver, "AIS"),
+    )
+
+
+def _stop_dedicated(reason, keep=None, notice_type="preempt"):
+    """Stop every dedicated decoder except `keep`. Returns the labels stopped."""
+    stopped = []
+    for rx, name in _dedicated_decoders():
+        if rx is None or rx is keep or not rx.is_running:
+            continue
+        rx.stop()
+        stopped.append(name)
+        log.info("Stopped %s — %s", name, reason)
+        emit_safe("notice", {
+            "message": f"{name} paused — {reason}",
+            "type": notice_type,
+        })
+    return stopped
+
+
 def _on_apt_pass_start(pass_info):
     """Called by scheduler when a satellite pass begins — start recording."""
     satellite = pass_info.get("satellite", "")
     frequency = pass_info.get("frequency", "")
 
-    # Stop meteor detector if it's holding the device (single-dongle mode)
-    if meteor_detector and meteor_detector.is_running and not METEOR_DUAL_DONGLE:
-        meteor_detector.stop()
-        log.info("Stopped meteor detector for APT recording")
-        socketio.emit("notice", {
-            "message": f"Meteor detector paused — SDR dedicated to {satellite} pass",
-            "type": "apt_preempt",
-        })
-
-    # Stop dedicated decoders that seize the dongle directly (ISM/AIS/ACARS/Pager)
-    for _rx, _name in ((ism_receiver, "ISM"), (ais_receiver, "AIS"),
-                       (acars_receiver, "ACARS"), (pager_receiver, "Pager")):
-        if _rx and _rx.is_running:
-            _rx.stop()
-            log.info("Stopped %s for APT recording", _name)
-            socketio.emit("notice", {
-                "message": f"{_name} paused — SDR dedicated to {satellite} pass",
-                "type": "apt_preempt",
-            })
-
+    # Check automation BEFORE taking anything. This used to sit below the
+    # decoder stops, so with automation off a pass would preempt every decoder,
+    # log "not preempting the SDR", and return — leaving the dongle unclaimed
+    # and nothing restarted.
     if not is_automation_enabled("apt"):
         log.info("Automation off — not preempting the SDR for %s pass", satellite)
         emit_safe("notice", {
@@ -415,6 +434,24 @@ def _on_apt_pass_start(pass_info):
             "type": "automation_skipped",
         })
         return
+
+    reason = f"SDR dedicated to {satellite} pass"
+
+    # Corpus collection first: it is the only one that can already be holding
+    # the device with no deadline of its own, and it is what cost 11 of 22
+    # passes an empty WAV.
+    if iq_collect_scheduler and iq_collect_scheduler.preempt():
+        log.info("Preempted IQ collect slot for %s pass", satellite)
+        emit_safe("notice", {"message": f"IQ collect paused — {reason}",
+                             "type": "apt_preempt"})
+
+    if meteor_detector and meteor_detector.is_running and not METEOR_DUAL_DONGLE:
+        meteor_detector.stop()
+        log.info("Stopped meteor detector for APT recording")
+        emit_safe("notice", {"message": f"Meteor detector paused — {reason}",
+                             "type": "apt_preempt"})
+
+    _stop_dedicated(reason, notice_type="apt_preempt")
 
     # Stop ADS-B if it's holding the device (single-dongle mode)
     resumed_adsb_scheduler = False
@@ -510,10 +547,21 @@ def _on_wefax_broadcast_start(broadcast_info):
                  frequency_khz)
         return
 
-    # Stop meteor detector if it's holding the device (single-dongle mode)
+    reason = f"SDR dedicated to WEFAX {frequency_khz} kHz"
+
+    # This handler used to preempt only meteor and ADS-B, so a WEFAX slot
+    # firing during ISM/ACARS/pager/APRS would flip the mode flag (refusing all
+    # tunes) and then write a zero-byte WAV. Same registry as the APT path.
+    if iq_collect_scheduler and iq_collect_scheduler.preempt():
+        log.info("Preempted IQ collect slot for WEFAX recording")
+        emit_safe("notice", {"message": f"IQ collect paused — {reason}",
+                             "type": "wefax_preempt"})
+
     if meteor_detector and meteor_detector.is_running and not METEOR_DUAL_DONGLE:
         meteor_detector.stop()
         log.info("Stopped meteor detector for WEFAX recording")
+
+    _stop_dedicated(reason, notice_type="wefax_preempt")
 
     # Stop ADS-B if it's holding the device (single-dongle mode)
     if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
@@ -526,11 +574,30 @@ def _on_wefax_broadcast_start(broadcast_info):
         wefax_receiver.record_broadcast(broadcast_info)
         socketio.emit("status", _get_status())
 
-        # Schedule exit from WEFAX mode after recording duration
+        # Schedule exit from WEFAX mode once recording actually finishes.
+        #
+        # This used to blind-sleep duration+30s. record_broadcast() returns True
+        # for merely spawning the capture, and the capture can die in ~4s (no HF
+        # antenna, dongle busy) — after which the radio stayed pinned in WEFAX
+        # mode for the full ten-plus minutes, refusing every tune, with nothing
+        # being recorded. _exit_apt was rewritten to poll for exactly this
+        # reason; the fix was never carried across.
         def _exit_wefax():
             import eventlet as _ev
             duration_min = broadcast_info.get("duration_minutes", 10)
-            _ev.sleep(duration_min * 60 + 30)
+            deadline = duration_min * 60 + 30
+            grace = 20          # capture needs a moment to open the device
+            waited = 0
+            while waited < deadline:
+                _ev.sleep(2)
+                waited += 2
+                if not input_source.wefax_mode:
+                    return      # someone else already released it
+                if waited > grace and not wefax_receiver.is_recording:
+                    log.warning("WEFAX capture is not running after %ds — "
+                                "releasing the SDR instead of holding it for "
+                                "the whole %d min slot", waited, duration_min)
+                    break
             if input_source.wefax_mode:
                 input_source.exit_wefax_mode()
                 socketio.emit("status", _get_status())
@@ -825,16 +892,7 @@ def _apply_tune(preset):
     if preset.get("category") == "science":
         input_source.stop()
         input_source.current_preset = preset
-        if ism_receiver.is_running:
-            ism_receiver.stop()
-        if acars_receiver.is_running:
-            acars_receiver.stop()
-        if pager_receiver.is_running:
-            pager_receiver.stop()
-        if aprs_receiver.is_running:
-            aprs_receiver.stop()
-        if ais_receiver.is_running:
-            ais_receiver.stop()
+        _stop_dedicated("switching to Science", notice_type="mode_switch")
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
             _resume_adsb_scan()
@@ -878,9 +936,8 @@ def _apply_tune(preset):
     if is_pager:
         input_source.stop()
         input_source.current_preset = preset
-        for _rx in (ais_receiver, ism_receiver, acars_receiver):
-            if _rx.is_running:
-                _rx.stop()
+        _stop_dedicated("switching to Pager", keep=pager_receiver,
+                        notice_type="mode_switch")
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
             _resume_adsb_scan()
@@ -898,9 +955,8 @@ def _apply_tune(preset):
     if preset.get("mode") == "aprs":
         input_source.stop()
         input_source.current_preset = preset
-        for _rx in (ais_receiver, ism_receiver, acars_receiver, pager_receiver):
-            if _rx.is_running:
-                _rx.stop()
+        _stop_dedicated("switching to APRS", keep=aprs_receiver,
+                        notice_type="mode_switch")
         if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
             adsb_receiver.stop()
             _resume_adsb_scan()
@@ -1275,7 +1331,11 @@ iq_collect_scheduler = IQCollectScheduler(
     start_slot=_start_collect_slot,
     stop_slot=_stop_collect_slot,
     is_enabled=lambda: is_automation_enabled("iq_collect"),
-    should_yield=lambda: operator_lease_remaining() > 0,
+    # A person tuning, OR a scheduled pass holding the radio. The second half
+    # was missing, which is how a dwell could run straight through an AOS.
+    should_yield=lambda: (operator_lease_remaining() > 0
+                          or input_source.apt_mode
+                          or input_source.wefax_mode),
     sleep_fn=eventlet.sleep,
     on_change=lambda snap: emit_safe("iq_collect", snap),
 )
@@ -1579,15 +1639,9 @@ socketio.emit = _emit_with_ipc_fanout
 def api_stop():
     input_source.stop()
     sdr_arbiter.adopt(None)      # nothing is tuned now
-    # Stop dedicated AIS / ISM mode if active
-    if ais_receiver.is_running:
-        ais_receiver.stop()
-    if ism_receiver.is_running:
-        ism_receiver.stop()
-    if acars_receiver.is_running:
-        acars_receiver.stop()
-    if pager_receiver.is_running:
-        pager_receiver.stop()
+    # Every dedicated decoder, not the four this used to list. "Stop" that left
+    # rtl_fm | multimon-ng running for APRS was not a stop.
+    _stop_dedicated("operator stopped the radio", notice_type="mode_switch")
     # Stop dedicated ADS-B mode if active
     if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
         adsb_receiver.stop()

@@ -63,6 +63,10 @@ class IQCollectScheduler:
         self._dwell_fn = dwell_fn
 
         self._running = False
+        # Set by preempt() when something with a deadline needs the radio NOW.
+        # Distinct from _should_yield, which only reports operator activity —
+        # a satellite AOS cannot wait for the next poll of that.
+        self._preempted = False
         self._index = 0
         self._current = None
         self._rotations = 0
@@ -70,6 +74,24 @@ class IQCollectScheduler:
         self._last_error = None
 
     # ── Observable state ──
+
+    def preempt(self):
+        """Give the radio up now, for something that has a deadline.
+
+        Nothing could do this before. _start_slot refuses to BEGIN a slot while
+        APT/WEFAX holds the radio, but an already-running slot was invisible to
+        every preemption path, and a dwell can stretch to 240s. A pass firing
+        inside one found rtl_sdr still on the dongle: the journal shows "APT WAV
+        not created / empty (device busy)" landing ~23ms after "recording
+        started" for 11 of 22 passes, including a 68-degree NOAA-15 pass lost to
+        a 345 MHz corpus dwell.
+
+        Returns True if a slot was actually running, so the caller knows whether
+        it has to wait for the device to come free.
+        """
+        was_running = self._current is not None
+        self._preempted = True
+        return was_running
 
     def snapshot(self):
         return {
@@ -100,6 +122,7 @@ class IQCollectScheduler:
     def stop(self):
         self._running = False
         self._release()
+        self._preempted = False
 
     def _release(self):
         if self._current is not None:
@@ -164,6 +187,10 @@ class IQCollectScheduler:
         while self._running and waited < dwell:
             if not self._is_enabled():
                 break               # operator paused mid-slot
+            if self._preempted:
+                log.info("IQ collect: preempted mid-slot — releasing %s",
+                         band.get("id"))
+                break
             if self._should_yield():
                 # Somebody tuned. Corpus building is opportunistic and has no
                 # deadline, so it gives the radio back inside a second rather
