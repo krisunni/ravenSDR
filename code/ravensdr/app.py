@@ -2370,8 +2370,20 @@ def _do_shutdown(signum=None):
     sei_model.stop()
     iq_segmenter.reset()
 
+    # socketio.stop() is `raise SystemExit` under eventlet, which only unwinds
+    # the greenthread it is raised in. Raised here — inside a background task,
+    # not the WSGI handler — it killed this greenthread and left socketio.run()
+    # serving, so systemd waited out TimeoutStopSec=45 and SIGKILLed us. Two
+    # outcomes were observed in the journal, never a clean exit:
+    #   status=9/KILL  result 'timeout'   (the 45s hang)
+    #   status=7/BUS   result 'signal'    (torn down mid-DMA instead)
+    # Teardown above is finished and flushed by this point, so leave directly
+    # rather than unwinding through an interpreter shutdown that races HailoRT
+    # for the mapped buffers.
     if signum == signal.SIGTERM:
-        socketio.stop()
+        import os as _exit_os
+        logging.shutdown()
+        _exit_os._exit(0)
 
 
 def shutdown(signum=None, frame=None):
