@@ -1,0 +1,52 @@
+# Screen driver for the Waveshare Zero LCD HAT (A).
+#
+# Third peer in the split: ravensdr.service owns the hardware and serves
+# radio.sock; the web app and this both connect to it as clients. Keeping the
+# panels in their own unit means a wedged SPI write or a yanked HAT restarts
+# this and nothing else — the radio and the transcriber never notice.
+#
+# Install:
+#   sudo cp code/scripts/ravensdr-lcd.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ravensdr-lcd
+#
+# Needs dtparam=spi=on AND dtoverlay=spi1-1cs in /boot/firmware/config.txt.
+# The 1.3in main panel is on SPI1; with only spi=on it stays dark.
+
+[Unit]
+Description=ravenSDR LCD panel driver (Zero LCD HAT A)
+Documentation=https://www.waveshare.com/wiki/Zero_LCD_HAT_(A)
+# Wants= not Requires=: the panels are useful even when the radio is down —
+# that is exactly when "RADIO LINK DOWN" plus the node IP earns its place.
+Wants=ravensdr.service
+After=ravensdr.service network-online.target
+# No SPI means no panels, and no amount of restarting will conjure one.
+ConditionPathExists=/dev/spidev0.0
+
+[Service]
+Type=simple
+User=kris
+# gpio for the DC/RST/backlight lines and the two keys, spi for /dev/spidev*.
+SupplementaryGroups=gpio spi
+WorkingDirectory=/home/kris/code/ravenSDR/code
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/kris/code/ravenSDR/code
+# Which panels to drive. On this node aux0 and the 1.3in main are lit but
+# receive no signal (see the runbook: fault is between the header and the
+# panels, not in software), so driving them only paints into the void and the
+# frequency never appears anywhere. With main excluded the driver pages the
+# full status view onto an aux instead. Set back to main,aux0,aux1 once the
+# wiring is fixed:
+#   sudo systemctl edit ravensdr-lcd   ->  [Service] Environment=LCD_PANELS=...
+Environment=LCD_PANELS=aux1
+# System python3, not the venv: spidev/lgpio/gpiozero are apt packages, and
+# lgpio has no prebuilt wheel for this platform.
+ExecStart=/usr/bin/python3 -m ravensdr.lcd_panel --interval 2 --panels ${LCD_PANELS}
+Restart=always
+RestartSec=5
+# A panel storm must never take the node down with it.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

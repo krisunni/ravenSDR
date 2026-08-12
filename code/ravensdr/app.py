@@ -2248,6 +2248,11 @@ def iq_pipeline_emit_loop():
     while not _signal_stop.is_set():
         eventlet.sleep(0.3)  # ~3 fps for spectrogram waterfall
 
+        # socketio.emit is wrapped by _emit_with_ipc_fanout, so these already
+        # reach every IPC peer (the LCD driver among them) as well as the
+        # browser. Do NOT add an explicit ipc_server.broadcast here: it sends a
+        # second copy of every row under the same event name, and the LCD then
+        # sees two payload shapes for one event.
         row = _pending_spectrogram_row
         if row is not None:
             _pending_spectrogram_row = None
