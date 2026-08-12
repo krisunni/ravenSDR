@@ -457,7 +457,21 @@ class SignalClassifier:
         self.emit_fn("signal_classified", classification)
 
         # Forward to SEI pipeline for emitter fingerprinting
-        self._forward_to_sei(iq_samples, frequency_hz, modulation, confidence)
+        # SEI is NOT forwarded from here. It used to be, via _forward_to_sei,
+        # which called identify() without snr_db — so the default 0.0 hit
+        # sei_model's MIN_SNR_DB=15 gate and returned None every single time.
+        # It had never once produced a result. It also gated on the module-level
+        # CONFIDENCE_THRESHOLD rather than self.confidence_threshold, ignoring
+        # the Settings tab.
+        #
+        # Removing it is the fix rather than passing an SNR, because there is no
+        # honest SNR to pass: classify_iq runs on arbitrary chunks off the
+        # collector, not on detected transmissions. Fingerprinting a random 32k
+        # window with an unknown noise floor is meaningless. classify_segment
+        # already forwards with the segment's measured snr_db and duration_ms,
+        # which is the only call site that ever did anything — and since
+        # classify_segment calls classify_iq, this path was also invoking SEI a
+        # second, useless time per segment.
 
         return classification
 
@@ -625,21 +639,6 @@ class SignalClassifier:
                 log.debug("SEI segment forwarding error: %s", e)
 
         return result
-
-    def _forward_to_sei(self, iq_samples, frequency_hz, modulation, confidence):
-        """Forward classified IQ to SEI if conditions met."""
-        if self._sei_model is None:
-            return
-        if confidence < CONFIDENCE_THRESHOLD:
-            return
-        try:
-            self._sei_model.identify(
-                iq_samples,
-                frequency_hz=frequency_hz,
-                modulation=modulation,
-            )
-        except Exception as e:
-            log.debug("SEI forwarding error: %s", e)
 
     def _infer_hailo(self, img):
         """Run inference on Hailo-8L NPU.
