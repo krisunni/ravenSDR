@@ -364,14 +364,15 @@ PRESETS = [
         "expected_modulation": "MSK",
     },
     {
-        "id": "acars-131725",
+        "id": "acars-131125",
         "duty": "burst",
-        "label": "ACARS 131.725",
-        "freq": "131.725M",
+        "label": "ACARS 131.125",
+        "freq": "131.125M",
         "mode": "acars",
         "category": "aviation",
         "squelch": 0,
-        "note": "European primary, used in North America as secondary",
+        "note": "ARINC secondary — replaced 131.725, which is SITA/Europe and "
+                "silent over North America",
         "expected_modulation": "MSK",
     },
     # More FM broadcast stations. WFM was the one class that demonstrably
@@ -418,10 +419,16 @@ PRESETS = [
         # bandwidth, so the 915.00M preset only covers ~914.88-915.13 and never
         # hears them. Unlike Gridstream (which yields identity only), ERT
         # SCM/IDM frames carry actual consumption values.
+        #
+        # ERT is frequency-hopping across roughly 910-920 MHz, so even centred
+        # correctly the default 250 kHz catches only a sliver of the hop set and
+        # absence of decodes proves nothing. 1024 kHz is the widest rate the
+        # RTL-SDR holds without dropped samples on this Pi.
         "id": "ism-ert-912",
         "duty": "burst",
         "label": "Utility Meters (ERT)",
         "freq": "912.60M",
+        "sample_rate": "1024k",
         "mode": "ism",
         "category": "ism",
         "squelch": 0,

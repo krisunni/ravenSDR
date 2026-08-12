@@ -12,9 +12,18 @@ from ravensdr.subprocess_decoder import SubprocessDecoder
 
 log = logging.getLogger(__name__)
 
-# US ACARS VHF channels (MHz). All fit inside one ~2 MHz capture window so a
-# single dongle can decode them together (130.025 .. 131.825 spans 1.8 MHz).
-DEFAULT_CHANNELS = ["131.550", "130.025", "130.425", "131.725", "131.825"]
+# North American ACARS VHF channels (MHz), all ARINC-allocated and actually in
+# use over Seattle. They fit inside one ~2 MHz capture window (acarsdec's default
+# -m 160), so a single dongle decodes all five at once: 130.025 .. 131.550 spans
+# 1.525 MHz.
+#
+# 131.550 is the ARINC primary and carries most of the traffic; the rest are
+# secondaries that fill in under load. 131.725 and 131.825 used to be in this
+# list and were removed — those are SITA channels used in Europe, and over North
+# America they produce nothing. Five channels that can carry traffic beats five
+# that include two guaranteed-silent ones, because a silent channel is
+# indistinguishable from a broken decoder.
+DEFAULT_CHANNELS = ["131.550", "130.025", "130.425", "130.450", "131.125"]
 
 
 class AcarsReceiver(SubprocessDecoder):
