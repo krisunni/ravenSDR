@@ -276,12 +276,22 @@ def _is_hallucination(text):
 
 def _apply_repetition_penalty(logits, generated_tokens, penalty=REPETITION_PENALTY,
                               last_window=REPETITION_WINDOW):
-    """Discourage repeated tokens by dividing their logits by the penalty."""
+    """Discourage repeated tokens by pushing their logits toward -inf.
+
+    The sign matters and dividing unconditionally gets it backwards. A logit is
+    a log-probability, so it is usually NEGATIVE, and dividing a negative by 1.5
+    moves it UP: -8.0 becomes -5.333, i.e. the token we meant to suppress
+    becomes more likely. Whisper's logits are overwhelmingly negative, so the
+    guard added to stop repetition loops was in fact rewarding them ~1.5x across
+    most of the vocabulary. Match HuggingFace's RepetitionPenaltyLogitsProcessor:
+    multiply when negative, divide when positive — both move the token down.
+    """
     logits = np.squeeze(logits, axis=0)
     recent = set(generated_tokens[-last_window:])
     for token in recent:
         if token not in EXCLUDED_TOKENS:
-            logits[token] /= penalty
+            score = logits[token]
+            logits[token] = score * penalty if score < 0 else score / penalty
     return logits
 
 
