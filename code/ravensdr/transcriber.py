@@ -27,11 +27,18 @@ SAMPLE_RATE = 16000
 VAD_SILENCE_THRESHOLD = 400   # RMS below this = silence
 VAD_HOLDOFF_MS = 300          # silence must last this long to trigger a split
 VAD_MIN_SEGMENT_S = 1.0       # don't send segments shorter than this
-VAD_MAX_SEGMENT_S = 15.0      # force-split if speech runs longer than this
+VAD_MAX_SEGMENT_S = 10.0      # force-split if speech runs longer than this
 VAD_FRAME_SIZE = 1600          # 100ms frames at 16kHz
 
 # Continuous capture constants (NOAA weather radio)
-CONTINUOUS_SEGMENT_S = 30.0    # fixed segment duration for continuous broadcasts
+# Both segment ceilings are pinned to the encoder window on purpose. The Hailo
+# encoder accepts exactly CHUNK_SAMPLES (10s) and pad_or_trim() silently drops
+# anything past it — so a 30s segment did not give Whisper more context, it threw
+# 20s of speech away before the NPU ever saw it. Continuous broadcasts were
+# losing roughly two thirds of their audio, which read as a flaky transcriber
+# rather than as the truncation it was. Anything raised above 10.0 here is
+# discarded downstream, so raise CHUNK_SAMPLES (and recompile the HEF) instead.
+CONTINUOUS_SEGMENT_S = 10.0    # fixed segment duration for continuous broadcasts
 CONTINUOUS_OVERLAP_S = 2.0     # overlap between segments to avoid cutting words
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
@@ -39,8 +46,21 @@ DECODER_SEQUENCE_LENGTH = 32  # max tokens for whisper-tiny
 START_TOKEN_ID = 50258        # <|startoftranscript|>
 LANG_TOKEN_ID = 50259         # <|en|>
 TRANSCRIBE_TOKEN_ID = 50359   # <|transcribe|>
+TRANSLATE_TOKEN_ID = 50358    # <|translate|> — same model, X -> English
 NO_TIMESTAMPS_TOKEN_ID = 50363  # <|notimestamps|>
 DECODE_PREFIX = [START_TOKEN_ID, LANG_TOKEN_ID, TRANSCRIBE_TOKEN_ID, NO_TIMESTAMPS_TOKEN_ID]
+
+# The 99 language tokens sit contiguously between <|en|> and <|translate|>, which
+# is what makes auto-detect cheap: run one decoder step off a bare
+# <|startoftranscript|> and take the argmax over this slice.
+LANG_TOKEN_FIRST = 50259      # <|en|>
+LANG_TOKEN_LAST = 50357       # last language token, immediately before <|translate|>
+
+# Whisper is multilingual in one direction only: it can turn 99 languages INTO
+# English, and cannot go the other way. Anything English->X needs a separate
+# NMT model, so the UI must never offer a non-English target.
+_translate_enabled = False
+_source_language = "auto"
 REPETITION_PENALTY = 1.5
 REPETITION_WINDOW = 8
 EXCLUDED_TOKENS = {11, 13}  # punctuation tokens excluded from penalty
@@ -334,6 +354,20 @@ class VoiceActivitySegmenter:
         self._pending += buf
         return segments
 
+    def progress(self):
+        """How much audio has accumulated toward the next segment.
+
+        Surfaced in the console because a segmenter that is quietly filling its
+        buffer looks exactly like a dead transcriber. There is no fixed target
+        here — a segment ends when the talker stops — so target_s is the hard
+        ceiling and the bar reads "at most this long", not "this far along".
+        """
+        return {
+            "mode": "vad",
+            "buffered_s": round(len(self._pending) / (SAMPLE_RATE * 2), 1),
+            "target_s": VAD_MAX_SEGMENT_S,
+        }
+
     def _flush(self) -> bytes:
         seg = self._pending
         self._pending = b""
@@ -343,6 +377,21 @@ class VoiceActivitySegmenter:
     def reset(self):
         self._pending = b""
         self._silence_frames = 0
+
+
+def _segmenter_progress(segmenter):
+    """Segment fill state for the console, or None if the segmenter lacks it.
+
+    Tolerant by design: a segmenter without progress() must not break the
+    signal meter, which is load-bearing for judging whether a channel is live.
+    """
+    fn = getattr(segmenter, "progress", None)
+    if fn is None:
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
 
 
 class ContinuousSegmenter:
@@ -380,6 +429,19 @@ class ContinuousSegmenter:
 
     def reset(self):
         self._pending = b""
+
+    def progress(self):
+        """How much of the next fixed segment has accumulated.
+
+        This is the one the console actually needs: a 30s segment means up to
+        30s of blank transcript panel after tuning, which is indistinguishable
+        from a broken pipeline unless the UI says otherwise.
+        """
+        return {
+            "mode": "continuous",
+            "buffered_s": round(len(self._pending) / (SAMPLE_RATE * 2), 1),
+            "target_s": round(self._segment_bytes / (SAMPLE_RATE * 2), 1),
+        }
 
 
 def _shared_vdevice():
@@ -671,6 +733,7 @@ class Transcriber:
                                        if noise and noise.ready else None),
                     "excess_db": (round(noise.excess_db(rms), 1)
                                   if noise and noise.ready else None),
+                    "segment": _segmenter_progress(segmenter),
                 })
 
             # Feed into segmenter — get back segments (VAD or time-based)
@@ -775,6 +838,7 @@ class Transcriber:
                                         round(segmenter.noise.excess_db(rms), 1)
                                         if getattr(segmenter, "noise", None)
                                         and segmenter.noise.ready else None),
+                                    "segment": _segmenter_progress(segmenter),
                                 })
                                 self._stats["noise_floor_db"] = (
                                     round(segmenter.noise.noise_floor_db, 1)
