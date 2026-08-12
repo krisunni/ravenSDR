@@ -197,7 +197,13 @@ if ADSB_ENABLED:
         log.info("ADS-B receiver started (secondary dongle, device %d)", device_idx)
     else:
         # Single-dongle: ADS-B on-demand via Aviation tab
-        adsb_scheduler = AdsbScanScheduler(adsb_receiver, input_source)
+        # resume_fn goes through the arbiter: the scan loop moving the radio
+        # directly leaves the arbiter's 'actual' stale, so the console reports
+        # LOCKED on a frequency the hardware is not on. Late-bound because
+        # sdr_arbiter is constructed further down.
+        adsb_scheduler = AdsbScanScheduler(
+            adsb_receiver, input_source,
+            resume_fn=lambda preset: sdr_arbiter.request(preset))
         log.info("ADS-B configured (on-demand via Aviation tab)")
 
 # ── AIS Receiver ──

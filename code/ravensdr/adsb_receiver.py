@@ -41,6 +41,11 @@ def find_dump1090():
 # Config from environment
 ADSB_ENABLED = os.environ.get("ADSB_ENABLED", "true").lower() == "true"
 ADSB_DUAL_DONGLE = os.environ.get("ADSB_DUAL_DONGLE", "false").lower() == "true"
+# Modes where rtl_fm owns the dongle and produces audio, so a scan window has
+# something to pause and something to resume. Every other mode is a dedicated
+# decoder holding the device itself.
+AUDIO_MODES = frozenset({"fm", "wbfm", "am", "usb", "lsb", "nfm"})
+
 ADSB_SCAN_INTERVAL = int(os.environ.get("ADSB_SCAN_INTERVAL", "60"))
 ADSB_SCAN_DURATION = int(os.environ.get("ADSB_SCAN_DURATION", "30"))
 
@@ -254,11 +259,16 @@ class AdsbScanScheduler:
 
     def __init__(self, receiver, input_source,
                  scan_interval=ADSB_SCAN_INTERVAL,
-                 scan_duration=ADSB_SCAN_DURATION):
+                 scan_duration=ADSB_SCAN_DURATION,
+                 resume_fn=None):
         self.receiver = receiver
         self.input_source = input_source
         self.scan_interval = scan_interval
         self.scan_duration = scan_duration
+        # Optional: how to put the radio back. The app passes the arbiter's
+        # request(), so resuming goes through the one thing allowed to move the
+        # hardware. Falls back to tuning directly when not supplied.
+        self._resume_fn = resume_fn
         self._running = False
         self._thread = None
         self._scanning = False
@@ -317,10 +327,27 @@ class AdsbScanScheduler:
             if not self._running:
                 return
 
-            # Only scan when tuned to an aviation preset
+            # Only time-share against a preset that is actually producing AUDIO.
+            #
+            # This used to gate on category == "aviation", which was right when
+            # that category held AM voice presets (tower, approach, ATIS). Those
+            # were all removed as unreceivable here, so "aviation" now contains
+            # only adsb-1090 and the ACARS presets — every one of which owns the
+            # dongle outright. The scheduler could therefore never succeed: on
+            # ADS-B it is stopped anyway, and on ACARS it fought acarsdec for
+            # the device, burning ~20s of dump1090 retries every ~110s. The
+            # journal shows that cycle repeating for 20+ minutes:
+            #   "dump1090 exited immediately (code 1) — USB device likely still
+            #    releasing" x4, then "failed to start after 4 attempts".
+            # input_source.stop() is a no-op there too (acarsdec is not
+            # input_source), so was_running is False and nothing gets resumed.
+            #
+            # The precondition is "rtl_fm has the radio", not a category name.
             preset = self.input_source.current_preset
-            if not preset or preset.get("category") != "aviation":
+            if not preset or preset.get("mode") not in AUDIO_MODES:
                 continue
+            if not self.input_source.is_running:
+                continue        # nothing to pause; a dedicated decoder holds it
 
             # Pause rtl_fm, start ADS-B scan
             log.info("ADS-B scan window starting — pausing rtl_fm")
@@ -352,4 +379,15 @@ class AdsbScanScheduler:
 
             if was_running and preset:
                 log.info("ADS-B scan complete — resuming rtl_fm")
-                self.input_source.tune(preset)
+                # Re-read rather than trusting the preset captured 30s ago: if
+                # the operator retuned during the scan window, restoring the
+                # stale one silently drags the radio back off their frequency.
+                current = self.input_source.current_preset or preset
+                if self._resume_fn is not None:
+                    # Route through the arbiter when the app gave us a way to.
+                    # Calling input_source.tune() directly moves the hardware
+                    # behind the arbiter's back, so its "actual" goes stale and
+                    # the console reports LOCKED on something we are not on.
+                    self._resume_fn(current)
+                else:
+                    self.input_source.tune(current)
