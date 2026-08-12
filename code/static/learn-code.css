@@ -1,0 +1,233 @@
+/* ravenSDR — "the codebase" explainer.
+   Loaded *after* learn.css and inherits its palette, section chrome, tables,
+   asides and rail wholesale. Only the components this page invents live here:
+   the analogy cards, the repo map, the end-to-end trace, and the event table.
+
+   The reader is assumed to have built web apps and not radios, so several of
+   these components exist purely to put the familiar thing next to the strange
+   one and let the eye do the comparison. */
+
+/* ── Analogy card ─────────────────────────────────────────────────────────
+   Two panes: "you already know this" on the left, "here it is wearing a
+   radio costume" on the right. Side by side is the whole point — stacked,
+   the reader has to hold the left pane in their head. */
+.analogy {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0;
+    align-items: stretch;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 20px 0;
+}
+
+.analogy > div {
+    padding: 14px 16px;
+    min-width: 0;
+}
+
+.analogy .known {
+    background: var(--surface2);
+}
+
+.analogy .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 12px;
+    color: var(--text-dim);
+    font: 15px var(--font-mono);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+}
+
+.analogy .lbl {
+    font: 11px var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+
+.analogy .known .lbl { color: var(--green); }
+.analogy .here .lbl { color: var(--accent); }
+
+.analogy p {
+    margin: 6px 0 0;
+    font-size: 13.5px;
+    color: var(--text-dim);
+}
+
+.analogy code { font-size: 12.5px; }
+
+@media (max-width: 720px) {
+    .analogy { grid-template-columns: 1fr; }
+    .analogy .arrow {
+        border-left: none;
+        border-right: none;
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        padding: 6px 0;
+        transform: rotate(90deg);
+    }
+}
+
+/* ── Repo map ─────────────────────────────────────────────────────────────
+   A file listing that has to survive being read on a phone, so the path
+   column is allowed to wrap and the analogy column is the one that clips. */
+table.filemap td:first-child {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--accent);
+    white-space: nowrap;
+}
+table.filemap td:last-child {
+    color: var(--text-dim);
+    font-size: 12.5px;
+}
+table.filemap tr.grp td {
+    background: var(--surface2);
+    font: 11px var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+table.filemap tr.grp td:first-child { color: var(--text-dim); }
+
+/* ── End-to-end trace ─────────────────────────────────────────────────────
+   The centrepiece. One transmission, every hop, with the real file and the
+   real function. Rendered as a rail of steps with a connecting spine so it
+   reads as one continuous path rather than twelve unrelated bullet points. */
+.trace {
+    position: relative;
+    margin: 22px 0 8px;
+    padding-left: 34px;
+}
+.trace::before {
+    content: "";
+    position: absolute;
+    left: 11px;
+    top: 6px;
+    bottom: 6px;
+    width: 2px;
+    background: linear-gradient(180deg,
+        var(--accent) 0%, var(--purple) 55%, var(--green) 100%);
+    opacity: 0.4;
+}
+
+.tstep {
+    position: relative;
+    margin: 0 0 18px;
+}
+.tstep::before {
+    content: "";
+    position: absolute;
+    left: -28px;
+    top: 5px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 2px solid var(--accent);
+}
+.tstep.npu::before { border-color: var(--purple); }
+.tstep.out::before { border-color: var(--green); }
+
+.tstep h4 {
+    font-size: 14.5px;
+    font-weight: 600;
+    margin: 0;
+}
+.tstep .where {
+    font: 11.5px var(--font-mono);
+    color: var(--text-dim);
+    margin-top: 3px;
+}
+.tstep .where b { color: var(--accent); font-weight: 400; }
+.tstep p {
+    margin: 7px 0 0;
+    font-size: 13.5px;
+    color: var(--text-dim);
+}
+.tstep pre { margin: 10px 0 0; font-size: 12px; }
+
+/* ── Data-shape chip ──────────────────────────────────────────────────────
+   What is actually in flight between two stages. Sits between trace steps. */
+.shape {
+    display: inline-block;
+    font: 11px var(--font-mono);
+    color: var(--yellow);
+    background: #191a13;
+    border: 1px solid #3a3520;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-top: 8px;
+}
+
+/* ── Socket event table ───────────────────────────────────────────────────
+   Direction arrows want to be visually quiet; the name is what you scan for. */
+table.events td.dir {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+table.events td.evt {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--purple);
+    white-space: nowrap;
+}
+
+/* ── Verdict boxes for the "rough edges" section ──────────────────────────
+   Being honest about half-finished work is worth more than a clean list, but
+   it needs to be skimmable or nobody reads to the end. */
+.edge {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--yellow);
+    background: var(--surface2);
+    border-radius: 0 6px 6px 0;
+    padding: 12px 15px;
+    margin: 14px 0;
+}
+.edge h4 {
+    font-size: 14px;
+    margin: 0 0 5px;
+}
+.edge p { margin: 5px 0 0; font-size: 13px; color: var(--text-dim); }
+.edge .tag {
+    float: right;
+    font: 10px var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+.edge.done { border-left-color: var(--green); }
+.edge.bad { border-left-color: var(--red); }
+
+/* ── Numbered callout used in the "freeze" war story ──────────────────────*/
+.beat {
+    display: grid;
+    grid-template-columns: 26px 1fr;
+    gap: 12px;
+    margin: 12px 0;
+    align-items: start;
+}
+.beat b {
+    font: 12px var(--font-mono);
+    color: var(--bg);
+    background: var(--text-dim);
+    border-radius: 5px;
+    text-align: center;
+    padding: 3px 0;
+}
+.beat.hit b { background: var(--red); }
+.beat.fix b { background: var(--green); }
+.beat div { font-size: 13.5px; color: var(--text-dim); }
+.beat div strong { color: var(--text); }

@@ -1454,6 +1454,21 @@ def learn():
     return resp
 
 
+@app.route("/learn/code")
+def learn_code():
+    """Companion to /learn, aimed at engineers rather than at the curious.
+
+    /learn explains the model — what a spectrogram is, why a CNN, how it was
+    trained. This one explains the program around it: the process model, the
+    device contention, and the path one transmission takes through the source.
+    Split rather than appended because the two have different readers, and a
+    single page trying to serve both was already 18,000px long.
+    """
+    resp = make_response(render_template("learn_code.html", version=VERSION))
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
 @app.route("/api/automation", methods=["GET", "POST"])
 def api_automation():
     """Read or update which automation may seize the SDR."""

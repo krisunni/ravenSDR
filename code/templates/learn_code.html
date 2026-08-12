@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ravenSDR — The codebase</title>
+<link rel="icon" type="image/svg+xml" href="{{ asset('favicon.svg') }}">
+<link rel="stylesheet" href="{{ asset('learn.css') }}">
+<link rel="stylesheet" href="{{ asset('learn-code.css') }}">
+</head>
+<body>
+
+<header class="learn-hero">
+  <div class="hero-eyebrow">Python 3.11 &middot; Flask + eventlet &middot; 41 modules &middot; one dongle</div>
+  <h1>The codebase</h1>
+  <div class="sub">A tour of the program for someone who builds web apps. Every
+    unfamiliar idea here gets put next to one you already use &mdash; because most
+    of them are the same idea, wearing a radio costume.</div>
+
+  <div class="hero-stats">
+    <div class="hstat"><b>9</b><span>decoders, one antenna</span></div>
+    <div class="hstat"><b>35</b><span>presets, 1.6 MHz&ndash;1090 MHz</span></div>
+    <div class="hstat"><b>51</b><span>HTTP routes</span></div>
+    <div class="hstat"><b>36</b><span>Socket.IO events</span></div>
+  </div>
+
+  <nav class="hero-actions">
+    <a class="cta cta-primary" href="#shape">Start here</a>
+    <a class="cta" href="#trace">Follow one transmission</a>
+    <a class="cta" href="#edges">What's still broken</a>
+    <a class="cta" href="/learn">How the model works &rarr;</a>
+    <a class="cta" href="/">Live console &rarr;</a>
+  </nav>
+</header>
+
+<nav class="rail" id="rail" aria-label="Sections"></nav>
+
+<main>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="summary" class="summary-section">
+  <h2>In short</h2>
+  <div class="lede">If you read one screen, read this one.</div>
+
+  <p>This is a Flask app. It has routes, a template, some vanilla JS, and a
+  WebSocket. If you have shipped a web app, you already know eighty percent of
+  the file listing.</p>
+
+  <p>The other twenty percent is where all the difficulty lives, and it comes
+  from two facts that no web app has to deal with:
+  <em>the data never stops arriving</em>, and <em>there is exactly one radio</em>.
+  Almost every design decision below &mdash; the arbiter, the real OS threads, the
+  emit bridge, the queue-of-one &mdash; is downstream of one of those two.</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="sc-title">What it does</div>
+      <p>Tunes an RTL-SDR, demodulates audio, cuts it into transmissions,
+      transcribes them on an NPU, and pushes the text to a browser &mdash;
+      while nine other decoders queue up for the same antenna.</p>
+    </div>
+    <div class="summary-card">
+      <div class="sc-title">Shape of it</div>
+      <ul>
+        <li>13,700 lines of Python across 41 modules</li>
+        <li>5,300 lines of vanilla JS, no build step</li>
+        <li>33 test files, none needing a radio</li>
+        <li>One process owns the hardware</li>
+      </ul>
+    </div>
+    <div class="summary-card sc-flag">
+      <div class="sc-title">The one thing to take away</div>
+      <p>A web request is a <strong>transaction</strong>: it arrives, you serve it,
+      it is over, and if you block for 300 ms a user waits 300 ms. Here, blocking
+      for 300 ms means 300 ms of radio you will never get back, and blocking
+      forever &mdash; which is the default behaviour of reading a pipe &mdash;
+      silently freezes the entire server. <a href="#loop">Section 3</a> is that bug,
+      three times, in three different disguises.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="shape">
+  <h2><span class="num">1</span> Two facts that shape everything</h2>
+  <div class="lede">Why this isn't just a CRUD app with an antenna.</div>
+
+  <h3 style="margin-top:22px;font-size:15px">Fact one: the data never stops</h3>
+
+  <p>A web server is idle by default. It sits in an accept loop burning nothing
+  until someone shows up. Work is <em>pulled</em> in by requests, and if nobody
+  requests anything, nothing happens and that is correct.</p>
+
+  <p>A radio is the opposite. The dongle produces 2.4 million samples per second
+  whether or not anyone is listening, and it does not buffer politely &mdash; if
+  you are not there to read it, the samples are gone. Work is <em>pushed</em> at
+  you, forever, and "keeping up" is the entire job.</p>
+
+  <div class="analogy">
+    <div class="known">
+      <div class="lbl">You already know this</div>
+      <p>A WebSocket firehose you cannot unsubscribe from, or a Kafka consumer
+      where falling behind means dropped records rather than a growing lag
+      metric. Backpressure is not an option because the producer is physics.</p>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="here">
+      <div class="lbl">Here it is in this repo</div>
+      <p>Every stage is a queue with a <strong>bounded</strong> size and an
+      explicit policy for what to throw away when it fills.
+      <code>maxsize=200</code> on both audio paths,
+      <code>input_source.py:52</code>.</p>
+    </div>
+  </div>
+
+  <p>That produces a design rule you will see repeatedly: <strong>decide, at every
+  queue, who is allowed to be dropped.</strong> The two audio queues answer it
+  differently, and the asymmetry is deliberate (<code>tuner.py:403-420</code>):</p>
+
+<pre>self.pcm_queue.put(chunk, timeout=0.5)   # to the transcriber — waits up to 500ms
+self.audio_queue.put_nowait(chunk)       # to the browser — drops instantly if full</pre>
+
+  <p>A browser that stalls must never be able to slow down transcription. The
+  recording is the product; the live listen is a convenience. One line of code,
+  and it encodes a product decision.</p>
+
+  <h3 style="margin-top:26px;font-size:15px">Fact two: there is exactly one radio</h3>
+
+  <p>Nine decoders want the dongle. Only one can have it, because each of them
+  opens the USB device directly &mdash; <code>rtl_433</code>, <code>dump1090</code>,
+  <code>acarsdec</code> and friends are separate C programs that know nothing
+  about each other. Two at once produces
+  <code>usb_claim_interface error -6</code> and both lose.</p>
+
+  <div class="analogy">
+    <div class="known">
+      <div class="lbl">You already know this</div>
+      <p>A connection pool of size one. Or a feature that must run on exactly
+      one node, so you reach for a distributed lock and spend a week on
+      the edge cases around who holds it and what happens when they die.</p>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="here">
+      <div class="lbl">Here it is in this repo</div>
+      <p><code>sdr_arbiter.py</code> &mdash; and notably <strong>not</strong> a
+      lock. It is a queue of depth one with a single worker, for reasons that
+      took a while to learn. <a href="#arbiter">Section 4</a>.</p>
+    </div>
+  </div>
+
+  <div class="aside">
+    <strong>The bit that surprises web people.</strong> Switching frequency is not
+    a function call, it is a <em>process lifecycle</em>: kill <code>rtl_fm</code>,
+    wait for the kernel to release the USB claim, spawn a new one, wait for it to
+    open the device. That takes one to two seconds. HTTP requests arrive in
+    milliseconds. Everything about the arbiter follows from that ratio.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="map">
+  <h2><span class="num">2</span> Map of the repo</h2>
+  <div class="lede">Where things live, and what each file is the equivalent of.</div>
+
+  <p>Source lives under <code>code/</code>. The Python package is
+  <code>code/ravensdr/</code> &mdash; 41 modules, no sub-packages, flat on purpose:
+  the call graph is shallow and a directory tree would imply layering that isn't
+  there.</p>
+
+  <div class="table-scroll"><table class="data filemap">
+    <thead><tr><th>File</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td>Core</td><td>the parts you'd recognise</td></tr>
+      <tr><td>app.py</td><td>2,468 lines. Routes, Socket.IO, dispatch, startup, shutdown. The monolith &mdash; see <a href="#edges">rough edges</a>.</td></tr>
+      <tr><td>config.py</td><td>JSON file as a database. Atomic write via <code>os.replace</code>. Your <code>.env</code> plus a settings table.</td></tr>
+      <tr><td>presets.py</td><td>35 stations as dicts. A seed file that never grew into a table.</td></tr>
+
+      <tr class="grp"><td>Getting audio</td><td>the input half</td></tr>
+      <tr><td>input_source.py</td><td>The interface. Two implementations: real radio, or a web stream when no dongle is present.</td></tr>
+      <tr><td>tuner.py</td><td>Owns the <code>rtl_fm</code> child process. Where the frequency actually gets set.</td></tr>
+      <tr><td>stream_source.py</td><td>Same contract, backed by <code>ffmpeg</code> against an internet stream. How you develop without hardware.</td></tr>
+      <tr><td>audio_router.py</td><td>47 lines. Turns a queue into an endless HTTP response the browser can play.</td></tr>
+
+      <tr class="grp"><td>Making sense of it</td><td>the ML half</td></tr>
+      <tr><td>transcriber.py</td><td>938 lines. Voice activity detection, Whisper on the NPU, and a hallucination filter. The most subtle file here.</td></tr>
+      <tr><td>signal_classifier.py</td><td>Which modulation is this? CNN over a spectrogram image.</td></tr>
+      <tr><td>sei_model.py</td><td>RF fingerprinting &mdash; recognising a specific transmitter by its imperfections.</td></tr>
+      <tr><td>iq_segmenter.py</td><td>Decides where a transmission starts and stops, in the raw signal domain.</td></tr>
+      <tr><td>noaa_parser.py</td><td>547 lines of regex over Whisper output, pulling structure out of weather broadcasts.</td></tr>
+
+      <tr class="grp"><td>Decoders</td><td>nine ways to be a different radio</td></tr>
+      <tr><td>subprocess_decoder.py</td><td>The base class. Spawn a C program, read its stdout, expire old records.</td></tr>
+      <tr><td>ism_receiver.py</td><td><code>rtl_433</code> &mdash; doorbells, weather stations, tyre sensors, utility meters.</td></tr>
+      <tr><td>acars_receiver.py</td><td><code>acarsdec</code> &mdash; aircraft text messages, correlated against ADS-B.</td></tr>
+      <tr><td>pager_receiver.py</td><td><code>rtl_fm | multimon-ng</code> &mdash; POCSAG/FLEX pagers.</td></tr>
+      <tr><td>aprs_receiver.py</td><td>Same pipe, AFSK1200 &mdash; ham packet radio.</td></tr>
+      <tr><td>adsb_receiver.py</td><td><code>dump1090</code> over a TCP socket. Aircraft positions.</td></tr>
+      <tr><td>ais_receiver.py</td><td><code>rtl_ais</code> over TCP. Ship positions.</td></tr>
+      <tr><td>apt_decoder.py</td><td>Records a satellite pass to WAV, turns it into a picture.</td></tr>
+      <tr><td>wefax_receiver.py</td><td>HF weather fax. Decoded in pure numpy &mdash; no external decoder at all.</td></tr>
+      <tr><td>meteor_detector.py</td><td>Not a protocol. Watches a distant carrier for the echo off a meteor trail.</td></tr>
+
+      <tr class="grp"><td>Coordination</td><td>the parts that exist because of hardware</td></tr>
+      <tr><td>sdr_arbiter.py</td><td>Serialises every frequency change onto one worker. <a href="#arbiter">Section 4</a>.</td></tr>
+      <tr><td>emit_bridge.py</td><td>Lets a real OS thread send a WebSocket message without crashing the server. <a href="#loop">Section 3</a>.</td></tr>
+      <tr><td>apt_scheduler.py</td><td>Orbital mechanics. Predicts when a satellite is overhead and takes the radio.</td></tr>
+      <tr><td>wefax_scheduler.py</td><td>A hardcoded broadcast timetable, because HF fax runs on a published schedule.</td></tr>
+      <tr><td>ipc.py / ipc_server.py / radio_link.py</td><td>Unix-socket plumbing for splitting UI from radio. Half-landed.</td></tr>
+      <tr><td>lcd_panel.py</td><td>A separate process driving a physical screen off the same event stream.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="aside">
+    <strong>Nine decoders, not eleven.</strong> The sibling <a href="/learn">/learn</a>
+    page says eleven, and that number is hardcoded into the HTML under a comment
+    claiming it is read live from the node. Nothing populates it. The defensible
+    count is nine modules that seize the dongle, or eight actual protocol decoders
+    if you exclude meteor scatter &mdash; which decodes nothing, it just watches
+    a power level. Documented here rather than quietly corrected, because
+    a number nobody can derive is worth more as a warning than as a statistic.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="loop">
+  <h2><span class="num">3</span> The event loop, and three ways I froze it</h2>
+  <div class="lede">The one concept that transfers directly from Node &mdash; and the
+    one place it bites harder here.</div>
+
+  <p>The very first two lines of <code>app.py</code>, before any other import:</p>
+
+<pre>import eventlet
+eventlet.monkey_patch()</pre>
+
+  <p><strong>eventlet is Node's event loop, retrofitted onto Python.</strong>
+  <code>monkey_patch()</code> reaches into the standard library and replaces
+  <code>threading</code>, <code>socket</code>, <code>time</code> and
+  <code>subprocess</code> with cooperative green versions. After that line,
+  <code>time.sleep(1)</code> does not sleep a thread &mdash; it yields to the hub,
+  exactly like <code>await setTimeout</code>. Thousands of concurrent connections,
+  one OS thread, no locks needed.</p>
+
+  <p>And the same catch as Node: <strong>one greenthread that blocks without
+  yielding freezes everything.</strong> Every HTTP request, every WebSocket, every
+  timer. If you have ever locked up a Node server with a synchronous
+  <code>readFileSync</code> in a hot path, you know this failure exactly.</p>
+
+  <p>What makes it worse here is <em>what</em> we block on. A web app blocks on
+  files and sockets, which eventlet patched, so they yield and you never notice.
+  This app blocks on <strong>pipes from child processes</strong> — and a pipe read
+  is the one thing that is genuinely, unavoidably blocking. Three times, in three
+  disguises:</p>
+
+  <h3 style="margin-top:24px;font-size:15px">Disguise one: the reader that never returns</h3>
+
+  <div class="beat"><b>1</b><div>The meteor detector spawns <code>rtl_fm</code> and reads its output in a loop: <code>raw = self._process.stdout.read(chunk_bytes)</code>.</div></div>
+  <div class="beat"><b>2</b><div>On a quiet frequency, <code>rtl_fm</code> produces nothing. The read blocks. Under a <strong>green</strong> thread, blocking means the hub never runs again.</div></div>
+  <div class="beat hit"><b>3</b><div><strong>Symptom:</strong> the whole web console hangs. Not slow — <em>hung</em>. CPU at 1.2%, so it doesn't even look like a spin; it looks like a dead process that is somehow still alive.</div></div>
+  <div class="beat fix"><b>4</b><div><strong>Fix:</strong> make that one thread a real OS thread, so its blocking is its own problem.</div></div>
+
+<pre># meteor_detector.py:12-22
+# Use REAL stdlib modules, not eventlet's green versions. The monitor thread does
+# a blocking read on rtl_fm's stdout pipe; under a GREEN thread that blocking read
+# stalls the entire eventlet hub (all HTTP/Socket.IO freezes), so the reader must
+# be a real OS thread.
+try:
+    from eventlet.patcher import original
+    subprocess = original("subprocess")
+    threading = original("threading")
+except ImportError:
+    import subprocess
+    import threading</pre>
+
+  <p><code>eventlet.patcher.original()</code> hands back the <em>unpatched</em>
+  module. It is the escape hatch: "this part is not cooperative, give me a
+  genuine thread." Eleven modules use it, each one guarding a blocking read.</p>
+
+  <h3 style="margin-top:26px;font-size:15px">Disguise two: closing the pipe deadlocks too</h3>
+
+  <p>Having made the reader real, changing frequency still hung &mdash; but only
+  sometimes, and only after presets gained squelch. The reader thread sits inside
+  <code>stdout.read(4096)</code>, which holds the <code>BufferedReader</code>'s
+  internal lock. The tuner then calls <code>close()</code> on that same pipe.
+  <code>close()</code> wants the lock. Nobody moves.</p>
+
+  <p>The order matters, and <code>tuner.py:358-372</code> spells it out: <strong>kill
+  the process first, then close the pipes.</strong> Killing makes the read return
+  empty, which releases the lock, which lets the close succeed.</p>
+
+  <div class="aside warn">
+    <strong>Why squelch exposed it.</strong> With squelch at 0, <code>rtl_fm</code>
+    emits constant FM hiss, so <code>read()</code> always had bytes and always
+    returned promptly. The deadlock existed the whole time and was masked by
+    noise. Turning on squelch &mdash; a feature &mdash; produced silence, and
+    silence produced a hang. The bug was in the shutdown path; the trigger was
+    a config value.
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">Disguise three: real threads can't talk to the hub</h3>
+
+  <p>Now the readers are real threads. They find something interesting. They call
+  <code>socketio.emit()</code> &mdash; and the server dies with
+  <code>greenlet.error: Cannot switch to a different thread</code>.</p>
+
+  <p>Socket.IO's internals are green objects owned by the hub's thread. Touching
+  them from a foreign OS thread is not allowed. So real threads never emit
+  directly; they hand the event to a plain queue, and a greenthread drains it
+  from the correct side (<code>emit_bridge.py</code>):</p>
+
+<pre>real OS thread  ──►  queue.Queue (real, not green)  ──►  emit_bridge_loop  ──►  socketio.emit
+                     never blocks, sheds oldest         a greenthread,
+                     when full                          drains every 50ms</pre>
+
+  <p>The asymmetry is the whole trick: the <strong>producer</strong> must use a
+  real queue because real threads use it, but the <strong>consumer</strong> must
+  never block on <code>get()</code> &mdash; it uses <code>get_nowait()</code> and
+  yields between passes. Block there and you are back to disguise one.</p>
+
+  <p>The same problem hit logging, which is not obvious until it happens: after
+  monkey-patching, every log handler's lock is a <em>green</em> lock, so a real
+  thread calling <code>log.info()</code> crashes the same way. Fixed by force-feeding
+  logging real locks at startup (<code>app.py:85-96</code>), under a docstring that
+  admits what it is: <em>"This is a mitigation, not a cure."</em></p>
+
+  <div class="aside">
+    <strong>The transferable lesson.</strong> Mixing an event loop with real threads
+    means every boundary crossing needs an explicit, one-directional bridge. The
+    three bugs above are one bug: <em>a green thing and a real thing touched, and
+    nobody wrote down which side owned it.</em> If you've mixed a thread pool into
+    an asyncio app, this is the same wound.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="arbiter">
+  <h2><span class="num">4</span> One radio, many consumers</h2>
+  <div class="lede">Why the obvious answer &mdash; a mutex &mdash; is the wrong one.</div>
+
+  <p>Two browser tabs both hit <code>POST /api/tune</code>. Each handler kills the
+  running <code>rtl_fm</code> and starts a new one. They interleave. Now there are
+  two <code>rtl_fm</code> processes, one of them orphaned and holding the USB
+  claim, and every tune from here until reboot fails with
+  <code>usb_claim_interface error -6</code>.</p>
+
+  <p>The instinct is a mutex. It is wrong, and it is worth understanding why,
+  because the reasoning generalises.</p>
+
+  <p>A mutex makes the second request <strong>wait</strong> for the first. But
+  waiting is exactly what you don't want: switching takes one to two seconds, and
+  by the time request A finishes, request B's frequency is the only one anyone
+  cares about. You would spend two seconds tuning to a station nobody asked for
+  any more, then two more seconds tuning away from it. Worse, under eventlet a
+  blocked handler is a held connection.</p>
+
+  <div class="analogy">
+    <div class="known">
+      <div class="lbl">You already know this</div>
+      <p>Debouncing a search box. You do not queue up a request per keystroke and
+      serve them in order &mdash; you keep only the latest, because the
+      intermediate states were never a goal, just typing.</p>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="here">
+      <div class="lbl">Here it is in this repo</div>
+      <p>A <strong>slot of one</strong> plus a worker. New requests overwrite the
+      pending one and count a <code>superseded</code>. Hardware only ever moves
+      to the most recent intent.</p>
+    </div>
+  </div>
+
+<pre># sdr_arbiter.py:112-128
+def request(self, preset):
+    if self._pending is not None:
+        # Coalesce: the older commanded state is now irrelevant.
+        self._superseded += 1
+    self._pending = preset
+    self._state = SWITCHING</pre>
+
+  <p>So the route does not tune. It <em>commands</em> a tune and returns
+  immediately &mdash; with <strong>202 Accepted</strong>, not 200, because
+  the honest answer is "queued", not "done":</p>
+
+<pre>return jsonify({"status": "commanded", "preset": preset, "sdr": snapshot}), 202</pre>
+
+  <p>The UI then follows the hardware's real state over WebSocket rather than
+  trusting its own optimistic update. Commanded state and actual state are
+  separate fields in <code>snapshot()</code>, and the gap between them is
+  visible in the console. This is the CQRS shape, arrived at by necessity: you
+  cannot pretend a write is synchronous when it takes two seconds and can fail.</p>
+
+  <h3 style="margin-top:26px;font-size:15px">Who outranks whom</h3>
+
+  <p>A lock says only "busy". Real contention here has priorities, because a
+  satellite passing overhead is a deadline you cannot reschedule, and a
+  background job collecting training data is not:</p>
+
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Tier</th><th>Example</th><th>Rule</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">operator</td><td>a person clicks a preset</td><td>Wins immediately. Always.</td></tr>
+      <tr><td class="mono">scheduled</td><td>NOAA pass, WEFAX slot</td><td>May preempt decoders. Has a hard deadline &mdash; the satellite will not wait.</td></tr>
+      <tr><td class="mono">background</td><td>IQ corpus collection</td><td>Never takes the radio from a listener. Yields within ~1s.</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>"A person is using this" is not a state a lock can express, so it is modelled
+  as a <strong>lease</strong>: any interaction stamps a timestamp, and background
+  work refuses to start while the lease is live (<code>OPERATOR_LEASE_S = 600</code>).
+  Ten minutes of "someone is here, leave the radio alone", refreshed on every
+  click. It is a TTL cache holding a human's attention.</p>
+
+  <div class="aside warn">
+    <strong>A bug this section found.</strong> When a satellite pass preempts the
+    decoders, the code stops ISM, AIS, ACARS and Pager by iterating a tuple of
+    receivers &mdash; and <code>aprs_receiver</code> is not in that tuple
+    (<code>app.py:398-407</code>). An APRS session would hold the dongle straight
+    through a scheduled pass. The same omission appears in the WEFAX path.
+    Preemption written as a hand-maintained list will drift every time a decoder
+    is added; it wants to be a registry.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="subprocess">
+  <h2><span class="num">5</span> Nine decoders, or: shelling out on purpose</h2>
+  <div class="lede">The most boring architectural decision here, and the best one.</div>
+
+  <p>Decoding ADS-B or POCSAG from raw samples is genuinely hard signal
+  processing, and it is <em>solved</em>. There are mature C programs for each,
+  maintained by people who care deeply about that one protocol. So this app does
+  not decode anything itself. It spawns them and reads their stdout.</p>
+
+  <div class="analogy">
+    <div class="known">
+      <div class="lbl">You already know this</div>
+      <p><code>child_process.spawn()</code> and newline-delimited JSON. Shelling
+      out to <code>ffmpeg</code> instead of writing a transcoder, and parsing what
+      it prints.</p>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="here">
+      <div class="lbl">Here it is in this repo</div>
+      <p><code>subprocess_decoder.py</code>, 241 lines, four hooks. Every decoder
+      is 90&ndash;180 lines because the base class owns everything hard.</p>
+    </div>
+  </div>
+
+  <p>Subclasses implement four methods and nothing else:</p>
+
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Hook</th><th>Returns</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">build_cmd()</td><td>the argv list, e.g. <code>["rtl_433", "-F", "json"]</code></td></tr>
+      <tr><td class="mono">build_source_cmd()</td><td>optional upstream for a pipe: <code>rtl_fm | multimon-ng</code></td></tr>
+      <tr><td class="mono">parse_line(line)</td><td>one stdout line &rarr; a record dict, or <code>None</code> to skip</td></tr>
+      <tr><td class="mono">record_key(record)</td><td>a stable identity, so repeat sightings update instead of duplicating</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Everything else &mdash; process lifecycle, the real-thread reader, expiry,
+  error attribution &mdash; is inherited. Three details in the base class earn
+  their keep:</p>
+
+  <p><strong>The record table is a TTL cache with merge semantics.</strong> Records
+  key on the device, carry a <code>seen</code> timestamp, and expire after 600
+  seconds. Updates <code>update()</code> into the existing dict rather than
+  replacing it, because a later sparse frame from the same sensor would otherwise
+  erase fields the first frame carried. It is a cache with upsert, and the merge
+  is the part that took a bug to learn.</p>
+
+  <p><strong>Blame the right process.</strong> In a pipe, if the source cannot open
+  the dongle, the <em>downstream</em> program sees EOF and exits cleanly with status
+  0 &mdash; so the naive symptom is "multimon-ng is broken" when the truth is "the
+  radio was busy". The base class checks the source first and reads its stderr to
+  produce an accurate message:</p>
+
+<pre>if "usb_claim_interface" in detail or "device busy" in detail.lower():
+    reason = f"{src_cmd[0]} could not open the RTL-SDR — the device is "
+             f"in use by another decoder or a leftover process"</pre>
+
+  <p><strong>The killall guard is narrow on purpose.</strong> Before starting, the
+  decoder kills leftovers of its own binary. Both pipe-based decoders carry the
+  same comment &mdash; <code>PROC_NAME = "multimon-ng"  # never rtl_fm</code>
+  &mdash; because <code>rtl_fm</code> is also the main audio pipeline, and a
+  broad <code>killall</code> would take down the thing the user is listening to.</p>
+
+  <div class="aside">
+    <strong>Not everything fits the base class, and that's fine.</strong> ADS-B and
+    AIS don't parse stdout at all &mdash; <code>dump1090</code> and
+    <code>rtl_ais</code> expose <em>TCP servers</em>, so those two connect to a
+    socket instead. Which incidentally means their readers can safely stay
+    <em>green</em>: patched sockets yield, pipes don't. Same problem, opposite
+    correct answer, and a comment in <code>meteor_detector.py</code> currently
+    cites them as precedent for the wrong half of that.
+  </div>
+
+  <p>The domain logic that <em>is</em> written here is the part no library could
+  supply. The pager decoder has to tell real messages from noise, and the obvious
+  test fails:</p>
+
+<pre># pager_receiver.py:44-45
+# Counting digits does not work here: the observed noise is ~75% digits
+# and sails through any digit-fraction test.</pre>
+
+  <p>The working test keys on characters that <em>cannot</em> legally appear in
+  4-bit BCD &mdash; <code>[</code> and <code>]</code> are unassigned codes in
+  multimon-ng's table, so their presence marks the decode as low quality. You only
+  find that by reading the decoder's source and staring at real garbage.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="trace">
+  <h2><span class="num">6</span> One transmission, end to end</h2>
+  <div class="lede">Somebody keys a microphone eight miles away. Follow it through
+    every file until it appears as text in a browser.</div>
+
+  <div class="trace">
+
+    <div class="tstep">
+      <h4>1 &nbsp;&middot;&nbsp; A voltage in an antenna</h4>
+      <div class="where">hardware &mdash; <b>RTL-SDR Blog V4</b></div>
+      <p>The dongle mixes the band down and samples it as pairs of numbers
+      (in-phase and quadrature &mdash; "how far right" and "how far up" a spinning
+      arrow points) 2.4 million times a second. That is all IQ ever means.</p>
+      <div class="shape">2,400,000 complex samples/sec</div>
+    </div>
+
+    <div class="tstep">
+      <h4>2 &nbsp;&middot;&nbsp; A C program turns radio into audio</h4>
+      <div class="where"><b>tuner.py:328-335</b> &mdash; builds the argv, spawns the child</div>
+<pre>cmd = ["rtl_fm", "-f", freq, "-M", mode, "-s", sr,
+       "-r", "16k", "-l", str(self._squelch)] + gain + deemp + ppm + ["-"]</pre>
+      <p>FM demodulation, resampled to 16 kHz because that is what Whisper wants,
+      written to stdout as raw signed 16-bit PCM. The trailing <code>-</code> means
+      "to stdout". Changing frequency means killing this process and spawning
+      another one &mdash; there is no "set frequency" call.</p>
+      <div class="shape">16 kHz &middot; mono &middot; s16le on a pipe</div>
+    </div>
+
+    <div class="tstep">
+      <h4>3 &nbsp;&middot;&nbsp; A real OS thread drains the pipe into two queues</h4>
+      <div class="where"><b>tuner.py:403-420</b> &mdash; the thread from <a href="#loop">section 3</a></div>
+<pre>chunk = stdout.read(4096)                    # ~128 ms of audio
+self.pcm_queue.put(chunk, timeout=0.5)       # → transcription (may wait)
+self.audio_queue.put_nowait(chunk)           # → browser (drops if full)</pre>
+      <p>Two queues, not one, so listening and transcribing never steal bytes from
+      each other. This is the thread that must not be green.</p>
+    </div>
+
+    <div class="tstep out">
+      <h4>4 &nbsp;&middot;&nbsp; Branch A: straight to your speakers</h4>
+      <div class="where"><b>audio_router.py:38-47</b> &rarr; <code>GET /audio-stream</code></div>
+      <p>A generator yields a 44-byte WAV header and then never stops yielding
+      chunks. The trick is in the header: both length fields are set to
+      <code>0xFFFFFFFF</code>, which is the conventional lie for "this file is
+      infinite". The browser plays it as an ordinary <code>&lt;audio&gt;</code> element
+      and never learns it's live. On an empty queue it emits silence rather than
+      closing, because a closed stream is a reconnect and a reconnect is a gap.</p>
+    </div>
+
+    <div class="tstep">
+      <h4>5 &nbsp;&middot;&nbsp; Branch B: where does one transmission end?</h4>
+      <div class="where"><b>transcriber.py</b> &mdash; <code>VoiceActivitySegmenter</code></div>
+      <p>Whisper needs a clean utterance, not an endless stream. So: track a noise
+      floor, and call it a transmission when audio rises above it and a split when
+      it falls back for 300 ms. Minimum 1 second, hard cut at 15.</p>
+      <p>The floor is the <strong>10th percentile</strong> of the last ~20 seconds —
+      not the mean (speech drags it up) and not the median (on a busy channel the
+      median <em>is</em> speech). Getting this wrong is not subtle:</p>
+      <div class="aside bad" style="margin:10px 0 0">
+        A fixed threshold of 500 was in place first. Measured unsquelched FM hiss
+        reads RMS 1342&ndash;1523 &mdash; roughly three times the gate. Every frame
+        looked like speech. <strong>280 chunks processed, 273 filtered: 97.5% waste</strong>,
+        and the NPU spent its day transcribing static.
+      </div>
+      <div class="shape">1&ndash;15 s of audio, silence-delimited</div>
+    </div>
+
+    <div class="tstep npu">
+      <h4>6 &nbsp;&middot;&nbsp; Onto the NPU</h4>
+      <div class="where"><b>transcriber.py:443-467</b> &mdash; backend selection</div>
+      <p>Audio becomes a mel spectrogram &mdash; a picture of which frequencies are
+      loud over time &mdash; padded to exactly 10 seconds, then fed through two
+      compiled Hailo binaries: an encoder and a decoder, greedily emitting at most
+      32 tokens. The backend is chosen at startup and degrades rather than fails:</p>
+<pre>Hailo NPU        →  a few ms     (needs a compiled .hef)
+faster-whisper   →  CPU, slower  (automatic fallback)
+none             →  drains the queue so it cannot back up</pre>
+      <p>That last line matters: with no backend at all it still consumes the
+      queue. A dead ML feature must not become a memory leak.</p>
+    </div>
+
+    <div class="tstep npu">
+      <h4>7 &nbsp;&middot;&nbsp; Reject what the model made up</h4>
+      <div class="where"><b>transcriber.py:231-245</b> &mdash; <code>hallucination_reason</code></div>
+      <p>Whisper on near-silence confidently produces <code>[Music]</code>,
+      <code>(roaring)</code>, or "Thank you." Five filters catch these:
+      too short, known phrase, wholly bracketed, repetitive, short fragment.</p>
+      <p>Rejections are <em>counted and the last one kept</em>, deliberately &mdash;
+      otherwise a working NPU that is correctly filtering junk is indistinguishable
+      from a dead one, and you go debugging the wrong layer.</p>
+    </div>
+
+    <div class="tstep out">
+      <h4>8 &nbsp;&middot;&nbsp; One transcript, five consumers</h4>
+      <div class="where"><b>app.py:364-378</b> &mdash; <code>_on_transcript</code></div>
+      <p>The text now fans out: the browser feed, the keyword watchlist
+      (which can raise a priority alert), the NOAA weather parser, the structured
+      <code>INTEL</code> log line, and callsign correlation &mdash; extract anything
+      shaped like a flight number and check it against aircraft currently overhead
+      on ADS-B.</p>
+      <p>That correlator contains my favourite four lines in the repo, which are
+      not clever engineering but hard-won observation:</p>
+<pre># adsb_correlator.py — Common Whisper misheard variants
+"a last car": "ASA",     # "Alaska"
+"you knighted": "UAL",   # "United"</pre>
+    </div>
+
+    <div class="tstep out">
+      <h4>9 &nbsp;&middot;&nbsp; Out to every screen</h4>
+      <div class="where"><b>app.py:1538-1553</b> &mdash; <code>socketio.emit</code> is replaced at startup</div>
+      <p>A wrapper sends each event to browsers <em>and</em> mirrors it over a Unix
+      socket, so the physical LCD panel &mdash; a separate process, no eventlet,
+      real threads &mdash; sees the same stream without knowing anything about
+      HTTP. Monkey-patching your own emit function is a blunt instrument, but it
+      guarantees no future call site can forget the fan-out.</p>
+      <div class="shape">socket.emit("transcript", {...}) → browser + LCD</div>
+    </div>
+
+  </div>
+
+  <p style="margin-top:20px">Nine hops, four processes, two languages, one
+  physical device. The interesting thing is how little of it is radio: stages 3
+  through 9 are queues, backpressure policy, fan-out and error handling &mdash;
+  ordinary distributed-systems work that happens to have an antenna at one end.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="events">
+  <h2><span class="num">7</span> Pushing to the browser</h2>
+  <div class="lede">36 event types, and the pattern that keeps them testable.</div>
+
+  <p>REST here is for <em>commands</em> — 51 routes, mostly "do this", "give me
+  that list". Everything continuous goes over Socket.IO, because polling a radio
+  is absurd: the interesting thing happened 400 ms ago and won't repeat.</p>
+
+  <p>The pattern worth stealing is that <strong>no component imports
+  <code>socketio</code></strong>. Each one is constructed with an
+  <code>emit_fn</code> and calls that:</p>
+
+<pre>self.emit_fn("transcript", segment)          # transcriber.py
+self.emit_fn("apt_image_ready", {...})       # apt_decoder.py
+self.emit_fn("emitter_identified", result)   # sei_model.py</pre>
+
+  <p>Plain dependency injection, and it pays three times: unit tests pass a list's
+  <code>append</code> and assert on what came out; the real-thread bridge is
+  installed by injecting a <em>different</em> function; and the IPC fan-out was
+  added by swapping the target once, centrally, with no component edited.</p>
+
+  <div class="table-scroll"><table class="data events">
+    <thead><tr><th>Event</th><th>Carries</th><th>Rate</th></tr></thead>
+    <tbody>
+      <tr><td class="evt">transcript</td><td>decoded speech + frequency + RMS</td><td class="dir">per transmission</td></tr>
+      <tr><td class="evt">signal_level</td><td>RMS, noise floor, dB above floor</td><td class="dir">per chunk (~8/s)</td></tr>
+      <tr><td class="evt">spectrogram_row</td><td>one row of the waterfall</td><td class="dir">~3/s</td></tr>
+      <tr><td class="evt">signal_classified</td><td>CNN modulation guess + confidence</td><td class="dir">per segment</td></tr>
+      <tr><td class="evt">keyword_hit / priority_alert</td><td>watchlist match, severity</td><td class="dir">on match</td></tr>
+      <tr><td class="evt">callsign_match</td><td>transcript &harr; aircraft overhead</td><td class="dir">on match</td></tr>
+      <tr><td class="evt">adsb_update / ais_update</td><td>aircraft, ships</td><td class="dir">2 s</td></tr>
+      <tr><td class="evt">ism_update / acars_update / pager_update / aprs_update</td><td>decoder record tables</td><td class="dir">3 s</td></tr>
+      <tr><td class="evt">ism_device / acars_message / pager_message / aprs_packet</td><td>a single new record, as it lands</td><td class="dir">on decode</td></tr>
+      <tr><td class="evt">new_emitter / emitter_identified</td><td>RF fingerprint: unknown vs. matched</td><td class="dir">on detect</td></tr>
+      <tr><td class="evt">apt_image_ready / wefax_image_ready</td><td>a finished satellite picture</td><td class="dir">per pass</td></tr>
+      <tr><td class="evt">satellite_pass_upcoming</td><td>10-minute warning, the radio is about to be taken</td><td class="dir">per pass</td></tr>
+      <tr><td class="evt">meteor_detection / meteor_stats_update</td><td>burst events, hourly counts</td><td class="dir">on burst / 60 s</td></tr>
+      <tr><td class="evt">sdr_state</td><td>commanded vs. actual, in_transition</td><td class="dir">on change</td></tr>
+      <tr><td class="evt">status / mode / notice / error</td><td>everything else</td><td class="dir">5 s / on change</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="aside">
+    <strong>Two shapes per subsystem, on purpose.</strong> Each decoder emits both a
+    singular event on decode (<code>ism_device</code>) and a periodic full table
+    (<code>ism_update</code>). The first is for immediacy; the second is so a
+    browser that connects late, or misses a frame, converges to the truth without
+    any replay protocol. Event sourcing with a periodic snapshot, at very small scale.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="frontend">
+  <h2><span class="num">8</span> The frontend, which has no build step</h2>
+  <div class="lede">Fourteen files, 5,300 lines, zero dependencies to install.</div>
+
+  <p>No React, no bundler, no <code>node_modules</code>. Each panel is an ES5
+  constructor function hung on <code>window</code> &mdash; prototype methods, an
+  IIFE per file &mdash; instantiated when the socket connects, and the page is
+  served by the same Flask app on the same port. D3, Leaflet and the Socket.IO
+  client are <em>vendored</em> into <code>static/vendor/</code> rather than pulled
+  from a CDN.</p>
+
+  <p>Every panel has the same four-part shape, and it is worth copying: constructor
+  takes the shared socket, sets up local state, subscribes to events, then does one
+  REST fetch to backfill history. <strong>Socket.IO delivers the deltas; REST
+  delivers the snapshot you missed before you connected.</strong> Neither alone is
+  enough &mdash; a page opened five minutes in would otherwise show an empty table
+  until the next event happened to arrive.</p>
+
+  <p>Worth noting what <em>isn't</em> here: the frontend never calls
+  <code>socket.emit()</code> even once. Socket.IO is strictly one-way, server to
+  browser. Everything the user does is an ordinary <code>fetch()</code> to one of
+  the 51 REST routes. Commands go over HTTP where they get a status code and an
+  error body; only the firehose goes over the socket.</p>
+
+  <p>That is not nostalgia, it is a deployment constraint: the node is meant to
+  work air-gapped, in a field kit, with no uplink. A CDN link is a dead link the
+  moment it matters, and a build step is a laptop you might not have. Editing
+  <code>ism.js</code> over SSH and hitting refresh is the whole deploy story.</p>
+
+  <p>The one piece of build tooling that survived is cache-busting, because it
+  fixed a real outage (<code>app.py:717-735</code>):</p>
+
+<pre>@flask_app.template_global("asset")
+def _asset(filename):
+    stamp = str(int(_os.path.getmtime(path)))   # mtime, not app version
+    return f"/static/{filename}?v={stamp}"</pre>
+
+  <div class="aside warn">
+    <strong>Why mtime and not a version constant.</strong> Flask caches
+    <code>/static</code> for twelve hours. A shipped JS fix would not reach an
+    already-open console until a hard refresh &mdash; and a stale
+    <code>ravensdr.js</code> here is not cosmetic: an old build
+    <em>force-tuned the radio on every page load</em>. Any file edit now
+    invalidates the browser copy automatically, with no version bump to remember.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="ml">
+  <h2><span class="num">9</span> The ML path, as plumbing</h2>
+  <div class="lede">What <a href="/learn">/learn</a> doesn't cover: not how the model
+    works, but how it gets onto the chip and what happens when it isn't there.</div>
+
+  <p>Three models run on this node: Whisper for speech, a CNN for modulation type,
+  and an RF fingerprinter. From a systems perspective they are all the same thing
+  &mdash; <strong>a binary artifact, a fallback chain, and a threshold you will
+  want to change at 2am without a redeploy.</strong></p>
+
+  <h3 style="margin-top:22px;font-size:15px">The artifact cannot be built here</h3>
+
+  <p>The Hailo-8L is inference-only, and its compiler is x86-only and behind a
+  login. So the lifecycle straddles two machines, which is the single most
+  important fact about doing ML on this box:</p>
+
+<pre>on a laptop/VM (x86)                        on the Pi
+─────────────────────                       ─────────
+PyTorch training
+   ↓ torch.onnx.export
+model.onnx  ──────────────────────────────►  onnxruntime on CPU   (works today)
+   ↓ Hailo Dataflow Compiler
+   ↓   └─ quantize to INT8 using a
+   ↓      CALIBRATION SET  ◄──────────────── sampled from THIS node's spectrum
+model.hef   ──────────────────────────────►  Hailo NPU            (a few ms)</pre>
+
+  <p>Note the arrow pointing left, because it is the part people miss. INT8
+  quantisation picks its scaling factors by running a hundred or so
+  representative samples through the graph. Show it generic data and the scales
+  are wrong for your signals &mdash; and wrong in the worst way, invisibly: the
+  graph compiles, the model runs, the accuracy is just quietly worse. So the
+  calibration set is replayed from <em>this node's own captures</em>, through the
+  exact preprocessing the runtime uses
+  (<code>ml/signal_classifier/export_calibration.py</code>):</p>
+
+<pre>Matches signal_classifier._infer_hailo():
+    224x224 grayscale spectrogram -&gt; stacked to 3 identical channels -&gt; NHWC.</pre>
+
+  <p>That "matches" comment is doing real work. If the calibration preprocessing
+  and the runtime preprocessing drift apart by so much as a channel order, you
+  have quantised the model for data it will never see.</p>
+
+  <div class="aside">
+    <strong>The corpus this all runs on is the interesting bit.</strong> 253,000
+    IQ captures, 71 GB, written by the node itself while it was doing its normal
+    job &mdash; each labelled with the tuned preset's declared modulation rather
+    than the classifier's own guess, so the labels stay independent of the thing
+    being trained. It is also lopsided in a way worth staring at: 68,000 samples
+    of WFM and <strong>two</strong> of AM. A quarantine directory holds another
+    2,000 with names that read like a lab notebook &mdash;
+    <code>OOK-FSK-ambiguous</code>, <code>OOK-empty-345</code>,
+    <code>mislabelled-adsb</code>.
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">Fallbacks are the feature</h3>
+
+  <p>Every model has a degradation ladder, and the app is expected to keep running
+  at every rung:</p>
+
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Rung</th><th>Speech</th><th>Modulation</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">best</td><td>Whisper on Hailo, ~ms</td><td>CNN on Hailo</td></tr>
+      <tr><td class="mono">fallback</td><td>faster-whisper on CPU</td><td>same CNN via onnxruntime, 57.8 ms</td></tr>
+      <tr><td class="mono">floor</td><td>passthrough &mdash; drain the queue, transcribe nothing</td><td>heuristics: can only ever say WFM/FM/CW/AM/SSB</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>A mid-session Hailo failure drops to CPU and re-enters the loop rather than
+  taking the process down. You can also pin a backend with
+  <code>RAVENSDR_FORCE_BACKEND</code>, which fails loudly if the pinned one is
+  unavailable &mdash; a deliberate asymmetry: <em>automatic</em> selection should
+  degrade quietly, <em>explicit</em> selection should never silently do something else.</p>
+
+  <div class="aside warn">
+    <strong>The trap that fails silently.</strong> <code>torch.onnx.export</code>
+    writes tensors as <strong>NCHW</strong>; HailoRT expects <strong>NHWC</strong>.
+    Same model, same weights, different memory layout. Feed the wrong one and you
+    get no error at all &mdash; just confident nonsense. Each backend builds its
+    own tensor for this reason. If you have ever chased a channels-first/channels-last
+    bug, you know it costs a day.
+  </div>
+
+  <h3 style="margin-top:26px;font-size:15px">One chip, three models &mdash; the antenna problem again</h3>
+
+  <p><a href="#arbiter">Section 4</a> was about one radio and nine decoders. The
+  NPU has the identical shape: one physical chip, three models that all want it.
+  Constructing a Hailo <code>VDevice</code> the obvious way &mdash; each model
+  making its own &mdash; means whichever model initialises first takes the chip
+  and the others get nothing.</p>
+
+  <p>So there is one shared device handle with round-robin scheduling
+  (<code>hailo_device.py</code>), acquired by all three consumers. Same lesson as
+  the dongle, learned twice on different hardware: <strong>a scarce physical
+  resource needs exactly one owner in the program, and everyone else asks that
+  owner.</strong> The version of this bug you have already met is two ORM
+  instances each opening their own connection pool.</p>
+
+  <h3 style="margin-top:26px;font-size:15px">Thresholds live in config, not in constants</h3>
+
+  <p>Every decision boundary that used to be a module constant is now a key in
+  <code>config.json</code> with an <code>apply_settings()</code> on the owning
+  module, editable from the Settings tab: match threshold, segmenter dB, silence
+  threshold, VAD dB, classifier confidence. Changing one takes effect without a
+  restart &mdash; which matters because the correct value is discovered by
+  watching live signals, and a restart costs you the transmission you were
+  studying.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="tests">
+  <h2><span class="num">10</span> Testing hardware you don't have</h2>
+  <div class="lede">33 test files. None of them need a radio, and that is the point.</div>
+
+  <p>If the tests required an antenna they would run once, on one machine, in one
+  city, in good weather. So the seam is drawn at the process boundary: everything
+  above <code>subprocess.Popen</code> is testable, and what's below it is somebody
+  else's C program.</p>
+
+  <p>Three things make that work, and all three are decisions made <em>for</em>
+  testability that turned out to be good design anyway:</p>
+
+  <ul style="margin:10px 0 10px 22px;color:var(--text-dim)">
+    <li><strong>Parsers are pure functions.</strong> <code>parse_line()</code> takes a
+      string and returns a dict. A captured line of real <code>rtl_433</code> output
+      is a complete test fixture &mdash; no process, no device, no timing.</li>
+    <li><strong>Emit is injected.</strong> Pass a list's <code>append</code> as
+      <code>emit_fn</code> and assert on what the component tried to send.</li>
+    <li><strong>Audio is just bytes.</strong> Synthesise a sine wave in numpy and
+      feed it to the segmenter; it cannot tell the difference between that and an
+      antenna.</li>
+  </ul>
+
+  <p>What this deliberately does <em>not</em> test is whether
+  <code>rtl_433</code> is installed, whether the dongle enumerated, or whether the
+  antenna is pointed at the sky. Those are real failure modes and they are checked
+  at runtime with explicit error messages instead &mdash; which is why so much of
+  <a href="#subprocess">section 5</a> is about attributing failures to the right
+  process. <strong>The tests cover logic; the error messages cover hardware.</strong></p>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="prod">
+  <h2><span class="num">11</span> How it actually runs</h2>
+  <div class="lede">There is no deploy pipeline. There is a Pi on a shelf.</div>
+
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Concern</th><th>Web app answer</th><th>Answer here</th></tr></thead>
+    <tbody>
+      <tr><td>Process supervision</td><td>Kubernetes, PM2</td><td class="mono">systemd, Restart=always</td></tr>
+      <tr><td>Logs</td><td>a log platform</td><td class="mono">journalctl -u ravensdr -f</td></tr>
+      <tr><td>Config</td><td>env vars, a config service</td><td class="mono">config.json, atomic writes</td></tr>
+      <tr><td>Deploy</td><td>CI, containers</td><td class="mono">git pull; systemctl restart</td></tr>
+      <tr><td>Rollback</td><td>previous image</td><td class="mono">git checkout</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Two details are load-bearing rather than incidental:</p>
+
+  <p><strong><code>KillMode=control-group</code>.</strong> When the service stops,
+  systemd kills the entire cgroup, not just the Python process. Without it, an
+  orphaned <code>rtl_fm</code> or <code>ffmpeg</code> survives the restart, keeps
+  the USB claim, and the freshly started service cannot open its own radio. The
+  unit file is doing hardware cleanup that the application cannot guarantee,
+  because the application might be the thing that crashed.</p>
+
+  <p><strong>Config writes are atomic.</strong> Write to a temp file in the same
+  directory, then <code>os.replace()</code>. A half-written
+  <code>config.json</code> from an unlucky power cut would mean a node that will
+  not boot &mdash; and this machine is expected to lose power without warning.
+  There is no <code>fsync</code> before the rename, so it is durable against a
+  crashed process but not against a power loss at the wrong microsecond; an honest
+  description of the guarantee is worth more than assuming the strong one.</p>
+
+  <div class="aside bad">
+    <strong>And one thing that is simply wrong.</strong>
+    <code>ravensdr.service</code> &mdash; the unit that actually runs this node
+    &mdash; exists only in <code>/etc/systemd/system/</code>. It is not in the
+    repository. Every other unit file is version-controlled. Rebuild this Pi from
+    a clean SD card and you get all the code and none of the thing that starts it.
+    This is the highest-value five-minute fix on the page.
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="edges">
+  <h2><span class="num">12</span> Rough edges, honestly</h2>
+  <div class="lede">A tour that only shows the good parts teaches nothing. These are
+    live, in the code, today.</div>
+
+  <div class="edge bad">
+    <span class="tag">bug</span>
+    <h4>Two browser tabs cut each other's audio in half</h4>
+    <p>Every listener consumes from the same <code>audio_queue</code>. There is no
+    subscriber list, so two tabs are competing consumers and each gets roughly
+    every other chunk. Both hear choppy audio and neither is obviously at fault.
+    Needs a real fan-out: one queue per client, registered on connect.</p>
+  </div>
+
+  <div class="edge bad">
+    <span class="tag">bug</span>
+    <h4>APRS is not preempted by a satellite pass</h4>
+    <p>The preemption loop lists ISM, AIS, ACARS and Pager by hand;
+    <code>aprs_receiver</code> was added later and never joined the tuple, in
+    either the APT or the WEFAX path. Any hand-maintained list of "all the
+    decoders" will drift &mdash; this wants a registry the decoders enroll
+    themselves in.</p>
+  </div>
+
+  <div class="edge bad">
+    <span class="tag">not real yet</span>
+    <h4>RF fingerprinting is running on random numbers</h4>
+    <p>The SEI model &mdash; identify a specific transmitter by its hardware
+    imperfections &mdash; has a full pipeline: collection keyed on ADS-B aircraft
+    IDs for ground truth, a 1D CNN with attention, triplet-loss training, ONNX
+    export, a Hailo compile step. None of it has ever been run. There is no
+    <code>.hef</code>, the data and checkpoint directories are empty, and the CPU
+    fallback path is explicit about what it does instead:
+    <code>"no HEF model, using CPU fallback (random embeddings)"</code>.
+    The emitter table in the UI is populated by cosine similarity over noise.
+    Scaffolding is not a feature, and a fallback that silently produces
+    plausible-looking output is worse than one that refuses.</p>
+  </div>
+
+  <div class="edge">
+    <span class="tag">half-done</span>
+    <h4>The UI/radio split is real code that isn't deployed</h4>
+    <p>The plan was to separate the process that owns the hardware from the
+    process that serves the web console, so a UI crash can't take the radio down
+    and the radio half can drop eventlet entirely. The IPC layer, the client, the
+    second Flask app and a third peer driving the LCD all exist and work. But
+    <code>app.py</code> is still both halves at once, still monkey-patched, still
+    serving all 51 routes &mdash; and <code>ravensdr-ui.service</code> is in the
+    repo but not installed. What runs today is the monolith plus the LCD driver.</p>
+  </div>
+
+  <div class="edge">
+    <span class="tag">latent</span>
+    <h4>A function that would crash if anyone called it</h4>
+    <p><code>get_presets_by_category()</code> builds its dict from
+    <code>CATEGORIES</code> (8 entries) but presets reference
+    <code>CATEGORY_LABELS</code> (9 &mdash; it has <code>packet</code>, the list
+    doesn't). The APRS preset is category <code>packet</code>, so the function
+    raises <code>KeyError</code>. It is never called; the UI groups client-side.
+    Dead code with a live bug in it, which is the worst kind: it looks tested
+    because nothing complains.</p>
+  </div>
+
+  <div class="edge">
+    <span class="tag">inconsistency</span>
+    <h4>One bug fixed, its twin left alone</h4>
+    <p>Exiting APT mode used to blind-sleep for the length of the satellite pass
+    &mdash; so if the capture died immediately, the radio stayed locked for
+    fifteen minutes doing nothing. That was fixed by polling whether recording is
+    genuinely in progress. The identical code in the WEFAX exit path still
+    blind-sleeps. Finding a bug class and fixing one instance is how you get two
+    behaviours from one design.</p>
+  </div>
+
+  <div class="edge">
+    <span class="tag">smell</span>
+    <h4>Config is re-read from disk on every transcript</h4>
+    <p>The keyword scanner calls <code>get_settings()</code> per transcript, and
+    that calls <code>load_config()</code>, which reads and parses the JSON file.
+    It is fast enough not to notice and wrong enough to fix &mdash; the file is
+    the source of truth, but it does not need to be consulted on the hot path.</p>
+  </div>
+
+  <div class="edge done">
+    <span class="tag">fixed</span>
+    <h4>The one that started all this</h4>
+    <p>A blocking pipe read in a green thread froze the entire web console while
+    the radio kept working perfectly. Diagnosing it meant realising that 1.2% CPU
+    is the signature of a <em>deadlock</em>, not a busy loop &mdash; a spin would
+    have pinned a core. Everything in <a href="#loop">section 3</a> is the scar
+    tissue from that afternoon.</p>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<section id="next">
+  <h2><span class="num">13</span> What the NPU could do next</h2>
+  <div class="lede">Where new model work would plug into everything above.</div>
+
+  <p>The chip is a 13-TOPS INT8 <em>vision</em> engine. The most productive way to
+  think about it is: <strong>anything you can turn into a picture, it can classify
+  cheaply</strong> &mdash; and radio turns into pictures very naturally, which is
+  what a spectrogram is.</p>
+
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Idea</th><th>Why it fits this chip</th><th>Where it plugs in</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Spectrogram signal classifier</strong></td>
+          <td>Literally image classification &mdash; the canonical shape for this
+          hardware. Small enough to train and recompile in an afternoon.</td>
+          <td class="mono">iq_segmenter → signal_classifier</td></tr>
+      <tr><td><strong>APT image enhancement</strong></td>
+          <td>Denoise/super-resolution CNNs quantise well to INT8, and the
+          before/after is visible to the naked eye.</td>
+          <td class="mono">apt_decoder output</td></tr>
+      <tr><td><strong>Whisper pre-filter</strong></td>
+          <td>A tiny always-on VAD/keyword model gating an expensive one. Cuts NPU
+          load rather than adding to it.</td>
+          <td class="mono">transcriber, ahead of Whisper</td></tr>
+      <tr><td><strong>RF anomaly detector</strong></td>
+          <td>Autoencoder on "normal" spectrum; high reconstruction error means
+          something new is transmitting. Unsupervised, so no labelling.</td>
+          <td class="mono">iq_segmenter → priority_alert</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>All four need the same missing piece, which is why it is worth building once:
+  a <strong>model registry with hot-load</strong>. Today each model's path is
+  effectively fixed at startup. What the roadmap wants is the ability to drop a
+  new <code>.hef</code> onto the node, point a config key at it, and have the
+  owning module swap it without a restart &mdash; the same shape as
+  <code>apply_settings()</code> in <a href="#ml">section 9</a>, one level up.
+  Combine that with exporting a calibration set from the node's own captures and
+  you have a genuine train &rarr; quantise &rarr; deploy loop that runs on a
+  laptop and a Raspberry Pi.</p>
+
+  <div class="aside">
+    <strong>What "training on the NPU" actually means.</strong> Nothing trains on
+    this chip &mdash; it runs fixed weights and that is all it does. The loops
+    genuinely available on-device are: <em>collect and label data</em>,
+    <em>curate the fingerprint database</em>, and <em>tune thresholds against live
+    signals</em>. The weight-changing loop happens elsewhere and comes back as a
+    file. Being precise about which loop you are in saves a lot of wasted effort.
+  </div>
+</section>
+
+<footer class="learn-foot">
+  ravenSDR &mdash; <a href="/">console</a> &middot;
+  <a href="/learn">how the model works</a> &middot;
+  <span class="mono">v{{ version }}</span>
+</footer>
+
+</main>
+
+<script src="{{ asset('learn-code.js') }}"></script>
+</body>
+</html>
