@@ -324,7 +324,22 @@ class Tuner:
         gain_arg = [] if self._gain == "auto" else ["-g", str(self._gain)]
         deemp_arg = ["-E", "deemp"] if self.effective_deemp else []
         ppm_arg = ["-p", str(self._ppm)] if self._ppm != 0 else []
-        ds_arg = ["-D", str(self._direct_sampling)] if self._direct_sampling != 0 else []
+        # rtl_fm has NO -D flag. Direct sampling is an -E enable option, and
+        # passing -D makes rtl_fm exit with "invalid option -- 'D'" and a usage
+        # dump before it ever opens the device — so setting direct sampling
+        # from the UI would have taken the radio off the air entirely. Latent
+        # only because no preset sets it, but /api/... exposes the control.
+        #
+        # Rarely needed on this node in any case: the RTL-SDR Blog V4 has a
+        # built-in HF upconverter (the driver reports "RTL-SDR Blog V4
+        # Detected"), so tuning an HF or MW frequency directly just works.
+        # Kept correct for V3 dongles and for forcing a branch deliberately.
+        if self._direct_sampling == 1:
+            ds_arg = ["-E", "direct"]
+        elif self._direct_sampling == 2:
+            ds_arg = ["-E", "direct2"]
+        else:
+            ds_arg = []
         cmd = [
             "rtl_fm",
             "-f", freq,

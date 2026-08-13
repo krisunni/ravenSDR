@@ -390,7 +390,53 @@ PRESETS = [
         "note": "Seattle news/talk — strong local signal",
         "expected_modulation": "WFM",
     },
+    # Seattle's non-English broadcasting lives on AM, not FM. An FM band scan
+    # from this location returned only mainstream English stations, so these
+    # are the realistic targets for the translator.
+    #
+    # All three need a wire antenna on the SDR input: the 137 MHz satellite
+    # dipole is effectively deaf at ~1 MHz, where the wavelength is ~220 m. A
+    # sweep with the dipole attached read a flat ~180 RMS at 710/1000/1360/
+    # 1490/1540 kHz alike — pure noise floor, no station anywhere. No direct
+    # sampling flag is needed: the Blog V4 has a built-in HF upconverter and
+    # tunes these frequencies directly.
     {
+        "id": "kkmo-1360",
+        "duty": "continuous",
+        "label": "El Rey 1360 (Spanish)",
+        "freq": "1360k",
+        "mode": "am",
+        "category": "broadcast",
+        "squelch": 0,
+        "continuous": True,
+        "note": "Spanish-language AM — needs a wire antenna (MW band)",
+        "expected_modulation": "AM",
+    },
+    {
+        "id": "kxpa-1540",
+        "duty": "continuous",
+        "label": "KXPA 1540 (multilingual)",
+        "freq": "1540k",
+        "mode": "am",
+        "category": "broadcast",
+        "squelch": 0,
+        "continuous": True,
+        "note": "Spanish/Chinese/Vietnamese/Korean/Russian by daypart — "
+                "the best translator test on the dial. Needs a wire antenna.",
+        "expected_modulation": "AM",
+    },
+    {
+        "id": "kbro-1490",
+        "duty": "continuous",
+        "label": "KBRO 1490 (Spanish)",
+        "freq": "1490k",
+        "mode": "am",
+        "category": "broadcast",
+        "squelch": 0,
+        "continuous": True,
+        "note": "Spanish-language AM — needs a wire antenna (MW band)",
+        "expected_modulation": "AM",
+    },
     # A Spanish-language preset on 99.3 was added here and removed again: every
     # segment the language detector returned from that frequency came back as
     # English at 0.98+ confidence (CDC public-health advertising), so whatever
@@ -399,6 +445,7 @@ PRESETS = [
     # it would make the translator look broken. Finding a genuine non-English
     # source here means HF/shortwave, which needs an antenna this node
     # currently lacks.
+    {
         "id": "king-fm",
         "duty": "continuous",
         "label": "KING 98.1",
