@@ -401,6 +401,35 @@ PRESETS = [
     # sampling flag is needed: the Blog V4 has a built-in HF upconverter and
     # tunes these frequencies directly.
     {
+        # Antenna reference for the MW band — the strongest AM signal receivable
+        # here by a wide margin. Band scan, relative to a -15.8 dB noise floor:
+        #
+        #    880 KIXI   +16.8 dB   RMS 4400   <- this
+        #    950 KJR     +6.0 dB   RMS 1690   marginal; Whisper hallucinates
+        #   1490 KBRO    +2.9 dB              Spanish, not receivable
+        #   1360 KKMO    +1.5 dB              Spanish, not receivable
+        #   1540 KXPA    +1.5 dB              multilingual, not receivable
+        #   1090 (none)  +1.8 dB              control, no licensed station
+        #
+        # The Spanish stations sit at the level of a frequency with no
+        # transmitter on it, so they are not being heard at all. Tune this one
+        # to tell the two failure modes apart: if 880 decodes and they do not,
+        # the AM path is fine and the antenna is the limit.
+        #
+        # Content is oldies music, so expect "[Music]" to be filtered rather
+        # than text. That is the path working, not failing.
+        "id": "kixi-880",
+        "duty": "continuous",
+        "label": "KIXI 880 (MW reference)",
+        "freq": "880k",
+        "mode": "am",
+        "category": "broadcast",
+        "squelch": 0,
+        "continuous": True,
+        "note": "Strongest local AM — tune to verify the MW path and antenna",
+        "expected_modulation": "AM",
+    },
+    {
         "id": "kkmo-1360",
         "duty": "continuous",
         "label": "El Rey 1360 (Spanish)",
