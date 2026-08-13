@@ -20,6 +20,7 @@
     let settingsPanel = null;
     let ismPanel = null;
     let acarsPanel = null;
+    var surveyPanel = null;
     let pagerPanel = null;
     let aprsPanel = null;
 
@@ -91,6 +92,9 @@
         }
         if (window.AcarsPanel && !acarsPanel) {
             acarsPanel = new window.AcarsPanel(socket);
+        }
+        if (window.SurveyPanel && !surveyPanel) {
+            surveyPanel = new window.SurveyPanel(socket);
         }
         if (window.PagerPanel && !pagerPanel) {
             pagerPanel = new window.PagerPanel(socket);

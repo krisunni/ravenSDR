@@ -1,0 +1,164 @@
+/* Spectrum survey panel.
+   Palette matches the console and the classifier waterfall, so a given signal
+   level reads the same colour wherever it appears in the app. */
+
+#survey-panel .survey-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 12px 0 6px;
+}
+
+.survey-select {
+    background: var(--surface2, #1c2430);
+    color: var(--text, #e6edf3);
+    border: 1px solid var(--border, #30363d);
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 12.5px;
+    min-width: 260px;
+    max-width: 100%;
+}
+
+.survey-field {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-dim, #8b949e);
+}
+.survey-field input {
+    width: 56px;
+    background: var(--surface2, #1c2430);
+    color: var(--text, #e6edf3);
+    border: 1px solid var(--border, #30363d);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font: 12px var(--font-mono, monospace);
+}
+
+.survey-status {
+    margin-left: auto;
+    font: 11px var(--font-mono, monospace);
+    color: var(--text-dim, #8b949e);
+}
+.survey-status.running {
+    color: #3fb950;
+}
+.survey-status.running::before {
+    content: "";
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #3fb950;
+    margin-right: 6px;
+    animation: survey-pulse 1.4s ease-in-out infinite;
+}
+@keyframes survey-pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+
+.survey-note {
+    font-size: 11px;
+    color: var(--text-dim, #8b949e);
+    margin-bottom: 8px;
+    min-height: 14px;
+}
+
+/* Progress across the band. A wide sweep takes minutes, and without this the
+   only feedback is a frozen-looking page. */
+.survey-progress {
+    height: 3px;
+    background: rgba(139, 148, 158, 0.2);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+.survey-progress i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #1e5aaa, #3fb950);
+    transition: width .4s ease;
+}
+
+.survey-plot-wrap {
+    position: relative;
+    background: #0b0f16;
+    border: 1px solid var(--border, #30363d);
+    border-radius: 6px;
+    overflow: hidden;
+}
+#survey-canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    cursor: crosshair;
+}
+.survey-readout {
+    position: absolute;
+    top: 6px; right: 10px;
+    font: 11px var(--font-mono, monospace);
+    color: #e6edf3;
+    background: rgba(11, 15, 22, 0.82);
+    border: 1px solid var(--border, #30363d);
+    border-radius: 4px;
+    padding: 2px 7px;
+    pointer-events: none;
+    min-height: 15px;
+}
+
+.survey-axis {
+    display: flex;
+    justify-content: space-between;
+    font: 10px var(--font-mono, monospace);
+    color: var(--text-dim, #8b949e);
+    padding: 4px 2px 0;
+}
+.survey-axis-unit { color: #58a6ff; }
+
+.survey-peaks { margin-top: 16px; }
+.survey-peaks-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 12px;
+    color: var(--text, #e6edf3);
+    margin-bottom: 6px;
+}
+.survey-dim { color: var(--text-dim, #8b949e); font-size: 11px; }
+
+.table-wrap { width: 100%; overflow-x: auto; }
+.survey-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+.survey-table th {
+    text-align: left;
+    font: 10px var(--font-mono, monospace);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-dim, #8b949e);
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border, #30363d);
+}
+.survey-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+    vertical-align: middle;
+}
+.survey-mono { font-family: var(--font-mono, monospace); }
+
+/* Level bar in the peak table — the number is exact, the bar is scannable. */
+.survey-bar {
+    display: inline-block;
+    height: 7px;
+    border-radius: 2px;
+    vertical-align: middle;
+    min-width: 3px;
+}
+
+@media (max-width: 640px) {
+    .survey-select { min-width: 100%; }
+    #survey-panel .survey-controls { gap: 7px; }
+}

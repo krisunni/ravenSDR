@@ -27,6 +27,7 @@ from ravensdr.adsb_receiver import (
     AdsbReceiver, AdsbScanScheduler,
     ADSB_ENABLED, ADSB_DUAL_DONGLE,
 )
+from ravensdr.spectrum_scanner import SpectrumScanner, BANDS
 from ravensdr.ais_receiver import AisReceiver
 from ravensdr.ism_receiver import IsmReceiver
 from ravensdr.acars_receiver import AcarsReceiver, correlate_with_adsb
@@ -205,6 +206,11 @@ if ADSB_ENABLED:
             adsb_receiver, input_source,
             resume_fn=lambda preset: sdr_arbiter.request(preset))
         log.info("ADS-B configured (on-demand via Aviation tab)")
+
+# ── Spectrum scanner ──
+# emit_safe: the sweep reader is a real OS thread (blocking readline on
+# rtl_power's stdout), so it must not touch socketio directly.
+spectrum_scanner = SpectrumScanner(emit_fn=emit_safe, device_index=0)
 
 # ── AIS Receiver ──
 ais_receiver = AisReceiver(device_index=0)
@@ -405,6 +411,7 @@ def _dedicated_decoders():
         (pager_receiver, "Pager"),
         (aprs_receiver, "APRS"),
         (ais_receiver, "AIS"),
+        (spectrum_scanner, "Spectrum sweep"),
     )
 
 
@@ -1527,6 +1534,82 @@ def learn():
     return resp
 
 
+@app.route("/api/sweep/bands")
+def api_sweep_bands():
+    """The band table the survey UI offers."""
+    return jsonify({"bands": BANDS})
+
+
+@app.route("/api/sweep")
+def api_sweep_status():
+    """Current or most recent sweep. ?full=1 includes the spectrum itself."""
+    full = request.args.get("full") in ("1", "true", "yes")
+    return jsonify(spectrum_scanner.snapshot(include_bins=full))
+
+
+@app.route("/api/sweep/start", methods=["POST"])
+def api_sweep_start():
+    """Take the radio and survey a band.
+
+    A sweep is an operator action with a deadline of its own, so it preempts
+    the decoders the same way tuning does — but unlike a tune it is temporary,
+    and the operator expects their frequency back afterwards. The previous
+    preset is captured BEFORE input_source.stop() clears it (the IQ collector
+    had this exact bug: it read current_preset after stopping and always got
+    None) and restored by a watcher when the sweep ends.
+    """
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "expected a JSON object"}), 400
+
+    note_operator_action()
+    previous = input_source.current_preset
+
+    def _as_int(key):
+        v = data.get(key)
+        if v in (None, ""):
+            return None
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    input_source.stop()
+    _stop_dedicated("spectrum sweep", keep=spectrum_scanner,
+                    notice_type="mode_switch")
+    if adsb_receiver and adsb_receiver.is_running and not ADSB_DUAL_DONGLE:
+        adsb_receiver.stop()
+        _resume_adsb_scan()
+
+    ok, err = spectrum_scanner.start(
+        band_id=data.get("band"),
+        low=_as_int("low"), high=_as_int("high"), bin_hz=_as_int("bin"),
+        gain=_as_int("gain"), integration_s=_as_int("integration") or 4,
+    )
+    if not ok:
+        # Put the radio back rather than leaving it unclaimed on a failed start.
+        if previous:
+            sdr_arbiter.request(previous)
+        return jsonify({"error": err or "could not start sweep"}), 500
+
+    def _restore_after_sweep():
+        while spectrum_scanner.is_running:
+            eventlet.sleep(1)
+        if previous and not input_source.is_running:
+            log.info("Sweep finished — restoring %s", previous.get("label"))
+            sdr_arbiter.request(previous)
+        _broadcast_status()
+
+    socketio.start_background_task(_restore_after_sweep)
+    return jsonify(spectrum_scanner.snapshot()), 202
+
+
+@app.route("/api/sweep/stop", methods=["POST"])
+def api_sweep_stop():
+    spectrum_scanner.stop()
+    return jsonify({"status": "stopped"})
+
+
 @app.route("/api/languages")
 def api_languages():
     """Source languages offered for translation, plus the current setting.
@@ -2438,6 +2521,7 @@ def _do_shutdown(signum=None):
         adsb_receiver.stop()
     if adsb_scheduler:
         adsb_scheduler.stop()
+    spectrum_scanner.stop()
     ais_receiver.stop()
     ism_receiver.stop()
     acars_receiver.stop()

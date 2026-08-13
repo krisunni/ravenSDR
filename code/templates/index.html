@@ -6,6 +6,7 @@
     <title>ravenSDR Console</title>
     <link rel="icon" type="image/svg+xml" href="{{ asset('favicon.svg') }}">
     <link rel="stylesheet" href="{{ asset('ravensdr.css') }}">
+    <link rel="stylesheet" href="{{ asset('survey.css') }}">
     <link rel="stylesheet" href="{{ asset('map.css') }}">
     <link rel="stylesheet" href="{{ asset('satellite.css') }}">
     <link rel="stylesheet" href="{{ asset('wefax.css') }}">
@@ -150,6 +151,7 @@
             <button class="view-tab" data-view="decoders"><span class="view-icon">⌗</span>Decoders<span class="view-badge" id="badge-decoders"></span></button>
             <button class="view-tab" data-view="imagery"><span class="view-icon">▦</span>Imagery<span class="view-badge" id="badge-imagery"></span></button>
             <button class="view-tab" data-view="science"><span class="view-icon">☄</span>Science<span class="view-badge" id="badge-science"></span></button>
+            <button class="view-tab" data-view="survey"><span class="view-icon">◠</span>Survey<span class="view-badge" id="badge-survey"></span></button>
             <button class="view-tab" data-view="model"><span class="view-icon">⚙</span>Model<span class="view-badge" id="badge-model"></span></button>
         </nav>
 
@@ -637,6 +639,54 @@
         </div>
         </div>
 
+        <!-- Spectrum survey. Every time this node has had to answer "is there
+             anything on that frequency?", the answer came from running
+             rtl_power by hand and reading a CSV. This is that, in the app. -->
+        <div class="view" id="view-survey">
+            <div id="survey-panel">
+                <div class="panel-header">
+                    <label>Spectrum Survey</label>
+                    <span id="survey-status" class="survey-status">idle</span>
+                </div>
+
+                <div class="survey-controls">
+                    <select id="survey-band" class="survey-select"></select>
+                    <label class="survey-field">gain
+                        <input type="number" id="survey-gain" value="40" min="0" max="49" step="1">
+                    </label>
+                    <label class="survey-field">dwell
+                        <input type="number" id="survey-integration" value="4" min="1" max="60" step="1">
+                    </label>
+                    <button id="survey-start" class="btn btn-sm">Sweep</button>
+                    <button id="survey-stop" class="btn btn-sm" disabled>Stop</button>
+                </div>
+                <div id="survey-band-note" class="survey-note"></div>
+
+                <div class="survey-progress"><i id="survey-progress-bar"></i></div>
+
+                <div class="survey-plot-wrap">
+                    <canvas id="survey-canvas" width="1000" height="260"></canvas>
+                    <div id="survey-readout" class="survey-readout"></div>
+                </div>
+                <div class="survey-axis" id="survey-axis"></div>
+
+                <div class="survey-peaks">
+                    <div class="survey-peaks-head">
+                        <span>Signals found</span>
+                        <span id="survey-peak-count" class="survey-dim"></span>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="survey-table">
+                            <thead>
+                                <tr><th>Frequency</th><th>Level</th><th>Over floor</th><th>Known as</th><th></th></tr>
+                            </thead>
+                            <tbody id="survey-peak-rows"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="view" id="view-model">
         <!-- Model view: what the classifier is, how it was built, how the
              corpus is growing. Everything the operator needs to judge whether a
@@ -714,6 +764,7 @@
     <script src="{{ asset('acars.js') }}"></script>
     <script src="{{ asset('pager.js') }}"></script>
     <script src="{{ asset('settings.js') }}"></script>
+    <script src="{{ asset('survey.js') }}"></script>
     <script src="{{ asset('ravensdr.js') }}"></script>
 </body>
 </html>
