@@ -69,7 +69,17 @@ class Tuner:
 
     # Bandwidth per demodulation mode (rtl_fm fallback path)
     MODE_SAMPLE_RATES = {
-        "am": "200k",
+        # AM is NOT 200k. A US medium-wave channel is 10 kHz wide, so
+        # demodulating 200 kHz of spectrum pulls in twenty channels' worth of
+        # noise and buries the station in it. 24k gives +/-12 kHz, which covers
+        # the channel and nothing else.
+        #
+        # It must also stay ABOVE the -r 16k output rate. rtl_fm's resampler
+        # only decimates: asked to go from 12k up to 16k it emits digital
+        # silence — measured, exactly 0.0 RMS on a station that reads 12,835 at
+        # "-s 12k" with no -r. So 12k looks correct on paper and produces a
+        # dead radio in this pipeline. Anything <= 16k here is a silent failure.
+        "am": "24k",
         "fm": "200k",
         "wbfm": "200k",
     }
