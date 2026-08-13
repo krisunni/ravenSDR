@@ -162,3 +162,56 @@
     .survey-select { min-width: 100%; }
     #survey-panel .survey-controls { gap: 7px; }
 }
+
+/* ── Change since the last sweep ──────────────────────────────────────────
+   The reason to store surveys at all. NEW is the line worth reading, so it
+   gets the loudest colour; GONE is quieter because a station going off air is
+   usually propagation, not news. */
+.survey-diff {
+    margin-top: 14px;
+    background: var(--surface2, #1c2430);
+    border: 1px solid var(--border, #30363d);
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+.survey-diff.hidden { display: none; }
+
+.survey-diff-head {
+    font: 10px var(--font-mono, monospace);
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--text-dim, #8b949e);
+    margin-bottom: 8px;
+}
+.survey-diff-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 3px 0;
+    font-size: 12.5px;
+}
+
+.survey-tag {
+    display: inline-block;
+    min-width: 66px;
+    text-align: center;
+    font: 10px var(--font-mono, monospace);
+    letter-spacing: .06em;
+    border-radius: 3px;
+    padding: 2px 6px;
+    border: 1px solid transparent;
+}
+.survey-tag.new      { color: #3fb950; border-color: #1e4b2c; background: rgba(63,185,80,.10); }
+.survey-tag.gone     { color: #8b949e; border-color: #30363d; }
+.survey-tag.stronger { color: #d29922; border-color: #4a3a12; }
+.survey-tag.weaker   { color: #58a6ff; border-color: #1e3a5c; }
+
+/* Modulation from the NPU. Purple to match the SEI/model accents elsewhere. */
+.survey-mod {
+    display: inline-block;
+    font: 11px var(--font-mono, monospace);
+    color: #bc8cff;
+    border: 1px solid #3d2f52;
+    border-radius: 3px;
+    padding: 1px 6px;
+}

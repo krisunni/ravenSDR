@@ -59,6 +59,8 @@
         var band = document.getElementById("survey-band");
         if (start) start.addEventListener("click", function () { self._start(); });
         if (stop) stop.addEventListener("click", function () { self._stop(); });
+        var ident = document.getElementById("survey-identify");
+        if (ident) ident.addEventListener("click", function () { self._identify(); });
         if (band) band.addEventListener("change", function () { self._showBandNote(); });
 
         // Hover readout: with a thousand bins on screen the only way to ask
@@ -81,6 +83,16 @@
         this.socket.on("sweep_complete", function (d) {
             self._onSnapshot(d);
             if (d && d.spectrum) { self.spectrum = d.spectrum; self._draw(); }
+            if (d && d.diff) self._renderDiff(d.diff);
+        });
+        this.socket.on("sweep_identify_progress", function (d) {
+            self._setStatus("identifying " + (d.index + 1) + "/" + d.total
+                + "  ·  " + (d.freq_hz / 1e6).toFixed(3) + " MHz", true);
+        });
+        this.socket.on("sweep_identified", function (d) {
+            self.identified = (d && d.peaks) || [];
+            self._setStatus("identified " + self.identified.length + " signals", false);
+            self._renderPeaks(self.identified);
         });
         // A backend restart loses an in-flight sweep; re-read rather than
         // leaving a stale "running" state on screen forever.
@@ -155,6 +167,55 @@
             .catch(function () { self._setStatus("request failed", false); });
     };
 
+    SurveyPanel.prototype._identify = function () {
+        var self = this;
+        this._setStatus("identifying…", true);
+        fetch("/api/sweep/identify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ limit: 12 })
+        })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+            .then(function (res) {
+                if (!res.ok) self._setStatus(res.d.error || "could not identify", false);
+            })
+            .catch(function () { self._setStatus("request failed", false); });
+    };
+
+    // NEW is the line worth reading, so it comes first and stays coloured.
+    SurveyPanel.prototype._renderDiff = function (diff) {
+        var el = document.getElementById("survey-diff");
+        if (!el || !diff) return;
+        var groups = [
+            ["new", "NEW", diff.new || []],
+            ["gone", "GONE", diff.gone || []],
+            ["stronger", "STRONGER", diff.stronger || []],
+            ["weaker", "WEAKER", diff.weaker || []]
+        ];
+        var any = groups.some(function (g) { return g[2].length; });
+        if (!any) {
+            el.className = "survey-diff";
+            el.innerHTML = '<div class="survey-diff-head">No change since the '
+                + 'last sweep of this band (' + (diff.unchanged || 0) + ' signals steady)</div>';
+            return;
+        }
+        var html = '<div class="survey-diff-head">Since the last sweep of this band</div>';
+        groups.forEach(function (g) {
+            g[2].forEach(function (p) {
+                var f = p.freq_hz < 3e6 ? (p.freq_hz / 1e3).toFixed(1) + " kHz"
+                    : (p.freq_hz / 1e6).toFixed(4) + " MHz";
+                var delta = (p.delta_db !== undefined)
+                    ? "  (" + (p.delta_db > 0 ? "+" : "") + p.delta_db + " dB)" : "";
+                html += '<div class="survey-diff-row"><span class="survey-tag '
+                    + g[0] + '">' + g[1] + '</span><span class="survey-mono">'
+                    + f + '</span><span class="survey-dim">+'
+                    + p.over_floor_db + ' over floor' + delta + '</span></div>';
+            });
+        });
+        el.className = "survey-diff";
+        el.innerHTML = html;
+    };
+
     SurveyPanel.prototype._stop = function () {
         var self = this;
         fetch("/api/sweep/stop", { method: "POST" })
@@ -202,7 +263,9 @@
         } else {
             this._setStatus("idle", false);
         }
-        if (d.peaks) this._renderPeaks(d.peaks);
+        if (d.peaks) this._renderPeaks(d.identified && d.identified.length ? d.identified : d.peaks);
+        var ident = document.getElementById("survey-identify");
+        if (ident) ident.disabled = !!(d.running || d.identifying) || !(d.peaks && d.peaks.length);
     };
 
     // ── the plot ─────────────────────────────────────────────────────────
@@ -302,7 +365,7 @@
         if (!peaks.length) {
             var tr0 = document.createElement("tr");
             var td0 = document.createElement("td");
-            td0.colSpan = 5;
+            td0.colSpan = 6;
             td0.className = "survey-dim";
             td0.textContent = "Nothing stood clear of the noise floor in this band.";
             tr0.appendChild(td0); tbody.appendChild(tr0);
@@ -335,6 +398,19 @@
             lbl.textContent = " +" + p.over_floor_db;
             tdO.appendChild(lbl);
             tr.appendChild(tdO);
+
+            var tdM = document.createElement("td");
+            if (p.modulation) {
+                var mod = document.createElement("span");
+                mod.className = "survey-mod";
+                mod.textContent = p.modulation;
+                mod.title = "NPU confidence " + (p.confidence || "?");
+                tdM.appendChild(mod);
+            } else {
+                tdM.className = "survey-dim";
+                tdM.textContent = "—";
+            }
+            tr.appendChild(tdM);
 
             var match = self._matchPreset(hz);
             var tdN = document.createElement("td");

@@ -658,6 +658,8 @@
                         <input type="number" id="survey-integration" value="4" min="1" max="60" step="1">
                     </label>
                     <button id="survey-start" class="btn btn-sm">Sweep</button>
+                    <button id="survey-identify" class="btn btn-sm" disabled
+                            title="Capture IQ at each peak and classify the modulation on the NPU">Identify</button>
                     <button id="survey-stop" class="btn btn-sm" disabled>Stop</button>
                 </div>
                 <div id="survey-band-note" class="survey-note"></div>
@@ -670,6 +672,11 @@
                 </div>
                 <div class="survey-axis" id="survey-axis"></div>
 
+                <!-- What changed since the last sweep of this band. One sweep
+                     says what is on the air; two say what STARTED being on the
+                     air, which is the question this node exists to answer. -->
+                <div id="survey-diff" class="survey-diff hidden"></div>
+
                 <div class="survey-peaks">
                     <div class="survey-peaks-head">
                         <span>Signals found</span>
@@ -678,7 +685,7 @@
                     <div class="table-wrap">
                         <table class="survey-table">
                             <thead>
-                                <tr><th>Frequency</th><th>Level</th><th>Over floor</th><th>Known as</th><th></th></tr>
+                                <tr><th>Frequency</th><th>Level</th><th>Over floor</th><th>Modulation</th><th>Known as</th><th></th></tr>
                             </thead>
                             <tbody id="survey-peak-rows"></tbody>
                         </table>

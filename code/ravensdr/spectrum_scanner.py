@@ -9,7 +9,10 @@
 # It seizes the dongle for the length of a sweep, so it behaves like the other
 # dedicated modes: stop the audio pipeline first, run, hand the radio back.
 
+import glob
+import json
 import logging
+import os
 import time
 
 import numpy as np
@@ -57,6 +60,19 @@ BANDS = [
 
 BANDS_BY_ID = {b["id"]: b for b in BANDS}
 
+SURVEY_DIR = os.path.join(os.path.dirname(__file__), "data", "surveys")
+SURVEYS_KEPT_PER_BAND = 20     # enough to see a pattern, small enough for an SD card
+DIFF_MATCH_HZ_VHF = 100_000    # a peak this close to a previous one is the same signal
+DIFF_MATCH_HZ_MW = 6_000       # 100 kHz on MW would merge ten stations
+DIFF_LEVEL_CHANGE_DB = 4.0     # below this, a level change is drift not news
+# A peak sitting just above the detection threshold crosses it at random from
+# sweep to sweep. Reporting those as NEW/GONE fills the diff with churn and
+# buries the one line that matters, so appearing and disappearing has to happen
+# at a level that means something. Measured: two back-to-back FM sweeps with
+# nothing changed on the air produced 5 "new" and 1 "gone", all between +4 and
+# +6 dB, against 33 genuinely steady signals.
+DIFF_REPORT_MIN_OVER_FLOOR_DB = 8.0
+
 DEFAULT_INTEGRATION_S = 4
 PEAK_MIN_OVER_FLOOR_DB = 3.0   # below this a "peak" is indistinguishable from noise
 MAX_PEAKS = 40
@@ -80,6 +96,9 @@ class SpectrumScanner:
         self._progress = 0.0
         self._last_error = None
         self._last_emit = 0.0
+        self._identifying = False
+        self._identified = []
+        self._ident_thread = None
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -213,7 +232,19 @@ class SpectrumScanner:
         self._running = False
         self._finished_at = time.time()
         self._progress = 1.0
-        self.emit_fn("sweep_complete", self.snapshot(include_bins=True))
+
+        diff = None
+        try:
+            if not self._last_error and self._bins:
+                previous = self._latest_saved(self._band.get("id"))
+                diff = diff_surveys(previous, self._survey_record())
+                self._save_survey()
+        except Exception:
+            log.exception("Could not save or diff the survey")
+
+        snap = self.snapshot(include_bins=True)
+        snap["diff"] = diff
+        self.emit_fn("sweep_complete", snap)
         log.info("Spectrum sweep complete: %d bins, %d peaks",
                  len(self._bins), len(self.peaks()))
 
@@ -315,6 +346,10 @@ class SpectrumScanner:
         }
         if include_bins or (not self._running and n_bins):
             out["peaks"] = self.peaks()
+        out["identifying"] = self._identifying
+        with self._lock:
+            if self._identified:
+                out["identified"] = list(self._identified)
         if include_bins:
             with self._lock:
                 items = sorted(self._bins.items())
@@ -325,3 +360,215 @@ class SpectrumScanner:
                 "dbs": [round(v, 1) for _, v in items],
             }
         return out
+
+
+    # ── survey history ───────────────────────────────────────────────────
+
+    def _survey_record(self):
+        """The durable part of a sweep: what was found, not every bin.
+
+        The full spectrum is tens of thousands of numbers and is only
+        interesting while you are looking at it. The peaks are what you want to
+        compare against next week, so only those are kept.
+        """
+        band = dict(self._band or {})
+        return {
+            "band_id": band.get("id", "custom"),
+            "band_label": band.get("label", ""),
+            "low": band.get("low"),
+            "high": band.get("high"),
+            "bin": band.get("bin"),
+            "at": self._finished_at or time.time(),
+            "noise_floor_db": self.noise_floor(),
+            "peaks": self.peaks(),
+        }
+
+    def _save_survey(self):
+        rec = self._survey_record()
+        os.makedirs(SURVEY_DIR, exist_ok=True)
+        name = f"{rec['band_id']}_{int(rec['at'])}.json"
+        tmp = os.path.join(SURVEY_DIR, name + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, os.path.join(SURVEY_DIR, name))
+        self._prune(rec["band_id"])
+        return rec
+
+    def _prune(self, band_id):
+        files = sorted(glob.glob(os.path.join(SURVEY_DIR, f"{band_id}_*.json")))
+        for old_file in files[:-SURVEYS_KEPT_PER_BAND]:
+            try:
+                os.unlink(old_file)
+            except OSError:
+                pass
+
+    def _latest_saved(self, band_id):
+        """The most recent stored survey for this band, or None."""
+        if not band_id:
+            return None
+        files = sorted(glob.glob(os.path.join(SURVEY_DIR, f"{band_id}_*.json")))
+        if not files:
+            return None
+        try:
+            with open(files[-1]) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def history(self, band_id, limit=SURVEYS_KEPT_PER_BAND):
+        files = sorted(glob.glob(os.path.join(SURVEY_DIR, f"{band_id}_*.json")))
+        out = []
+        for path in files[-limit:]:
+            try:
+                with open(path) as f:
+                    rec = json.load(f)
+                out.append({"at": rec.get("at"),
+                            "peaks": len(rec.get("peaks") or []),
+                            "noise_floor_db": rec.get("noise_floor_db")})
+            except (OSError, ValueError):
+                continue
+        return list(reversed(out))
+
+
+    # ── identify what the peaks actually are ─────────────────────────────
+
+    def identify_peaks(self, classifier, limit=12, sample_rate=2_400_000,
+                       n_samples=32768, gain=None):
+        """Capture IQ at each peak and ask the NPU what modulation it is.
+
+        A sweep answers "there is energy at 462.5625 MHz". This answers "and it
+        is FM", which is the difference between a number and a lead. It is a
+        separate phase rather than part of the sweep because it costs a fresh
+        rtl_sdr spawn and retune per peak — about a second each — and most of
+        the time you only want the map.
+
+        Runs on the calling thread; the caller is expected to be a real one and
+        to already hold the radio.
+        """
+        peaks = self.peaks(limit=limit)
+        if not peaks:
+            return []
+        results = []
+        for i, pk in enumerate(peaks):
+            if not self._identifying:
+                break
+            self.emit_fn("sweep_identify_progress", {
+                "index": i, "total": len(peaks), "freq_hz": pk["freq_hz"],
+            })
+            mod = self._classify_at(classifier, pk["freq_hz"], sample_rate,
+                                    n_samples, gain)
+            entry = dict(pk)
+            entry["modulation"] = mod.get("modulation") if mod else None
+            entry["confidence"] = mod.get("confidence") if mod else None
+            results.append(entry)
+            with self._lock:
+                self._identified = list(results)
+        return results
+
+    def _classify_at(self, classifier, freq_hz, sample_rate, n_samples, gain):
+        """One short IQ grab at one frequency, through the modulation model."""
+        cmd = ["rtl_sdr", "-f", str(int(freq_hz)), "-s", str(int(sample_rate)),
+               "-d", str(self.device_index), "-n", str(int(n_samples)), "-"]
+        if gain is not None:
+            cmd[1:1] = ["-g", str(gain)]
+        try:
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, timeout=15)
+        except Exception as e:
+            log.debug("IQ grab failed at %s: %s", freq_hz, e)
+            return None
+        raw = proc.stdout or b""
+        if len(raw) < 4096:
+            return None
+        # rtl_sdr writes interleaved unsigned 8-bit I,Q centred on 127.5.
+        buf = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
+        buf = (buf - 127.5) / 127.5
+        iq = (buf[0::2] + 1j * buf[1::2]).astype(np.complex64)
+        try:
+            return classifier.classify_iq(iq, frequency_hz=int(freq_hz))
+        except Exception as e:
+            log.debug("classify failed at %s: %s", freq_hz, e)
+            return None
+
+    def start_identify(self, classifier, limit=12, gain=None):
+        """Run identify_peaks on a real thread, so the hub keeps serving."""
+        if self._running or self._identifying:
+            return False, "busy"
+        if not self._bins:
+            return False, "no sweep to identify"
+        self._identifying = True
+
+        def _work():
+            try:
+                res = self.identify_peaks(classifier, limit=limit, gain=gain)
+                self.emit_fn("sweep_identified", {"peaks": res})
+            except Exception:
+                log.exception("Peak identification failed")
+            finally:
+                self._identifying = False
+
+        self._ident_thread = threading.Thread(target=_work, daemon=True)
+        self._ident_thread.start()
+        return True, None
+
+    def stop_identify(self):
+        self._identifying = False
+
+
+def diff_surveys(previous, current):
+    """What changed between two sweeps of the same band.
+
+    This is the point of storing surveys at all. A single sweep says what is on
+    the air; two sweeps say what STARTED being on the air, which is the question
+    a passive collection node exists to answer.
+
+    Matching is by frequency proximity rather than equality, because rtl_power
+    bin centres shift slightly between runs and a transmitter does not.
+    """
+    if not previous or not current:
+        return None
+
+    tol = DIFF_MATCH_HZ_MW if (current.get("low") or 0) < 3_000_000 else DIFF_MATCH_HZ_VHF
+    prev_peaks = list(previous.get("peaks") or [])
+    cur_peaks = list(current.get("peaks") or [])
+
+    used = set()
+    new, stronger, weaker, steady = [], [], [], 0
+
+    for c in cur_peaks:
+        best, best_i, best_d = None, None, tol + 1
+        for i, p in enumerate(prev_peaks):
+            if i in used:
+                continue
+            d = abs(p["freq_hz"] - c["freq_hz"])
+            if d <= tol and d < best_d:
+                best, best_i, best_d = p, i, d
+        if best is None:
+            if c["over_floor_db"] >= DIFF_REPORT_MIN_OVER_FLOOR_DB:
+                new.append(c)
+            continue
+        used.add(best_i)
+        delta = c["over_floor_db"] - best["over_floor_db"]
+        entry = dict(c)
+        entry["delta_db"] = round(delta, 1)
+        entry["was_db"] = best["over_floor_db"]
+        if delta >= DIFF_LEVEL_CHANGE_DB:
+            stronger.append(entry)
+        elif delta <= -DIFF_LEVEL_CHANGE_DB:
+            weaker.append(entry)
+        else:
+            steady += 1
+
+    gone = [p for i, p in enumerate(prev_peaks)
+            if i not in used
+            and p.get("over_floor_db", 0) >= DIFF_REPORT_MIN_OVER_FLOOR_DB]
+
+    return {
+        "previous_at": previous.get("at"),
+        "current_at": current.get("at"),
+        "new": new,
+        "gone": gone,
+        "stronger": stronger,
+        "weaker": weaker,
+        "unchanged": steady,
+    }

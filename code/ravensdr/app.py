@@ -1604,9 +1604,42 @@ def api_sweep_start():
     return jsonify(spectrum_scanner.snapshot()), 202
 
 
+@app.route("/api/sweep/history")
+def api_sweep_history():
+    band = request.args.get("band") or ""
+    return jsonify({"band": band, "surveys": spectrum_scanner.history(band)})
+
+
+@app.route("/api/sweep/identify", methods=["POST"])
+def api_sweep_identify():
+    """Ask the NPU what each peak from the last sweep actually is.
+
+    Kept separate from the sweep because it costs a retune and an IQ grab per
+    peak — about a second each — and most of the time the map is all you want.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    note_operator_action()
+    try:
+        limit = int(data.get("limit", 12))
+    except (TypeError, ValueError):
+        limit = 12
+
+    # It needs the radio back, same as a sweep does.
+    input_source.stop()
+    _stop_dedicated("identifying survey peaks", keep=spectrum_scanner,
+                    notice_type="mode_switch")
+    ok, err = spectrum_scanner.start_identify(
+        signal_classifier, limit=max(1, min(limit, 40)),
+        gain=data.get("gain"))
+    if not ok:
+        return jsonify({"error": err or "could not start"}), 409
+    return jsonify(spectrum_scanner.snapshot()), 202
+
+
 @app.route("/api/sweep/stop", methods=["POST"])
 def api_sweep_stop():
     spectrum_scanner.stop()
+    spectrum_scanner.stop_identify()
     return jsonify({"status": "stopped"})
 
 
