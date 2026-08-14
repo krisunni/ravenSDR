@@ -55,7 +55,10 @@ DEFAULT_CONFIG = {
         # because the model cannot go the other way; English -> X would need a
         # separate NMT model entirely.
         "translate_enabled": False,
-        "source_language": "auto",          # transcriber.VAD_THRESHOLD_DB — dB over noise floor
+        "source_language": "auto",
+        # {label: [tpms sensor id, ...]} — only these are tracked. See
+        # vehicle_tracker for why it is not every id that passes.
+        "vehicles": {},          # transcriber.VAD_THRESHOLD_DB — dB over noise floor
         "classifier_confidence": 0.7,     # signal_classifier.CONFIDENCE_THRESHOLD
     },
 }

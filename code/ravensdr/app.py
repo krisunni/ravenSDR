@@ -28,6 +28,7 @@ from ravensdr.adsb_receiver import (
     ADSB_ENABLED, ADSB_DUAL_DONGLE,
 )
 from ravensdr.spectrum_scanner import SpectrumScanner, BANDS
+from ravensdr.vehicle_tracker import VehicleTracker, suggest_vehicles
 from ravensdr.ais_receiver import AisReceiver
 from ravensdr.ism_receiver import IsmReceiver
 from ravensdr.acars_receiver import AcarsReceiver, correlate_with_adsb
@@ -225,6 +226,10 @@ observations = ObservationLog().load()
 # ── ISM sensor receiver (rtl_433) ──
 ism_receiver = IsmReceiver(device_index=0)
 
+# Fed from rtl_433's real reader thread, so emit through the bridge.
+vehicle_tracker = VehicleTracker(emit_fn=emit_safe)
+vehicle_tracker.set_vehicles(get_settings().get("vehicles") or {})
+
 
 def _ism_on_record(record, is_new):
     """Emit each rtl_433 device update to the ISM panel.
@@ -232,8 +237,14 @@ def _ism_on_record(record, is_new):
     Called from rtl_433's REAL reader thread — emit via the bridge.
     """
     observations.observe("ism", record.get("id"),
-                         meta={"model": record.get("model")},
+                         meta={"model": record.get("model"),
+                               "type": record.get("type")},
                          rssi=record.get("rssi"))
+    # Registered vehicles only — see vehicle_tracker for why it is scoped.
+    try:
+        vehicle_tracker.observe(record)
+    except Exception:
+        log.debug("vehicle tracker failed on %s", record.get("id"), exc_info=True)
     emit_safe("ism_device", record)
 
 
@@ -1537,6 +1548,53 @@ def learn():
     return resp
 
 
+@app.route("/api/vehicles", methods=["GET", "POST"])
+def api_vehicles():
+    """Read or set the registered vehicles: {label: [tpms sensor id, ...]}.
+
+    Only registered ids are tracked. A TPMS id is a persistent unique
+    identifier, so logging every one that passes would build a movement record
+    of identifiable people who never agreed to it — a different thing from
+    watching your own car come and go.
+    """
+    if request.method == "GET":
+        return jsonify(vehicle_tracker.status())
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "expected a JSON object"}), 400
+    mapping = data.get("vehicles")
+    if not isinstance(mapping, dict):
+        return jsonify({"error": "expected {vehicles: {label: [ids]}}"}), 400
+    update_settings({"vehicles": mapping})
+    vehicle_tracker.set_vehicles(mapping)
+    log.info("Vehicles registered: %s", vehicle_tracker.vehicles())
+    return jsonify(vehicle_tracker.status())
+
+
+@app.route("/api/vehicles/events")
+def api_vehicle_events():
+    try:
+        limit = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        limit = 50
+    return jsonify({"events": vehicle_tracker.events(
+        limit=max(1, min(limit, 500)), vehicle=request.args.get("vehicle"))})
+
+
+@app.route("/api/vehicles/suggest")
+def api_vehicle_suggest():
+    """Sensor ids that look like they belong to one vehicle, to confirm."""
+    # Live records plus durable history: the live table is empty after a
+    # restart, and a suggestion that only works while a car is driving past is
+    # no use for registering one.
+    seen = {}
+    for r in list(observations.entries("ism")) + list(ism_receiver.get_records()):
+        key = str(r.get("id") or r.get("key") or "").lower()
+        if key:
+            seen.setdefault(key, r)
+    return jsonify({"groups": suggest_vehicles(list(seen.values()))})
+
+
 @app.route("/api/sweep/bands")
 def api_sweep_bands():
     """The band table the survey UI offers."""
@@ -2415,6 +2473,13 @@ def ism_broadcast_loop():
         if ism_receiver.is_running:
             socketio.emit("ism_update",
                           _with_history("ism", ism_receiver.get_devices(), "id"))
+        # Vehicle events close on silence, so something has to notice silence.
+        # Riding this loop rather than adding a timer: it already runs while ISM
+        # is active, which is exactly when TPMS can arrive.
+        try:
+            vehicle_tracker.tick()
+        except Exception:
+            log.debug("vehicle tick failed", exc_info=True)
 
 
 def acars_broadcast_loop():
