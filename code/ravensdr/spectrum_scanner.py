@@ -528,9 +528,31 @@ def diff_surveys(previous, current):
     if not previous or not current:
         return None
 
-    tol = DIFF_MATCH_HZ_MW if (current.get("low") or 0) < 3_000_000 else DIFF_MATCH_HZ_VHF
+    # Tolerance has to scale with the BIN SIZE, not just the band. A peak can
+    # legitimately land one bin either side between sweeps, so a fixed 100 kHz
+    # window is meaningless when the bins are 1 MHz wide — which is exactly what
+    # the full-range sweep uses. Two 20-hours-apart sweeps of it reported 18 NEW
+    # and 18 GONE that were the same eighteen transmitters re-binned by 1 MHz:
+    #   NEW 584.500 / GONE 585.500,  NEW 730.500 / GONE 729.500,  ...
+    base = DIFF_MATCH_HZ_MW if (current.get("low") or 0) < 3_000_000 else DIFF_MATCH_HZ_VHF
+    tol = max(base, 1.5 * (current.get("bin") or 0))
     prev_peaks = list(previous.get("peaks") or [])
     cur_peaks = list(current.get("peaks") or [])
+
+    # Both peak lists are capped at MAX_PEAKS. When a list is truncated you
+    # cannot tell "this signal appeared" from "this signal was always there but
+    # fell outside the top 40 last time" — so a claim of NEW is only honest
+    # above the weakest level the PREVIOUS sweep actually reported, and GONE
+    # only above the weakest the CURRENT one did. Without this, two full-range
+    # sweeps of an unchanged band reported 8 NEW and 8 GONE purely from list
+    # membership shuffling near the cut.
+    def _floor_of(peaks):
+        if len(peaks) < MAX_PEAKS:
+            return 0.0          # nothing was dropped, so nothing is hidden
+        return min((p.get("over_floor_db", 0) for p in peaks), default=0.0)
+
+    new_cutoff = max(DIFF_REPORT_MIN_OVER_FLOOR_DB, _floor_of(prev_peaks))
+    gone_cutoff = max(DIFF_REPORT_MIN_OVER_FLOOR_DB, _floor_of(cur_peaks))
 
     used = set()
     new, stronger, weaker, steady = [], [], [], 0
@@ -544,7 +566,7 @@ def diff_surveys(previous, current):
             if d <= tol and d < best_d:
                 best, best_i, best_d = p, i, d
         if best is None:
-            if c["over_floor_db"] >= DIFF_REPORT_MIN_OVER_FLOOR_DB:
+            if c["over_floor_db"] >= new_cutoff:
                 new.append(c)
             continue
         used.add(best_i)
@@ -560,8 +582,7 @@ def diff_surveys(previous, current):
             steady += 1
 
     gone = [p for i, p in enumerate(prev_peaks)
-            if i not in used
-            and p.get("over_floor_db", 0) >= DIFF_REPORT_MIN_OVER_FLOOR_DB]
+            if i not in used and p.get("over_floor_db", 0) >= gone_cutoff]
 
     return {
         "previous_at": previous.get("at"),
@@ -571,4 +592,7 @@ def diff_surveys(previous, current):
         "stronger": stronger,
         "weaker": weaker,
         "unchanged": steady,
+        # Surfaced so the UI can say "40 peaks, list was capped" rather than
+        # implying the band contains exactly forty signals.
+        "truncated": len(cur_peaks) >= MAX_PEAKS or len(prev_peaks) >= MAX_PEAKS,
     }
