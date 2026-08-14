@@ -1029,6 +1029,9 @@ def _apply_tune(preset):
             _resume_adsb_scan()
         ism_receiver.frequency = preset.get("freq", ism_receiver.frequency)
         ism_receiver.sample_rate = preset.get("sample_rate")
+        # A preset may cover several frequencies; rtl_433 hops between them.
+        ism_receiver.frequencies = preset.get("freqs")
+        ism_receiver.hop_s = preset.get("hop_s")
         ism_receiver.start()
         if not ism_receiver.is_running:
             reason = ism_receiver.last_error or "unknown error"

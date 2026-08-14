@@ -531,6 +531,45 @@ PRESETS = [
         "expected_modulation": "OOK/FSK",
     },
     {
+        # Garage remotes and car key fobs. Which frequency yours uses depends on
+        # make and age with no way to tell from outside, so cover all three and
+        # let rtl_433 hop: 315 MHz for most US/Japanese fobs and Chamberlain /
+        # LiftMaster openers, 390 MHz for older Genie and Overhead Door, 433.92
+        # for European fobs and newer openers.
+        #
+        # What you will and will not get: a press always shows up as a decode
+        # attempt, and older fixed-code openers decode outright (rtl_433 carries
+        # EV1527, HT680, Interlogix and friends). Anything from roughly the last
+        # 25 years — every current car fob, Security+ 2.0, KeeLoq — is rolling
+        # code, so the payload differs on every press by design. You see the
+        # event, not a reusable code.
+        #
+        # Hopping means a 100 ms burst on 433 is missed while the tuner sits on
+        # 315. To catch one specific device reliably, pin its frequency instead.
+        "id": "remotes-fobs",
+        "duty": "burst",
+        "label": "Remotes & car fobs",
+        "freq": "315.00M",
+        "freqs": ["315.00M", "390.00M", "433.92M"],
+        "hop_s": 10,
+        "mode": "ism",
+        "category": "ism",
+        "squelch": 0,
+        "note": "Garage openers and key fobs — hops 315/390/433.92 MHz",
+        "expected_modulation": "OOK",
+    },
+    {
+        "id": "ism-390",
+        "duty": "burst",
+        "label": "Garage 390 MHz",
+        "freq": "390.00M",
+        "mode": "ism",
+        "category": "ism",
+        "squelch": 0,
+        "note": "Older Genie / Overhead Door openers — pinned, no hopping",
+        "expected_modulation": "OOK",
+    },
+    {
         "id": "ism-security-345",
         "duty": "burst",
         "label": "Security Sensors 345 MHz",

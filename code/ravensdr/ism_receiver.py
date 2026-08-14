@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 
 # rtl_433 default frequency is 433.92 MHz; -F json emits one JSON object per line.
 DEFAULT_FREQUENCY = "433.92M"
+DEFAULT_HOP_S = 12     # seconds per frequency when covering several
 
 
 # Sensor readings we render with units/labels in the UI.
@@ -52,16 +53,36 @@ class IsmReceiver(SubprocessDecoder):
     DEFAULT_TTL = 900  # sensors report slowly; keep them ~15 min
 
     def __init__(self, device_index=0, frequency=DEFAULT_FREQUENCY, ttl_sec=None,
-                 sample_rate=None):
+                 sample_rate=None, frequencies=None, hop_s=None):
         super().__init__(device_index=device_index, ttl_sec=ttl_sec)
         self.frequency = frequency
         self.sample_rate = sample_rate
+        # Optional list. Garage remotes and car fobs are split across 315, 390
+        # and 433.92 MHz depending on make and age, and you cannot know in
+        # advance which one the thing in your hand uses — so cover them all and
+        # let rtl_433 hop.
+        self.frequencies = list(frequencies) if frequencies else None
+        self.hop_s = hop_s
 
     def build_cmd(self):
         cmd = [
             "rtl_433",
             "-d", str(self.device_index),
-            "-f", self.frequency,
+        ]
+        # One -f per frequency; rtl_433 hops between them on -H.
+        #
+        # Hopping is a real trade, not a free win: a remote transmits for about
+        # 100 ms, so while the tuner is parked on 315 a press on 433 is simply
+        # missed. A short interval covers more of the dial and drops more
+        # individual bursts. rtl_433's own default is 600s, which is right for
+        # sensors that report every few minutes and useless for something you
+        # press once — hence a much shorter default here.
+        freqs = self.frequencies or [self.frequency]
+        for f in freqs:
+            cmd += ["-f", f]
+        if len(freqs) > 1:
+            cmd += ["-H", str(self.hop_s or DEFAULT_HOP_S)]
+        cmd += [
             "-F", "json",
             "-M", "level",   # include RSSI/SNR in output
         ]
